@@ -50,6 +50,64 @@
     </p>
   </section>
 
+  <section class="card control-card">
+    <div class="card-head">
+      <h2>Direct control</h2>
+      <span class="pill" id="targetPill">all lights</span>
+    </div>
+    <p class="hint tight" id="controlNote">Control bulbs without starting Ambilight.</p>
+    <div class="control-grid">
+      <div class="field">
+        <label for="targetSelect">Target</label>
+        <select id="targetSelect">
+          <option value="all">All lights</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Power</label>
+        <div class="power-row">
+          <button class="ghost small" id="powerOnBtn">On</button>
+          <button class="ghost small" id="powerOffBtn">Off</button>
+        </div>
+      </div>
+    </div>
+    <div class="field">
+      <label for="controlBrightness">Brightness <output id="controlBrightnessOut">100</output></label>
+      <input id="controlBrightness" type="range" min="10" max="100" step="1" value="100">
+    </div>
+    <div class="field">
+      <label for="controlTemp">White temperature <output id="controlTempOut">3000 K</output></label>
+      <input id="controlTemp" type="range" min="2200" max="6500" step="100" value="3000">
+    </div>
+    <div class="field">
+      <label for="controlHex">Color</label>
+      <div class="color-row">
+        <input type="color" id="controlColor" value="#ffb44d" aria-label="Pick a color">
+        <input type="text" id="controlHex" class="hex-input" value="#ffb44d" maxlength="7" spellcheck="false" aria-label="Hex color">
+        <button class="ghost small" id="applyColorBtn">Apply</button>
+      </div>
+    </div>
+    <div class="field">
+      <label for="sceneSelect">WiZ scene</label>
+      <div class="row">
+        <select id="sceneSelect"></select>
+        <button class="ghost small" id="applySceneBtn">Apply</button>
+      </div>
+    </div>
+    <div class="field">
+      <label for="controlSpeed">Scene speed <output id="controlSpeedOut">100</output></label>
+      <input id="controlSpeed" type="range" min="20" max="200" step="5" value="100">
+    </div>
+  </section>
+
+  <section class="card log-card">
+    <div class="card-head">
+      <h2>Activity</h2>
+      <button class="ghost small" id="clearLog">Clear</button>
+    </div>
+    <pre class="log" id="log" aria-live="polite"></pre>
+  </section>
+
   <aside class="side">
     <section class="card">
       <div class="card-head">
@@ -101,15 +159,23 @@
         <div class="mapping" id="mapping"></div>
       </div>
     </section>
-  </aside>
 
-  <section class="card log-card">
-    <div class="card-head">
-      <h2>Activity</h2>
-      <button class="ghost small" id="clearLog">Clear</button>
-    </div>
-    <pre class="log" id="log" aria-live="polite"></pre>
-  </section>
+    <section class="card scenes-card">
+      <div class="card-head">
+        <h2>My scenes</h2>
+        <span class="pill" id="scenePill">0</span>
+      </div>
+      <div class="field">
+        <label for="sceneName">Save current look</label>
+        <div class="row">
+          <input id="sceneName" type="text" placeholder="Movie night" maxlength="40">
+          <button class="ghost small" id="saveSceneBtn">Save</button>
+        </div>
+      </div>
+      <div id="sceneList" class="scene-list"></div>
+      <p class="hint">Plain JSON in <code>~/.config/wiz-ambilight/scenes.json</code>, so scripts can generate scenes too.</p>
+    </section>
+  </aside>
 </main>
 
 <footer class="footer">

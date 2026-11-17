@@ -51,9 +51,61 @@ import sys
 import time
 from pathlib import Path
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 DEFAULT_PORT = 38899
 ZONE_NAMES = {"all", "left", "right", "top", "bottom", "t1", "t2", "t3"}
+
+# Common WiZ scene ids. Firmware varies, so unknown ids are still accepted by
+# the CLI and the panel.
+WIZ_SCENES = {
+    1: "Ocean",
+    2: "Romance",
+    3: "Sunset",
+    4: "Party",
+    5: "Fireplace",
+    6: "Cozy",
+    7: "Forest",
+    8: "Pastel colors",
+    9: "Wake up",
+    10: "Bedtime",
+    11: "Warm white",
+    12: "Daylight",
+    13: "Cool white",
+    14: "Night light",
+    15: "Focus",
+    16: "Relax",
+    17: "True colors",
+    18: "TV time",
+    19: "Plant growth",
+    20: "Spring",
+    21: "Summer",
+    22: "Fall",
+    23: "Winter",
+    24: "Diwali",
+    25: "Ramadan",
+    26: "Halloween",
+    27: "Christmas",
+    28: "New Year",
+    29: "Easter",
+    30: "Birthday",
+    31: "Golden white",
+    32: "Pulse",
+}
+
+
+def rgb_to_hex(rgb) -> str:
+    channels = [max(0, min(255, int(round(v)))) for v in rgb]
+    return "#" + "".join(f"{channel:02x}" for channel in channels)
+
+
+def hex_to_rgb(value):
+    text = str(value).strip().lstrip("#")
+    if len(text) == 3:
+        text = "".join(ch * 2 for ch in text)
+    if len(text) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in text):
+        raise ValueError("expected a hex color like #ff8800")
+    return tuple(int(text[index : index + 2], 16) for index in (0, 2, 4))
+
 
 HERE = Path(__file__).resolve().parent
 LUA_SCRIPT = HERE / "lua" / "wiz_ambilight.lua"
@@ -142,6 +194,19 @@ class WizSender:
     def set_power(self, ip: str, on: bool) -> None:
         self._last.pop(ip, None)
         self._send(ip, "setState", {"state": bool(on)})
+
+    def set_pilot(self, ip: str, params: dict) -> bool:
+        """Send direct controls (color, white, scene, brightness) to a bulb."""
+        self._last.pop(ip, None)
+        payload = dict(params)
+        payload.setdefault("state", True)
+        return self._send(ip, "setPilot", payload)
+
+    def set_scene(self, ip: str, scene_id: int, speed=None) -> bool:
+        params = {"sceneId": int(scene_id)}
+        if speed is not None:
+            params["speed"] = int(speed)
+        return self.set_pilot(ip, params)
 
     def set_temp(self, ip: str, temp: int, dimming: int = 100) -> None:
         """White temperature, used to flash a bulb when identifying it."""
@@ -250,10 +315,16 @@ def adjust_color(rgb, saturation: float, gamma: float):
 
 
 class Smoother:
-    """Exponential fade with a wall-clock time constant."""
+    """Exponential fade with a wall-clock time constant.
 
-    def __init__(self, tau_seconds: float):
+    Small changes fade smoothly, but a big jump (a hard cut in the movie) is
+    applied on the next frame. That is what keeps cuts instant without making
+    gentle camera moves flicker.
+    """
+
+    def __init__(self, tau_seconds: float, cut_delta: float = 128.0):
         self.tau = max(0.0, tau_seconds)
+        self.cut_delta = max(0.0, cut_delta)
         self._values = {}
 
     def step(self, key: str, target, dt: float):
@@ -263,6 +334,9 @@ class Smoother:
             self._values[key] = target
             return target, True
         current = self._values[key]
+        if self.cut_delta and max(abs(target[i] - current[i]) for i in range(3)) >= self.cut_delta:
+            current[:] = target
+            return current, True
         alpha = 1.0 - math.exp(-max(0.001, dt) / self.tau)
         for i in range(3):
             current[i] += (target[i] - current[i]) * alpha
@@ -317,6 +391,15 @@ STYLES = {
         "gamma": 1.0,
         "brightness": 100,
         "send_hz": 24.0,
+    },
+    "reactive": {
+        "fps": 20.0,
+        "edge": 0.13,
+        "smooth": 55.0,
+        "saturation": 1.4,
+        "gamma": 1.0,
+        "brightness": 100,
+        "send_hz": 26.0,
     },
     "raw": {
         "fps": 24.0,
@@ -729,6 +812,104 @@ def run_attach(args, lights, zone_names):
 
 
 # --------------------------------------------------------------------------- #
+# Direct control (no mpv)
+# --------------------------------------------------------------------------- #
+
+
+def is_ipv4(value: str) -> bool:
+    if value.count(".") != 3:
+        return False
+    try:
+        socket.inet_aton(value)
+    except OSError:
+        return False
+    return True
+
+
+def run_set(args) -> int:
+    """Apply one set of controls to one or more bulbs, then exit."""
+    ips = parse_lights(args.lights) if args.lights else parse_lights(
+        os.environ.get("WIZ_LIGHTS", "") or os.environ.get("WIZ_LIGHT_IPS", "")
+    )
+    invalid = [ip for ip in ips if not is_ipv4(ip)]
+    if invalid:
+        print(f"error: invalid light address(es): {', '.join(invalid)}", file=sys.stderr)
+        return 2
+
+    params = {}
+    try:
+        if args.hex is not None:
+            r, g, b = hex_to_rgb(args.hex)
+            params.update({"r": r, "g": g, "b": b})
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if args.temp is not None:
+        if not 2200 <= args.temp <= 6500:
+            print("error: --temp must be between 2200 and 6500 K", file=sys.stderr)
+            return 2
+        params["temp"] = int(args.temp)
+    if args.hex is not None and args.temp is not None:
+        print("error: choose --hex or --temp, not both", file=sys.stderr)
+        return 2
+    if args.brightness is not None:
+        params["dimming"] = max(10, min(100, int(args.brightness)))
+    if args.scene is not None:
+        if not 1 <= args.scene <= 999:
+            print("error: --scene must be between 1 and 999", file=sys.stderr)
+            return 2
+        params["sceneId"] = int(args.scene)
+    if args.speed is not None:
+        if args.scene is None:
+            print("error: --speed needs --scene", file=sys.stderr)
+            return 2
+        params["speed"] = max(20, min(200, int(args.speed)))
+    if args.power == "off" and params:
+        print("error: --power off cannot be combined with color or brightness", file=sys.stderr)
+        return 2
+    if not params and not args.power:
+        print(
+            "error: nothing to set (use --hex, --temp, --brightness, --scene or --power)",
+            file=sys.stderr,
+        )
+        return 2
+
+    if not ips:
+        print("discovering WiZ lights...", file=sys.stderr)
+        ips = sorted(discover_lights())
+    if not ips:
+        print("error: no WiZ lights found. Use --lights or set WIZ_LIGHTS.", file=sys.stderr)
+        return 1
+
+    sender = WizSender(dry_run=args.dry_run)
+    try:
+        if args.power == "off":
+            for ip in ips:
+                sender.set_power(ip, False)
+                if not args.dry_run:
+                    print(f"{ip}: off", file=sys.stderr)
+            return 0
+
+        states = query_lights(ips) if args.power == "toggle" and not args.dry_run else {}
+        for ip in ips:
+            current = states.get(ip) or {}
+            if args.power == "toggle" and current.get("state"):
+                sender.set_power(ip, False)
+                if not args.dry_run:
+                    print(f"{ip}: off", file=sys.stderr)
+                continue
+            if params:
+                sender.set_pilot(ip, params)
+            else:
+                sender.set_power(ip, True)
+            if not args.dry_run:
+                print(f"{ip}: on {params}", file=sys.stderr)
+    finally:
+        sender.close()
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # Misc commands
 # --------------------------------------------------------------------------- #
 
@@ -877,6 +1058,22 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--force", action="store_true", help="overwrite an existing script")
     parser.add_argument(
+        "--set",
+        action="store_true",
+        help="apply direct light controls and exit (no mpv needed)",
+    )
+    parser.add_argument("--hex", help="with --set: color as #rrggbb")
+    parser.add_argument(
+        "--temp", type=int, help="with --set: white temperature in kelvin (2200-6500)"
+    )
+    parser.add_argument("--scene", type=int, help="with --set: WiZ scene id")
+    parser.add_argument(
+        "--speed", type=int, help="with --set: scene speed (20-200, needs --scene)"
+    )
+    parser.add_argument(
+        "--power", choices=["on", "off", "toggle"], help="with --set: power state"
+    )
+    parser.add_argument(
         "--mpv", default="mpv", help="mpv binary to launch (default: mpv)"
     )
     parser.add_argument(
@@ -934,6 +1131,9 @@ def main(argv=None) -> int:
             demo=args.demo,
             open_browser=not args.no_browser,
         )
+
+    if args.set:
+        return run_set(args)
 
     if args.attach and args.media:
         parser.error("--attach does not take files; it follows the mpv that is already running")

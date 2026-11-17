@@ -206,13 +206,19 @@ class DemoPanelTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.old = os.environ.get("WIZ_AMBILIGHT_GUI_CONFIG")
+        self.old_scenes = os.environ.get("WIZ_AMBILIGHT_SCENES_CONFIG")
         os.environ["WIZ_AMBILIGHT_GUI_CONFIG"] = str(Path(self.tmp.name) / "lights.json")
+        os.environ["WIZ_AMBILIGHT_SCENES_CONFIG"] = str(Path(self.tmp.name) / "scenes.json")
 
     def tearDown(self):
         if self.old is None:
             os.environ.pop("WIZ_AMBILIGHT_GUI_CONFIG", None)
         else:
             os.environ["WIZ_AMBILIGHT_GUI_CONFIG"] = self.old
+        if self.old_scenes is None:
+            os.environ.pop("WIZ_AMBILIGHT_SCENES_CONFIG", None)
+        else:
+            os.environ["WIZ_AMBILIGHT_SCENES_CONFIG"] = self.old_scenes
         self.tmp.cleanup()
 
     def test_snapshot_shape(self):
@@ -239,12 +245,144 @@ class DemoPanelTests(unittest.TestCase):
         argv, _ips, _zones = webui.build_command(panel.config, m, demo=panel.demo)
         self.assertIn("--dry-run", argv)
 
+    def test_snapshot_has_hex_and_scene_catalog(self):
+        panel = webui.Panel(m, demo=True)
+        snapshot = panel.snapshot()
+        self.assertTrue(snapshot["lights"][0]["hex"].startswith("#"))
+        self.assertIn(3, [scene["id"] for scene in snapshot["wiz_scenes"]])
+        self.assertEqual(snapshot["scenes"], [])
+
+    def test_control_sets_color_and_brightness(self):
+        panel = webui.Panel(m, demo=True)
+        ip = sorted(panel.config["lights"])[0]
+        snapshot = panel.control("all", {"hex": "#123456", "brightness": 40})
+        row = next(row for row in snapshot["lights"] if row["ip"] == ip)
+        self.assertEqual(row["hex"], "#123456")
+        self.assertEqual(row["dimming"], 40)
+        self.assertTrue(row["state"])
+
+    def test_control_power_off_is_per_light(self):
+        panel = webui.Panel(m, demo=True)
+        first, second = sorted(panel.config["lights"])[:2]
+        snapshot = panel.control(first, {"power": False})
+        rows = {row["ip"]: row for row in snapshot["lights"]}
+        self.assertFalse(rows[first]["state"])
+        self.assertNotEqual(rows[second]["state"], False)
+
+    def test_control_scene_and_speed(self):
+        panel = webui.Panel(m, demo=True)
+        ip = sorted(panel.config["lights"])[0]
+        panel.control(ip, {"scene": 4, "speed": 80})
+        self.assertEqual(panel.live[ip]["sceneId"], 4)
+        self.assertEqual(panel.live[ip]["speed"], 80)
+
+    def test_control_rejects_bad_input(self):
+        panel = webui.Panel(m, demo=True)
+        cases = [
+            {"hex": "nope"},
+            {"hex": "#ff8800", "temp": 3000},
+            {"speed": 50},
+            {"power": False, "brightness": 20},
+            {},
+        ]
+        for payload in cases:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValueError):
+                    panel.control("all", payload)
+        with self.assertRaises(ValueError):
+            panel.control("8.8.8.8", {"brightness": 20})
+
+    def test_scene_lifecycle(self):
+        panel = webui.Panel(m, demo=True)
+        panel.control("all", {"hex": "#00ff00", "brightness": 70})
+        snapshot = panel.save_scene("Movie night")
+        self.assertEqual(snapshot["scenes"], [{"name": "Movie night", "count": 3}])
+
+        panel.control("all", {"hex": "#0000ff"})
+        snapshot = panel.apply_scene("Movie night")
+        row = snapshot["lights"][0]
+        self.assertEqual(row["hex"], "#00ff00")
+        self.assertEqual(row["dimming"], 70)
+
+        panel.delete_scene("Movie night")
+        self.assertEqual(panel.snapshot()["scenes"], [])
+        with self.assertRaises(ValueError):
+            panel.delete_scene("Movie night")
+
+    def test_scene_needs_a_name(self):
+        panel = webui.Panel(m, demo=True)
+        panel.control("all", {"brightness": 50})
+        with self.assertRaises(ValueError):
+            panel.save_scene("   ")
+
+
+class SceneNormalizeTests(unittest.TestCase):
+    def test_clamps_and_drops_invalid_entries(self):
+        clean = webui.normalize_scenes(
+            {
+                " Movie ": {
+                    "192.168.1.5": {"dimming": 999, "temp": 100, "r": "x"},
+                    "bad": {"dimming": 50},
+                    "192.168.1.6": {"state": False},
+                    "192.168.1.7": {},
+                }
+            }
+        )
+        self.assertEqual(list(clean), ["Movie"])
+        entry = clean["Movie"]["192.168.1.5"]
+        self.assertEqual(entry["dimming"], 100)
+        self.assertEqual(entry["temp"], 2200)
+        self.assertNotIn("r", entry)
+        self.assertNotIn("bad", clean["Movie"])
+        self.assertEqual(clean["Movie"]["192.168.1.6"], {"state": False})
+        self.assertNotIn("192.168.1.7", clean["Movie"])
+
+    def test_scene_modes_are_exclusive(self):
+        clean = webui.normalize_scenes(
+            {
+                "Mixed": {
+                    "192.168.1.5": {
+                        "sceneId": 4,
+                        "r": 1,
+                        "g": 2,
+                        "b": 3,
+                        "temp": 3000,
+                        "speed": 80,
+                    }
+                },
+                "Partial": {"192.168.1.6": {"r": 10, "temp": 2700}},
+                "Stringy": {"192.168.1.7": {"state": "false", "dimming": 40}},
+            }
+        )
+        self.assertEqual(clean["Mixed"]["192.168.1.5"], {"sceneId": 4, "speed": 80})
+        self.assertEqual(clean["Partial"]["192.168.1.6"], {"temp": 2700})
+        self.assertEqual(clean["Stringy"]["192.168.1.7"], {"dimming": 40})
+
+    def test_round_trip_is_private(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old = os.environ.get("WIZ_AMBILIGHT_SCENES_CONFIG")
+            path = Path(tmp) / "scenes.json"
+            os.environ["WIZ_AMBILIGHT_SCENES_CONFIG"] = str(path)
+            try:
+                saved = webui.save_scenes(
+                    {"Movie": {"192.168.1.5": {"dimming": 50, "r": 1, "g": 2, "b": 3}}}
+                )
+                self.assertEqual(webui.load_scenes(), saved)
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            finally:
+                if old is None:
+                    os.environ.pop("WIZ_AMBILIGHT_SCENES_CONFIG", None)
+                else:
+                    os.environ["WIZ_AMBILIGHT_SCENES_CONFIG"] = old
+
 
 class HttpTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.old = os.environ.get("WIZ_AMBILIGHT_GUI_CONFIG")
+        self.old_scenes = os.environ.get("WIZ_AMBILIGHT_SCENES_CONFIG")
         os.environ["WIZ_AMBILIGHT_GUI_CONFIG"] = str(Path(self.tmp.name) / "lights.json")
+        os.environ["WIZ_AMBILIGHT_SCENES_CONFIG"] = str(Path(self.tmp.name) / "scenes.json")
         self.panel = webui.Panel(m, demo=True)
         self.server = webui.make_server(self.panel, 0)
         self.port = self.server.server_address[1]
@@ -260,6 +398,10 @@ class HttpTests(unittest.TestCase):
             os.environ.pop("WIZ_AMBILIGHT_GUI_CONFIG", None)
         else:
             os.environ["WIZ_AMBILIGHT_GUI_CONFIG"] = self.old
+        if self.old_scenes is None:
+            os.environ.pop("WIZ_AMBILIGHT_SCENES_CONFIG", None)
+        else:
+            os.environ["WIZ_AMBILIGHT_SCENES_CONFIG"] = self.old_scenes
         self.tmp.cleanup()
 
     def request(self, path, payload=None, headers=None):
@@ -332,6 +474,52 @@ class HttpTests(unittest.TestCase):
             self.request("/api/config", {"brightness": 55}, headers)
         caught.exception.close()
         self.assertEqual(caught.exception.code, 415)
+
+    def test_control_endpoint(self):
+        with self.request(
+            "/api/control",
+            {"target": "all", "hex": "#abcdef", "brightness": 55},
+            self.auth_headers(),
+        ) as response:
+            snapshot = json.loads(response.read())
+        self.assertEqual(snapshot["lights"][0]["hex"], "#abcdef")
+        self.assertEqual(snapshot["lights"][0]["dimming"], 55)
+
+    def test_control_endpoint_rejects_bad_hex(self):
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request("/api/control", {"hex": "nope"}, self.auth_headers())
+        caught.exception.close()
+        self.assertEqual(caught.exception.code, 400)
+
+    def test_scene_endpoints(self):
+        with self.request(
+            "/api/control", {"hex": "#112233"}, self.auth_headers()
+        ) as response:
+            json.loads(response.read())
+        with self.request(
+            "/api/scene/save", {"name": "Test"}, self.auth_headers()
+        ) as response:
+            snapshot = json.loads(response.read())
+        self.assertEqual(snapshot["scenes"][0]["name"], "Test")
+
+        with self.request(
+            "/api/scene/apply", {"name": "Test"}, self.auth_headers()
+        ) as response:
+            snapshot = json.loads(response.read())
+        self.assertEqual(snapshot["lights"][0]["hex"], "#112233")
+
+        with self.request(
+            "/api/scene/delete", {"name": "Test"}, self.auth_headers()
+        ) as response:
+            snapshot = json.loads(response.read())
+        self.assertEqual(snapshot["scenes"], [])
+
+    def test_scene_endpoints_need_token(self):
+        headers = {"Content-Type": "application/json", "Origin": self.base}
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request("/api/scene/save", {"name": "Test"}, headers)
+        caught.exception.close()
+        self.assertEqual(caught.exception.code, 403)
 
     def test_unknown_asset_is_404(self):
         with self.assertRaises(urllib.error.HTTPError) as caught:

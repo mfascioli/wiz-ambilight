@@ -88,6 +88,11 @@ def config_path() -> Path:
     return Path(override) if override else config_dir() / "lights.json"
 
 
+def scenes_path() -> Path:
+    override = os.environ.get("WIZ_AMBILIGHT_SCENES_CONFIG")
+    return Path(override) if override else config_dir() / "scenes.json"
+
+
 def runtime_dir() -> Path:
     base = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
     path = Path(base) / APP_NAME
@@ -167,6 +172,66 @@ def load_config(core) -> dict:
 def save_config(config: dict, core) -> dict:
     clean = normalize_config(config, core)
     write_json(config_path(), clean)
+    return clean
+
+
+def _clean_scene_params(entry) -> dict:
+    if not isinstance(entry, dict):
+        return {}
+    params = {}
+    if isinstance(entry.get("state"), bool):
+        params["state"] = entry["state"]
+    for key, low, high in (
+        ("dimming", 10, 100),
+        ("temp", 2200, 6500),
+        ("r", 0, 255),
+        ("g", 0, 255),
+        ("b", 0, 255),
+        ("sceneId", 1, 999),
+        ("speed", 20, 200),
+    ):
+        if key not in entry:
+            continue
+        try:
+            params[key] = max(low, min(high, int(entry[key])))
+        except (TypeError, ValueError):
+            continue
+    if "sceneId" in params:
+        for key in ("r", "g", "b", "temp"):
+            params.pop(key, None)
+    elif all(key in params for key in ("r", "g", "b")):
+        params.pop("temp", None)
+    else:
+        for key in ("r", "g", "b"):
+            params.pop(key, None)
+    return params
+
+
+def normalize_scenes(raw) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    scenes = {}
+    for name, entries in raw.items():
+        name = "".join(ch for ch in str(name) if ch.isprintable()).strip()[:40]
+        if not name or not isinstance(entries, dict):
+            continue
+        clean = {}
+        for ip, entry in entries.items():
+            if _IP_RE.match(str(ip)):
+                params = _clean_scene_params(entry)
+                if params:
+                    clean[str(ip)] = params
+        if clean:
+            scenes[name] = clean
+    return scenes
+
+
+def load_scenes() -> dict:
+    return normalize_scenes(read_json(scenes_path(), {}))
+
+
+def save_scenes(scenes: dict) -> dict:
+    clean = normalize_scenes(scenes)
+    write_json(scenes_path(), clean)
     return clean
 
 
@@ -448,6 +513,7 @@ class Panel:
         self.token = secrets.token_urlsafe(24)
         self.lock = threading.RLock()
         self.config = load_config(core)
+        self.scenes = load_scenes()
         self.live = {}
         self.scanned = 0.0
         self.session = Session(self)
@@ -533,6 +599,13 @@ class Panel:
                         "r": info.get("r", 255),
                         "g": info.get("g", 255),
                         "b": info.get("b", 255),
+                        "hex": self.core.rgb_to_hex(
+                            (
+                                info.get("r", 255),
+                                info.get("g", 255),
+                                info.get("b", 255),
+                            )
+                        ),
                     }
                 )
             rows.sort(key=lambda row: [int(part) for part in row["ip"].split(".")])
@@ -556,6 +629,10 @@ class Panel:
     def snapshot(self) -> dict:
         with self.lock:
             config = json.loads(json.dumps(self.config))
+            scenes = [
+                {"name": name, "count": len(entries)}
+                for name, entries in sorted(self.scenes.items())
+            ]
         return {
             "version": self.core.VERSION,
             "demo": self.demo,
@@ -567,6 +644,11 @@ class Panel:
             "style_details": {
                 name: dict(values) for name, values in self.core.STYLES.items()
             },
+            "scenes": scenes,
+            "wiz_scenes": [
+                {"id": scene_id, "name": name}
+                for scene_id, name in sorted(self.core.WIZ_SCENES.items())
+            ],
             "session": self.session.snapshot(),
             "lua": self.lua_status(),
             "scanned": self.scanned,
@@ -631,11 +713,171 @@ class Panel:
         self.session.stop()
         return self.snapshot()
 
+    # -- direct control --------------------------------------------------- #
+
+    def _target_ips(self, target: str):
+        target = str(target or "all")
+        with self.lock:
+            if target in ("all", "enabled"):
+                pairs = enabled_lights(self.config) if target == "enabled" else None
+                if pairs is not None:
+                    return [ip for ip, _ in pairs]
+                ips = list(self.config["lights"])
+                ips.extend(ip for ip in self.live if ip not in self.config["lights"])
+                return ips
+            return [self._known_ip(target)]
+
+    def _apply_live(self, ip: str, params: dict, power=None) -> None:
+        with self.lock:
+            info = self.live.setdefault(ip, {})
+            if power is False:
+                info["state"] = False
+                return
+            if "r" in params:
+                info["r"] = params["r"]
+                info["g"] = params.get("g", 0)
+                info["b"] = params.get("b", 0)
+            if "temp" in params:
+                info["temp"] = params["temp"]
+            if "dimming" in params:
+                info["dimming"] = params["dimming"]
+            if "sceneId" in params:
+                info["sceneId"] = params["sceneId"]
+                if "speed" in params:
+                    info["speed"] = params["speed"]
+            if params or power is True:
+                info["state"] = True
+
+    def control(self, target: str, payload: dict) -> dict:
+        if not isinstance(payload, dict):
+            raise ValueError("expected a JSON object")
+        ips = self._target_ips(target)
+        if not ips:
+            raise ValueError("no lights available")
+
+        params = {}
+        if payload.get("hex"):
+            r, g, b = self.core.hex_to_rgb(payload["hex"])
+            params.update({"r": r, "g": g, "b": b})
+        if payload.get("temp") is not None:
+            if "r" in params:
+                raise ValueError("choose a color or a white temperature, not both")
+            params["temp"] = max(2200, min(6500, int(payload["temp"])))
+        if payload.get("brightness") is not None:
+            params["dimming"] = max(10, min(100, int(payload["brightness"])))
+        if payload.get("scene") is not None:
+            scene_id = int(payload["scene"])
+            if not 1 <= scene_id <= 999:
+                raise ValueError("scene id out of range")
+            params["sceneId"] = scene_id
+            if payload.get("speed") is not None:
+                params["speed"] = max(20, min(200, int(payload["speed"])))
+        if payload.get("speed") is not None and "sceneId" not in params:
+            raise ValueError("pick a scene before setting its speed")
+
+        power = payload.get("power")
+        if power is not None and not isinstance(power, bool):
+            raise ValueError("power must be true or false")
+        if power is False and params:
+            raise ValueError("turn off cannot be combined with color or brightness")
+        if not params and power is None:
+            raise ValueError("nothing to change")
+
+        sender = self.core.WizSender(dry_run=self.demo)
+        try:
+            for ip in ips:
+                if power is False:
+                    sender.set_power(ip, False)
+                    self._apply_live(ip, {}, power=False)
+                    continue
+                if params:
+                    outgoing = dict(params)
+                    if power is True:
+                        outgoing["state"] = True
+                    sender.set_pilot(ip, outgoing)
+                elif power is True:
+                    sender.set_power(ip, True)
+                self._apply_live(ip, params, power=power)
+        finally:
+            sender.close()
+        return self.snapshot()
+
+    def _scene_from_live(self):
+        entries = {}
+        with self.lock:
+            for ip in self.config["lights"]:
+                info = self.live.get(ip)
+                if not info:
+                    continue
+                params = {}
+                if "state" in info:
+                    params["state"] = bool(info["state"])
+                if info.get("sceneId") is not None:
+                    params["sceneId"] = int(info["sceneId"])
+                    if info.get("speed") is not None:
+                        params["speed"] = max(20, min(200, int(info["speed"])))
+                elif any(info.get(channel) is not None for channel in ("r", "g", "b")):
+                    for channel in ("r", "g", "b"):
+                        if info.get(channel) is not None:
+                            params[channel] = max(0, min(255, int(info[channel])))
+                elif info.get("temp") is not None:
+                    params["temp"] = max(2200, min(6500, int(info["temp"])))
+                if info.get("dimming") is not None:
+                    params["dimming"] = max(10, min(100, int(info["dimming"])))
+                if len(params) > 1 or params.get("state") is False:
+                    entries[ip] = params
+        return entries
+
+    def save_scene(self, name: str) -> dict:
+        name = "".join(ch for ch in str(name or "") if ch.isprintable()).strip()[:40]
+        if not name:
+            raise ValueError("give the scene a name")
+        entries = self._scene_from_live()
+        if not entries:
+            raise ValueError("no live lights to save")
+        with self.lock:
+            self.scenes[name] = entries
+            if not self.demo:
+                self.scenes = save_scenes(self.scenes)
+        return self.snapshot()
+
+    def apply_scene(self, name: str) -> dict:
+        with self.lock:
+            entries = self.scenes.get(str(name))
+            if not entries:
+                raise ValueError("unknown scene")
+            entries = json.loads(json.dumps(entries))
+            known = set(self.config["lights"]) | set(self.live)
+        sender = self.core.WizSender(dry_run=self.demo)
+        try:
+            for ip, params in entries.items():
+                if ip not in known:
+                    continue
+                if params.get("state") is False:
+                    sender.set_power(ip, False)
+                    self._apply_live(ip, {}, power=False)
+                else:
+                    sender.set_pilot(ip, dict(params))
+                    self._apply_live(ip, params)
+        finally:
+            sender.close()
+        return self.snapshot()
+
+    def delete_scene(self, name: str) -> dict:
+        with self.lock:
+            if str(name) not in self.scenes:
+                raise ValueError("unknown scene")
+            self.scenes.pop(str(name), None)
+            if not self.demo:
+                self.scenes = save_scenes(self.scenes)
+        return self.snapshot()
+
     def _known_ip(self, ip: str) -> str:
         """Only allow actions on bulbs this panel knows about."""
         ip = str(ip or "").strip()
-        if ip not in self.config["lights"] and ip not in self.live:
-            raise ValueError("unknown light")
+        with self.lock:
+            if ip not in self.config["lights"] and ip not in self.live:
+                raise ValueError("unknown light")
         if not _IP_RE.match(ip):
             raise ValueError("invalid light address")
         return ip
@@ -827,6 +1069,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(self.panel.start())
             elif path == "/api/stop":
                 self._json(self.panel.stop())
+            elif path == "/api/control":
+                self._json(
+                    self.panel.control(str(payload.get("target") or "all"), payload)
+                )
+            elif path == "/api/scene/save":
+                self._json(self.panel.save_scene(str(payload.get("name") or "")))
+            elif path == "/api/scene/apply":
+                self._json(self.panel.apply_scene(str(payload.get("name") or "")))
+            elif path == "/api/scene/delete":
+                self._json(self.panel.delete_scene(str(payload.get("name") or "")))
             elif path == "/api/pick-file":
                 self._json({"path": pick_file()})
             elif path == "/api/identify":
@@ -846,6 +1098,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._error("not found", 404)
         except ValueError as exc:
             self._error(str(exc))
+        except TypeError as exc:
+            self._error(f"invalid value: {exc}")
         except OSError as exc:
             self._error(str(exc), 500)
 

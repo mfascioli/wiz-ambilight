@@ -2,9 +2,12 @@
 
 import contextlib
 import io
+import os
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -34,6 +37,20 @@ class ColorTests(unittest.TestCase):
         for rgb in [(0, 0, 0), (255, 255, 255), (255, 0, 128)]:
             result = m.adjust_color(rgb, 4.0, 3.0)
             self.assertTrue(all(0 <= channel <= 255 for channel in result))
+
+    def test_rgb_to_hex(self):
+        self.assertEqual(m.rgb_to_hex((255, 136, 0)), "#ff8800")
+        self.assertEqual(m.rgb_to_hex((-5, 12.6, 999)), "#000dff")
+
+    def test_hex_to_rgb(self):
+        self.assertEqual(m.hex_to_rgb("#ff8800"), (255, 136, 0))
+        self.assertEqual(m.hex_to_rgb("00FF7f"), (0, 255, 127))
+        self.assertEqual(m.hex_to_rgb("#f80"), (255, 136, 0))
+
+    def test_hex_to_rgb_rejects_bad_values(self):
+        for value in ("", "#12345", "#gggggg", "#1234567", None):
+            with self.assertRaises(ValueError):
+                m.hex_to_rgb(value)
 
 
 class LayoutTests(unittest.TestCase):
@@ -98,6 +115,103 @@ class SmootherTests(unittest.TestCase):
         for _ in range(300):
             value = smoother.apply("a", (200, 100, 50), 0.016)
         self.assertEqual(value, (200, 100, 50))
+
+    def test_hard_cut_snaps(self):
+        smoother = m.Smoother(10.0)
+        smoother.apply("a", (0, 0, 0), 0.016)
+        self.assertEqual(smoother.apply("a", (220, 40, 10), 0.016), (220, 40, 10))
+
+    def test_small_change_still_fades(self):
+        smoother = m.Smoother(1.0)
+        smoother.apply("a", (100, 100, 100), 0.016)
+        value = smoother.apply("a", (120, 100, 100), 0.5)
+        self.assertGreater(value[0], 100)
+        self.assertLess(value[0], 120)
+
+    def test_cut_snap_can_be_disabled(self):
+        smoother = m.Smoother(10.0, cut_delta=0)
+        smoother.apply("a", (0, 0, 0), 0.016)
+        value = smoother.apply("a", (220, 220, 220), 0.016)
+        self.assertLess(value[0], 50)
+
+
+class DirectControlTests(unittest.TestCase):
+    @staticmethod
+    def args(**overrides):
+        values = {
+            "lights": "192.168.1.5",
+            "hex": None,
+            "temp": None,
+            "brightness": None,
+            "scene": None,
+            "speed": None,
+            "power": None,
+            "dry_run": True,
+        }
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    def run_quiet(self, args):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = m.run_set(args)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_sets_color_and_brightness(self):
+        code, out, _err = self.run_quiet(self.args(hex="#ff8800", brightness=40))
+        self.assertEqual(code, 0)
+        self.assertIn("'r': 255", out)
+        self.assertIn("'g': 136", out)
+        self.assertIn("'dimming': 40", out)
+
+    def test_sets_scene_and_speed(self):
+        code, out, _err = self.run_quiet(self.args(scene=3, speed=120))
+        self.assertEqual(code, 0)
+        self.assertIn("'sceneId': 3", out)
+        self.assertIn("'speed': 120", out)
+
+    def test_power_off(self):
+        code, out, _err = self.run_quiet(self.args(power="off"))
+        self.assertEqual(code, 0)
+        self.assertIn("setState", out)
+        self.assertIn("'state': False", out)
+
+    def test_power_on(self):
+        code, out, _err = self.run_quiet(self.args(power="on"))
+        self.assertEqual(code, 0)
+        self.assertIn("'state': True", out)
+
+    def test_rejects_bad_combinations(self):
+        cases = [
+            {"hex": "nope"},
+            {"hex": "#ff8800", "temp": 3000},
+            {"temp": 1000},
+            {"speed": 50},
+            {"scene": 1000},
+            {"power": "off", "brightness": 50},
+            {},
+            {"lights": "not-an-ip", "hex": "#ff8800"},
+        ]
+        for overrides in cases:
+            with self.subTest(overrides=overrides):
+                code, _out, err = self.run_quiet(self.args(**overrides))
+                self.assertEqual(code, 2)
+                self.assertIn("error:", err)
+
+    def test_invalid_input_does_not_scan(self):
+        args = self.args(lights="", hex="nope")
+        with mock.patch.dict(os.environ, {"WIZ_LIGHTS": "", "WIZ_LIGHT_IPS": ""}):
+            with mock.patch.object(m, "discover_lights") as discover:
+                code, _out, err = self.run_quiet(args)
+        discover.assert_not_called()
+        self.assertEqual(code, 2)
+        self.assertIn("expected a hex color", err)
+
+    def test_ipv4_validation(self):
+        self.assertTrue(m.is_ipv4("192.168.1.5"))
+        self.assertFalse(m.is_ipv4("192.168.1"))
+        self.assertFalse(m.is_ipv4("example.com"))
+        self.assertFalse(m.is_ipv4("999.1.1.1"))
 
 
 class SenderTests(unittest.TestCase):

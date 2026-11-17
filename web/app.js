@@ -19,6 +19,26 @@ const refs = {
   enableNoneBtn: document.getElementById("enableNoneBtn"),
   lights: document.getElementById("lights"),
   lightsEmpty: document.getElementById("lightsEmpty"),
+  targetSelect: document.getElementById("targetSelect"),
+  targetPill: document.getElementById("targetPill"),
+  controlNote: document.getElementById("controlNote"),
+  powerOnBtn: document.getElementById("powerOnBtn"),
+  powerOffBtn: document.getElementById("powerOffBtn"),
+  controlBrightness: document.getElementById("controlBrightness"),
+  controlBrightnessOut: document.getElementById("controlBrightnessOut"),
+  controlTemp: document.getElementById("controlTemp"),
+  controlTempOut: document.getElementById("controlTempOut"),
+  controlColor: document.getElementById("controlColor"),
+  controlHex: document.getElementById("controlHex"),
+  applyColorBtn: document.getElementById("applyColorBtn"),
+  sceneSelect: document.getElementById("sceneSelect"),
+  applySceneBtn: document.getElementById("applySceneBtn"),
+  controlSpeed: document.getElementById("controlSpeed"),
+  controlSpeedOut: document.getElementById("controlSpeedOut"),
+  sceneName: document.getElementById("sceneName"),
+  saveSceneBtn: document.getElementById("saveSceneBtn"),
+  sceneList: document.getElementById("sceneList"),
+  scenePill: document.getElementById("scenePill"),
   luaBanner: document.getElementById("luaBanner"),
   luaText: document.getElementById("luaText"),
   installBtn: document.getElementById("installBtn"),
@@ -52,6 +72,7 @@ const state = {
   logFrom: 0,
   busy: false,
   closed: false,
+  scenesSignature: "",
 };
 
 // --------------------------------------------------------------------- utils
@@ -106,6 +127,30 @@ function rgbCss(light) {
   return `rgb(${channel(light.r)}, ${channel(light.g)}, ${channel(light.b)})`;
 }
 
+const HEX_RE = /^#?[0-9a-fA-F]{6}$/;
+
+function normalizeHex(value) {
+  const text = String(value || "").trim();
+  if (!HEX_RE.test(text)) return null;
+  return (text.startsWith("#") ? text : `#${text}`).toLowerCase();
+}
+
+function targetIp() {
+  return refs.targetSelect.value || "all";
+}
+
+function targetLight(snapshot) {
+  const ip = targetIp();
+  return (snapshot?.lights || []).find((light) => light.ip === ip) || null;
+}
+
+function targetName(snapshot) {
+  const light = targetLight(snapshot);
+  if (light) return light.name || light.ip;
+  return "all lights";
+}
+
+
 // --------------------------------------------------------------------- lights
 
 function buildCard(light) {
@@ -123,8 +168,13 @@ function buildCard(light) {
   const ipLabel = el("span", "ip");
   const modelLabel = el("span", "model");
   const zoneChip = el("span", "zone-chip");
+  const hexChip = el("button", "hex-chip");
+  hexChip.type = "button";
+  hexChip.title = "Send this color to the target";
+  hexChip.setAttribute("aria-label", "Use this light's color in direct control");
+  hexChip.classList.add("hidden");
   const extraLabel = el("span", "extra");
-  meta.append(online, ipLabel, modelLabel, zoneChip, extraLabel);
+  meta.append(online, ipLabel, modelLabel, zoneChip, hexChip, extraLabel);
 
   const main = el("div", "light-main");
   main.append(name, meta);
@@ -187,6 +237,17 @@ function buildCard(light) {
       power,
     );
   });
+  hexChip.addEventListener("click", () => {
+    if (!card.light) return;
+    const value = normalizeHex(card.light.hex) || "#ffffff";
+    refs.targetSelect.value = card.light.ip;
+    if (state.snapshot) renderControl(state.snapshot);
+    if (document.activeElement !== refs.controlColor) refs.controlColor.value = value;
+    refs.controlHex.value = value;
+    refs.controlHex.focus();
+    refs.controlHex.select();
+    toast(`Target: ${card.light.name || card.light.ip}. Press Apply to send ${value}.`);
+  });
 
   const card = {
     root,
@@ -196,6 +257,7 @@ function buildCard(light) {
     ipLabel,
     modelLabel,
     zoneChip,
+    hexChip,
     extraLabel,
     zone,
     toggleInput,
@@ -225,6 +287,12 @@ function updateCard(card, light) {
   card.zoneChip.classList.toggle("hidden", !light.enabled || !light.online);
   card.zoneChip.textContent = `→ ${zoneLabel(light.effective_zone)}`;
   card.zoneChip.title = `This bulb shows the ${zoneLabel(light.effective_zone)} zone`;
+  const hexValue = normalizeHex(light.hex);
+  card.hexChip.classList.toggle("hidden", !hexValue || !light.online);
+  if (hexValue) {
+    card.hexChip.textContent = hexValue;
+    card.hexChip.title = `Use ${hexValue} from ${light.name || light.ip} in direct control`;
+  }
 
   if (document.activeElement !== card.zone) {
     const known = new Set(["", ...card.zone.dataset.zones.split(",")]);
@@ -367,6 +435,121 @@ function renderMapping(snapshot) {
   }
 }
 
+function fillTargetOptions(snapshot) {
+  const signature = snapshot.lights.map((light) => `${light.ip}:${light.name}`).join("|");
+  if (refs.targetSelect.dataset.signature === signature) return;
+  const wanted = refs.targetSelect.value || "all";
+  refs.targetSelect.replaceChildren();
+  const all = el("option", "", "All lights");
+  all.value = "all";
+  refs.targetSelect.append(all);
+  for (const light of snapshot.lights) {
+    const option = el("option", "", light.name ? `${light.name} · ${light.ip}` : light.ip);
+    option.value = light.ip;
+    refs.targetSelect.append(option);
+  }
+  refs.targetSelect.dataset.signature = signature;
+  const known = [...refs.targetSelect.options].some((option) => option.value === wanted);
+  refs.targetSelect.value = known ? wanted : "all";
+}
+
+function fillSceneOptions(snapshot) {
+  const scenes = snapshot.wiz_scenes || [];
+  const signature = scenes.map((scene) => `${scene.id}:${scene.name}`).join("|");
+  if (refs.sceneSelect.dataset.signature === signature) return;
+  const wanted = refs.sceneSelect.value;
+  refs.sceneSelect.replaceChildren();
+  for (const scene of scenes) {
+    const option = el("option", "", `${scene.name} (${scene.id})`);
+    option.value = String(scene.id);
+    refs.sceneSelect.append(option);
+  }
+  refs.sceneSelect.dataset.signature = signature;
+  if (wanted && [...refs.sceneSelect.options].some((option) => option.value === wanted)) {
+    refs.sceneSelect.value = wanted;
+  }
+}
+
+function renderControl(snapshot) {
+  fillTargetOptions(snapshot);
+  fillSceneOptions(snapshot);
+
+  const light = targetLight(snapshot);
+  const isAll = targetIp() === "all";
+  refs.targetPill.textContent = isAll ? "all lights" : targetName(snapshot);
+  refs.controlNote.textContent = snapshot.session.running
+    ? "Ambilight is syncing — direct changes last until the next frame."
+    : "Control bulbs without starting Ambilight.";
+
+  const hasLights = snapshot.lights.length > 0;
+  refs.powerOnBtn.disabled = !hasLights;
+  refs.powerOffBtn.disabled = !hasLights;
+  refs.applyColorBtn.disabled = !hasLights;
+  refs.applySceneBtn.disabled = !hasLights || !refs.sceneSelect.options.length;
+  refs.saveSceneBtn.disabled = !hasLights;
+
+  if (!light) return;
+  if (document.activeElement !== refs.controlBrightness) {
+    const value = light.dimming ?? 100;
+    refs.controlBrightness.value = String(value);
+    refs.controlBrightnessOut.value = String(value);
+  }
+  if (document.activeElement !== refs.controlTemp) {
+    const value = light.temp ?? 3000;
+    refs.controlTemp.value = String(value);
+    refs.controlTempOut.value = `${value} K`;
+  }
+  if (document.activeElement !== refs.controlHex && document.activeElement !== refs.controlColor) {
+    const value = normalizeHex(light.hex) || "#ffffff";
+    refs.controlColor.value = value;
+    refs.controlHex.value = value;
+  }
+}
+
+function renderScenes(snapshot) {
+  const scenes = snapshot.scenes || [];
+  refs.scenePill.textContent = String(scenes.length);
+  const signature = scenes.map((scene) => `${scene.name}:${scene.count}`).join("|");
+  if (signature === state.scenesSignature) return;
+  state.scenesSignature = signature;
+  refs.sceneList.replaceChildren();
+  if (!scenes.length) {
+    refs.sceneList.append(el("p", "scene-empty", "No saved scenes yet."));
+    return;
+  }
+  for (const scene of scenes) {
+    const item = el("div", "scene-item");
+    item.append(
+      el("span", "scene-name", scene.name),
+      el("span", "scene-count", `${scene.count} ${scene.count === 1 ? "light" : "lights"}`),
+    );
+    const applyBtn = el("button", "ghost small", "Apply");
+    applyBtn.type = "button";
+    applyBtn.addEventListener("click", () =>
+      action("/api/scene/apply", { name: scene.name }, `Scene “${scene.name}” applied`, applyBtn),
+    );
+    const deleteBtn = el("button", "ghost small", "Delete");
+    deleteBtn.type = "button";
+    let armed = false;
+    deleteBtn.addEventListener("click", () => {
+      if (!armed) {
+        armed = true;
+        deleteBtn.textContent = "Sure?";
+        deleteBtn.classList.add("danger");
+        window.setTimeout(() => {
+          armed = false;
+          deleteBtn.textContent = "Delete";
+          deleteBtn.classList.remove("danger");
+        }, 3000);
+        return;
+      }
+      action("/api/scene/delete", { name: scene.name }, `Deleted “${scene.name}”`, deleteBtn);
+    });
+    item.append(applyBtn, deleteBtn);
+    refs.sceneList.append(item);
+  }
+}
+
 function renderLua(snapshot) {
   const lua = snapshot.lua;
   const needsInstall = !lua.installed;
@@ -400,6 +583,8 @@ function apply(snapshot) {
   renderLights(snapshot.lights, snapshot.zones);
   renderSession(snapshot);
   renderSettings(snapshot);
+  renderControl(snapshot);
+  renderScenes(snapshot);
   renderMapping(snapshot);
   renderLua(snapshot);
   renderLog(snapshot);
@@ -415,6 +600,34 @@ function saveConfig(patch, message) {
     message || (running ? "Saved — restarting the sync…" : null),
   );
 }
+
+function sendControl(payload, message, button) {
+  return action("/api/control", { target: targetIp(), ...payload }, message, button);
+}
+
+function applyColor() {
+  const value = normalizeHex(refs.controlHex.value);
+  if (!value) {
+    toast("Use a hex color like #ff8800.", true);
+    refs.controlHex.focus();
+    return;
+  }
+  refs.controlColor.value = value;
+  refs.controlHex.value = value;
+  sendControl({ hex: value }, `Color ${value}`, refs.applyColorBtn);
+}
+
+function applyWizScene(message) {
+  const scene = Number(refs.sceneSelect.value);
+  if (!scene) {
+    toast("Pick a WiZ scene first.", true);
+    return;
+  }
+  const speed = Number(refs.controlSpeed.value);
+  const label = refs.sceneSelect.selectedOptions[0]?.textContent || `scene ${scene}`;
+  sendControl({ scene, speed }, message || `${label} · speed ${speed}`, refs.applySceneBtn);
+}
+
 
 function setAllEnabled(enabled) {
   if (!state.snapshot) return;
@@ -476,6 +689,67 @@ refs.dryRun.addEventListener("change", () => {
 refs.clearLog.addEventListener("click", () => {
   state.logFrom = state.snapshot ? state.snapshot.session.log.length : 0;
   refs.log.textContent = "No activity yet.";
+});
+
+refs.targetSelect.addEventListener("change", () => {
+  if (state.snapshot) renderControl(state.snapshot);
+});
+refs.powerOnBtn.addEventListener("click", () =>
+  sendControl({ power: true }, `${targetName(state.snapshot)} on`, refs.powerOnBtn),
+);
+refs.powerOffBtn.addEventListener("click", () =>
+  sendControl({ power: false }, `${targetName(state.snapshot)} off`, refs.powerOffBtn),
+);
+refs.controlBrightness.addEventListener("input", () => {
+  refs.controlBrightnessOut.value = refs.controlBrightness.value;
+});
+refs.controlBrightness.addEventListener("change", () => {
+  const value = Number(refs.controlBrightness.value);
+  sendControl({ brightness: value }, `Brightness ${value}%`);
+});
+refs.controlTemp.addEventListener("input", () => {
+  refs.controlTempOut.value = `${refs.controlTemp.value} K`;
+});
+refs.controlTemp.addEventListener("change", () => {
+  const value = Number(refs.controlTemp.value);
+  sendControl({ temp: value }, `White ${value} K`);
+});
+refs.controlColor.addEventListener("input", () => {
+  refs.controlHex.value = refs.controlColor.value;
+});
+refs.controlHex.addEventListener("input", () => {
+  const value = normalizeHex(refs.controlHex.value);
+  if (value) refs.controlColor.value = value;
+});
+refs.controlHex.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    applyColor();
+  }
+});
+refs.applyColorBtn.addEventListener("click", applyColor);
+refs.applySceneBtn.addEventListener("click", () => applyWizScene());
+refs.controlSpeed.addEventListener("input", () => {
+  refs.controlSpeedOut.value = refs.controlSpeed.value;
+});
+refs.controlSpeed.addEventListener("change", () => {
+  if (refs.sceneSelect.options.length) applyWizScene(`Scene speed ${refs.controlSpeed.value}`);
+});
+refs.saveSceneBtn.addEventListener("click", async () => {
+  const name = refs.sceneName.value.trim();
+  if (!name) {
+    toast("Give the scene a name first.", true);
+    refs.sceneName.focus();
+    return;
+  }
+  const data = await action("/api/scene/save", { name }, `Saved “${name}”`, refs.saveSceneBtn);
+  if (data) refs.sceneName.value = "";
+});
+refs.sceneName.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    refs.saveSceneBtn.click();
+  }
 });
 
 let quitArmed = false;

@@ -35,6 +35,9 @@ its original README.
 - **Three ways to run it.** Let it launch mpv, attach to an mpv you started
   normally (desktop launcher, file manager, whatever), or use the local web
   panel to choose lights and tune the look.
+- **The bulbs are yours.** The panel also works as a small local WiZ remote:
+  power, brightness, white temperature, RGB/hex colors, WiZ scenes and saved
+  looks, without starting Ambilight.
 - **Multi-bulb layouts.** Left/right, top/bottom, thirds, whole-frame, or
   explicitly chosen zones per bulb.
 
@@ -107,6 +110,10 @@ lists every bulb it finds, and lets you:
 - assign a zone per bulb or pick a layout, style and brightness;
 - preview the **zone map** (`Sofa glow → top-left`) before starting;
 - include or exclude every light at once, with one **All / None** click;
+- use **Direct control** on all bulbs or a single one: power, brightness,
+  white temperature, a color picker/**hex** field, WiZ scenes and scene speed;
+- click the **hex chip** under a bulb to send that exact color to the target;
+- save the current look as a **scene** and apply or delete it later;
 - flash a bulb to identify it, or toggle its power;
 - start/stop the sync in **attach** mode or launch a **video file**;
 - follow the sync log, with connection-loss recovery and a confirm-to-quit step;
@@ -120,6 +127,11 @@ lists every bulb it finds, and lets you:
 <p align="center">
   <img src="docs/gui-launch.png" alt="Wiz Ambilight panel in launch mode" width="820"><br>
   <em>Launch mode: pick a file once, then start and stop from the same panel.</em>
+</p>
+
+<p align="center">
+  <img src="docs/gui-control.png" alt="Wiz Ambilight direct control and scenes" width="820"><br>
+  <em>Direct control: target one bulb or all, send hex colors, and reuse saved scenes.</em>
 </p>
 
 Useful flags:
@@ -141,6 +153,71 @@ Settings and names live in
 so names are stored locally. If DHCP moves a bulb, the panel matches it by MAC
 and keeps its name and zone.
 
+Saved looks live in `~/.config/wiz-ambilight/scenes.json` (override with
+`WIZ_AMBILIGHT_SCENES_CONFIG`). It is plain JSON, so a script can generate or
+edit scenes without going through the panel:
+
+```json
+{
+  "Movie night": {
+    "192.168.1.5": {"state": true, "r": 255, "g": 80, "b": 20, "dimming": 40},
+    "192.168.1.7": {"state": true, "sceneId": 4, "speed": 80}
+  }
+}
+```
+
+Only bulbs the panel already knows about are applied, and every value is
+range-checked.
+
+### Direct control from the CLI
+
+The same controls are available without the browser, which makes them easy to
+use from shell scripts, cron jobs or desktop shortcuts:
+
+```bash
+# turn everything on/off (or one bulb with --lights)
+./mpv_ambilight.py --set --power on
+./mpv_ambilight.py --set --lights 192.168.1.5 --power off
+
+# RGB as hex (3- or 6-digit), with optional brightness
+./mpv_ambilight.py --set --lights 192.168.1.5,192.168.1.7 --hex '#ff8800' --brightness 60
+
+# white temperature instead of color
+./mpv_ambilight.py --set --temp 3000
+
+# a WiZ scene, with optional speed
+./mpv_ambilight.py --set --scene 4 --speed 120
+
+# preview the UDP payloads without sending anything
+./mpv_ambilight.py --set --hex '#00ff7f' --dry-run
+```
+
+`--set` uses `--lights`, then `WIZ_LIGHTS` / `WIZ_LIGHT_IPS`, then discovery.
+`--hex` and `--temp` are mutually exclusive, `--speed` requires `--scene`, and
+`--power off` cannot be combined with a color or brightness. Invalid input
+exits with status `2`; a network/discovery failure exits with `1`.
+
+The panel lists every scene it knows about. Common ids are `1` Ocean, `3`
+Sunset, `4` Party, `5` Fireplace, `10` Bedtime, `12` Daylight, `16` Relax and
+`18` TV time; firmware may expose more.
+
+Because this is just a normal command, a script can sequence several looks:
+
+```bash
+#!/bin/sh
+# sunset.sh — warm the room, then settle into a scene
+LIGHTS=192.168.1.5,192.168.1.7
+cd /path/to/wiz-ambilight
+./mpv_ambilight.py --set --lights "$LIGHTS" --hex '#ff8a3d' --brightness 70
+sleep 3
+./mpv_ambilight.py --set --lights "$LIGHTS" --scene 3 --speed 60
+```
+
+Schedule it with cron or a systemd timer exactly like any other command. The
+same primitive (and the JSON scenes file) is enough to wire the bulbs into
+desktop shortcuts, media servers or home-automation scripts without adding a
+dependency or a cloud account.
+
 ### Panel security
 
 The panel is deliberately boring about security:
@@ -155,10 +232,11 @@ The panel is deliberately boring about security:
 - **No shell.** Child processes and the file picker use argument lists, never a
   shell string. A video path that starts with `-` is rejected so it can never
   become an mpv option such as `--script=`.
-- **Scoped actions.** Identify and power only accept bulbs the panel already
-  knows about.
-- **Private config.** `lights.json` is written `0600` inside a `0700`
-  directory.
+- **Scoped actions.** Identify, power and direct control only accept bulbs the
+  panel already knows about. Colors, temperatures, scene ids and speeds are
+  range-checked; saved scenes ignore unknown addresses.
+- **Private config.** `lights.json` and `scenes.json` are written `0600` inside
+  a `0700` directory.
 
 ## Styles
 
@@ -169,12 +247,19 @@ A style is a coherent starting point; any individual flag overrides it.
 | `hue`    | 15 fps  | 90 ms  | 18 Hz  | 16%       | 1.35×      | 100     | balanced, Hue-like (default)  |
 | `cinema` | 12 fps  | 220 ms | 15 Hz  | 20%       | 1.15×      | 80      | slower, calmer, dimmer        |
 | `fast`   | 20 fps  | 45 ms  | 24 Hz  | 12%       | 1.45×      | 100     | snappy, action-friendly       |
+| `reactive` | 20 fps | 55 ms | 26 Hz  | 13%       | 1.40×      | 100     | fastest feel; hard cuts snap  |
 | `raw`    | 24 fps  | 0 ms   | 30 Hz  | 12%       | 1.30×      | 100     | no interpolation, twitchy     |
 | `custom` | —       | —      | —      | —         | —          | —       | start from the built-in values |
+
+Every style also snaps a large color jump (≥128 per channel) on the next frame,
+so scene cuts land immediately while gentle camera moves still fade. Use
+`--style reactive` when you want the snappiest response, or lower `--smooth`
+manually.
 
 ```bash
 ./mpv_ambilight.py --style cinema movie.mkv
 ./mpv_ambilight.py --style fast --brightness 70 movie.mkv
+./mpv_ambilight.py --style reactive movie.mkv
 ./mpv_ambilight.py --smooth 150 --saturation 1.5 --send-hz 15 movie.mkv
 ```
 
@@ -293,7 +378,8 @@ not decode.
 | **`mpv could not grab frames`** | Your VO does not support raw screenshots. Try `-- --vo=gpu` or `-- --screenshot-sw=yes`. Do not use `--vo=null` or `--no-video`. |
 | **Colors look wrong / sides swapped** | Reinstall the Lua script (`./mpv_ambilight.py --install-script --force`), restart mpv, and check the order of `--lights` / `--zones`. |
 | **Stutter on 4K** | Lower `--fps` (e.g. `--fps 6`) or use `--style cinema`. |
-| **Bulbs lag behind the picture** | Use `--style fast` or `--smooth 40 --send-hz 24`. If your bulbs still lag, try `--send-hz 15`; some firmware coalesces very fast updates. |
+| **Bulbs lag behind the picture** | Use `--style reactive` (or `--style fast`) and `--smooth 40 --send-hz 24`. If your bulbs still lag, try `--send-hz 15`; some firmware coalesces very fast updates. |
+| **Cuts feel soft** | Use `--style reactive`; large jumps snap automatically, but a lower `--smooth` makes small transitions faster too. |
 | **Bulbs keep the last color after quitting** | Expected. Use `--on-exit off` if you want them off. |
 | **`--attach` does nothing** | Run `--install-script`, restart mpv, then `--attach`. Check that only one mpv instance is playing (the control file is global). |
 | **Panel says “already running”** | A sync child is still alive. Press **Stop**, or use the PID from `sessionPill` / `$XDG_RUNTIME_DIR/wiz-ambilight/gui-daemon.json`. |
@@ -322,6 +408,7 @@ Repository layout:
 ├── tests/                  # dependency-free unit tests
 ├── docs/gui.png            # panel screenshot used by this README
 ├── docs/gui-launch.png     # launch-mode screenshot
+├── docs/gui-control.png    # direct-control and scenes screenshot
 ├── contrib/                # optional systemd user service
 └── upstream/               # original wiz-hack toolkit, kept for reference
 ```
