@@ -1,0 +1,13 @@
+[Unit]
+Description=WiZ Ambilight daemon (follows mpv)
+Documentation=https://github.com/mfascioli/wiz-ambilight
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/wiz-ambilight/env
+ExecStart=%h/.local/bin/mpv-ambilight --attach
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

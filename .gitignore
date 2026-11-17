@@ -1,15 +1,20 @@
 # Python-generated files
 __pycache__/
-*.py[oc]
+*.py[cod]
 build/
 dist/
 wheels/
-*.egg-info
+*.egg-info/
 
 # Virtual environments
-.venv
-video/
-music/
+.venv/
+
+# Local runtime state
+*.state.json
 
 # Environment variable files
 .env
+
+# Media dropped in locally for the original wiz-hack demos
+/upstream/video/
+/upstream/music/
