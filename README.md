@@ -176,7 +176,7 @@ systemctl --user enable --now wiz-ambilight.service
                                                     │ tiny JSON state file
                                                     │ (~15 writes/s)
                                                     ▼
-                            $XDG_RUNTIME_DIR/wiz-ambilight/state.json
+                            $XDG_RUNTIME_DIR/wiz-ambilight/state*.json
                                                     │
                                                     │ polled every few ms
                                                     ▼
@@ -223,7 +223,7 @@ not decode.
 | **`mpv could not grab frames`** | Your VO does not support raw screenshots. Try `-- --vo=gpu` or `-- --screenshot-sw=yes`. Do not use `--vo=null` or `--no-video`. |
 | **Colors look wrong / sides swapped** | Reinstall the Lua script (`./mpv_ambilight.py --install-script --force`), restart mpv, and check the order of `--lights` / `--zones`. |
 | **Stutter on 4K** | Lower `--fps` (e.g. `--fps 6`) or use `--style cinema`. |
-| **Bulbs lag behind the picture** | Use `--style fast` or `--smooth 40 --send-hz 24`. Some WiZ firmware coalesces updates faster than ~20 Hz. |
+| **Bulbs lag behind the picture** | Use `--style fast` or `--smooth 40 --send-hz 24`. If your bulbs still lag, try `--send-hz 15`; some firmware coalesces very fast updates. |
 | **Bulbs keep the last color after quitting** | Expected. Use `--on-exit off` if you want them off. |
 | **`--attach` does nothing** | Run `--install-script`, restart mpv, then `--attach`. Check that only one mpv instance is playing (the control file is global). |
 | **Bulb names** | Not available over UDP. Use `--discover` to map IP ↔ model ↔ MAC. |
