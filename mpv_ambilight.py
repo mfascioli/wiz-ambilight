@@ -40,12 +40,14 @@ from __future__ import annotations
 
 import argparse
 import colorsys
+import ipaddress
 import json
 import math
 import os
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import time
@@ -223,24 +225,140 @@ class WizSender:
             self._sock = None
 
 
-def discover_lights(timeout: float = 1.5) -> dict:
-    """Broadcast getPilot and collect the bulbs that answer."""
+def _interface_is_up(name: str) -> bool:
+    """Best effort: ignore an interface whose carrier is down."""
+    try:
+        state = Path(f"/sys/class/net/{name}/operstate").read_text().strip()
+    except OSError:
+        return True
+    return state in {"up", "unknown"}
+
+
+def local_ipv4_networks():
+    """Return (address, prefix) for active IPv4 interfaces, best effort."""
+    networks = set()
+    if sys.platform.startswith("linux"):
+        import fcntl
+
+        for _index, name in socket.if_nameindex():
+            if name == "lo" or not _interface_is_up(name):
+                continue
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                request = struct.pack("256s", name.encode()[:15])
+                address = socket.inet_ntoa(
+                    fcntl.ioctl(probe.fileno(), 0x8915, request)[20:24]
+                )
+                mask = socket.inet_ntoa(
+                    fcntl.ioctl(probe.fileno(), 0x891B, request)[20:24]
+                )
+            except OSError:
+                continue
+            finally:
+                probe.close()
+            try:
+                prefix = ipaddress.IPv4Network(f"{address}/{mask}", strict=False).prefixlen
+            except ValueError:
+                continue
+            if prefix < 31:
+                networks.add((address, prefix))
+
+    if not networks:
+        # Portable fallback: the address the default route would use.
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.connect(("8.8.8.8", 80))
+            address = probe.getsockname()[0]
+        except OSError:
+            address = ""
+        finally:
+            probe.close()
+        if address and not address.startswith("127."):
+            networks.add((address, 24))
+    return sorted(networks)
+
+
+def broadcast_targets(networks) -> list:
+    """Global broadcast plus the broadcast address of every local subnet."""
+    targets = {"255.255.255.255"}
+    for address, prefix in networks:
+        try:
+            network = ipaddress.IPv4Network(f"{address}/{prefix}", strict=False)
+        except ValueError:
+            continue
+        if network.prefixlen <= 30:
+            targets.add(str(network.broadcast_address))
+    return sorted(targets)
+
+
+def sweep_targets(networks) -> list:
+    """Hosts of the local /24 (or smaller) around each interface address."""
+    hosts = set()
+    for address, prefix in networks:
+        # Cap the sweep at /24: enough for home LANs, never 65k packets.
+        try:
+            network = ipaddress.IPv4Network(f"{address}/{max(24, prefix)}", strict=False)
+        except ValueError:
+            continue
+        if network.num_addresses < 4:
+            continue
+        hosts.update(str(host) for host in network.hosts())
+        hosts.discard(address)
+    return sorted(hosts)
+
+
+def discover_lights(timeout: float = 2.2, deep: bool = False) -> dict:
+    """Broadcast getPilot and collect the bulbs that answer.
+
+    Wi-Fi power saving and broadcast filtering lose replies often enough that a
+    single probe is unreliable, so send a few and wait for a quiet period after
+    the last answer. `deep=True` also probes every host in the local /24, which
+    finds bulbs that ignore broadcast without needing to know their address.
+    """
+    networks = local_ipv4_networks()
+    targets = broadcast_targets(networks)
+    hosts = sweep_targets(networks) if deep else []
+    payload = json.dumps(
+        {"id": 1, "method": "getPilot", "params": {}}, separators=(",", ":")
+    ).encode()
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     found = {}
     deadline = time.monotonic() + timeout
+    next_probe = 0.0
+    probes_left = 3
     quiet_deadline = None
+    swept = not hosts
     try:
-        sock.sendto(
-            json.dumps({"id": 1, "method": "getPilot", "params": {}}).encode(),
-            ("255.255.255.255", DEFAULT_PORT),
-        )
         while True:
             now = time.monotonic()
-            wait_until = deadline if quiet_deadline is None else min(deadline, quiet_deadline)
-            if now >= wait_until:
+            if now >= deadline:
                 break
-            sock.settimeout(max(0.05, wait_until - now))
+
+            if probes_left and now >= next_probe:
+                for target in targets:
+                    try:
+                        sock.sendto(payload, (target, DEFAULT_PORT))
+                    except OSError:
+                        pass
+                probes_left -= 1
+                next_probe = now + 0.35
+
+            if not swept:
+                for host in hosts:
+                    try:
+                        sock.sendto(payload, (host, DEFAULT_PORT))
+                    except OSError:
+                        pass
+                swept = True
+
+            wait_until = deadline
+            if quiet_deadline is not None:
+                wait_until = min(wait_until, quiet_deadline)
+            if probes_left:
+                wait_until = min(wait_until, next_probe)
+            sock.settimeout(max(0.02, wait_until - now))
             try:
                 data, addr = sock.recvfrom(4096)
             except socket.timeout:
@@ -251,9 +369,8 @@ def discover_lights(timeout: float = 1.5) -> dict:
                 continue
             if message.get("method") == "getPilot" and "result" in message:
                 found[addr[0]] = message["result"]
-                # Most bulbs answer within milliseconds; stop soon after the
-                # last reply instead of always burning the full timeout.
-                quiet_deadline = time.monotonic() + 0.35
+                # Give slow bulbs a chance, but do not always burn the timeout.
+                quiet_deadline = time.monotonic() + 0.7
     finally:
         sock.close()
     return found
@@ -876,7 +993,7 @@ def run_set(args) -> int:
 
     if not ips:
         print("discovering WiZ lights...", file=sys.stderr)
-        ips = sorted(discover_lights())
+        ips = sorted(discover_lights(deep=True))
     if not ips:
         print("error: no WiZ lights found. Use --lights or set WIZ_LIGHTS.", file=sys.stderr)
         return 1
@@ -1090,7 +1207,7 @@ def main(argv=None) -> int:
         return install_lua_script(args.force)
 
     if args.discover:
-        found = discover_lights()
+        found = discover_lights(deep=True)
         if not found:
             print("no lights found")
             return 1
@@ -1150,7 +1267,7 @@ def main(argv=None) -> int:
     )
     if not lights:
         print("discovering WiZ lights...", file=sys.stderr)
-        found = discover_lights()
+        found = discover_lights(deep=True)
         lights = sorted(found)
         if not lights:
             print(

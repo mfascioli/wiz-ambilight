@@ -10,6 +10,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -374,6 +375,44 @@ class SceneNormalizeTests(unittest.TestCase):
                     os.environ.pop("WIZ_AMBILIGHT_SCENES_CONFIG", None)
                 else:
                     os.environ["WIZ_AMBILIGHT_SCENES_CONFIG"] = old
+
+
+class ScanTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.vars = {}
+        for key, value in {
+            "WIZ_AMBILIGHT_GUI_CONFIG": str(Path(self.tmp.name) / "lights.json"),
+            "WIZ_AMBILIGHT_SCENES_CONFIG": str(Path(self.tmp.name) / "scenes.json"),
+            "XDG_RUNTIME_DIR": self.tmp.name,
+        }.items():
+            self.vars[key] = os.environ.get(key)
+            os.environ[key] = value
+
+    def tearDown(self):
+        for key, value in self.vars.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        self.tmp.cleanup()
+
+    def test_manual_scan_is_deep(self):
+        panel = webui.Panel(m)
+        found = {"10.0.0.9": {"state": True}}
+        with mock.patch.object(m, "discover_lights", return_value=found) as discover:
+            with mock.patch.object(m, "query_lights", return_value={}):
+                count = panel.scan()
+        self.assertEqual(count, 1)
+        discover.assert_called_once_with(timeout=2.5, deep=True)
+
+    def test_background_scan_stays_light(self):
+        panel = webui.Panel(m)
+        found = {"10.0.0.9": {"state": True}}
+        with mock.patch.object(m, "discover_lights", return_value=found) as discover:
+            with mock.patch.object(m, "query_lights", return_value={}):
+                panel.scan(deep=False)
+        discover.assert_called_once_with(timeout=1.8, deep=False)
 
 
 class HttpTests(unittest.TestCase):

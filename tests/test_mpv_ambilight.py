@@ -98,6 +98,34 @@ class ParsingTests(unittest.TestCase):
         )
 
 
+class DiscoveryTargetTests(unittest.TestCase):
+    def test_broadcast_targets_include_global_and_subnet(self):
+        targets = m.broadcast_targets([("192.168.1.42", 24), ("10.0.0.5", 28)])
+        self.assertIn("255.255.255.255", targets)
+        self.assertIn("192.168.1.255", targets)
+        self.assertIn("10.0.0.15", targets)
+
+    def test_sweep_targets_cover_the_local_24(self):
+        hosts = m.sweep_targets([("192.168.1.42", 24)])
+        self.assertEqual(len(hosts), 253)
+        self.assertIn("192.168.1.5", hosts)
+        self.assertIn("192.168.1.7", hosts)
+        self.assertNotIn("192.168.1.42", hosts)
+        self.assertNotIn("192.168.1.255", hosts)
+
+    def test_sweep_respects_smaller_subnets(self):
+        hosts = m.sweep_targets([("10.0.0.5", 28)])
+        self.assertEqual(len(hosts), 13)
+        self.assertIn("10.0.0.14", hosts)
+        self.assertNotIn("10.0.0.5", hosts)
+
+    def test_sweep_is_capped_at_a_24(self):
+        hosts = m.sweep_targets([("10.1.2.3", 16)])
+        self.assertEqual(len(hosts), 253)
+        self.assertIn("10.1.2.99", hosts)
+        self.assertNotIn("10.1.3.1", hosts)
+
+
 class SmootherTests(unittest.TestCase):
     def test_zero_tau_snaps(self):
         smoother = m.Smoother(0)

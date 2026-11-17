@@ -539,11 +539,13 @@ class Panel:
 
     # -- discovery -------------------------------------------------------- #
 
-    def scan(self) -> int:
+    def scan(self, deep: bool = True) -> int:
         if self.demo:
             return len(self.live)
-        found = self.core.discover_lights(timeout=1.2)
-        details = self.core.query_lights(sorted(found))
+        found = self.core.discover_lights(timeout=2.5 if deep else 1.8, deep=deep)
+        details = self.core.query_lights(
+            sorted(found), timeout=1.2 if deep else 0.7
+        )
         live = {}
         for ip, info in found.items():
             system = details.get(ip) or {}
@@ -569,7 +571,7 @@ class Panel:
             return
         if time.time() - self.scanned > 12.0:
             try:
-                self.scan()
+                self.scan(deep=False)
             except OSError:
                 pass
 
