@@ -554,7 +554,14 @@ def run_launcher(args, lights, zone_names, mpv_extra):
         if args.verbose:
             print("running:", " ".join(command), file=sys.stderr)
 
-        proc = subprocess.Popen(command, env=env)
+        try:
+            proc = subprocess.Popen(command, env=env)
+        except FileNotFoundError:
+            print(
+                f"error: could not find '{command[0]}'. Install mpv or pass --mpv PATH.",
+                file=sys.stderr,
+            )
+            return 1
 
         stop_state = {"requested": False}
 
