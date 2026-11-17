@@ -2,6 +2,7 @@
 
 import json
 import os
+import stat
 import sys
 import tempfile
 import threading
@@ -74,6 +75,12 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(light["zone"], "")
         self.assertEqual(light["mac"], "d8a01154f818")
         self.assertNotIn("not-an-ip", config["lights"])
+
+    def test_control_characters_are_stripped_from_names(self):
+        config = webui.normalize_config(
+            {"lights": {"192.168.1.5": {"name": "Sofa\n\x00glow"}}}, m
+        )
+        self.assertEqual(config["lights"]["192.168.1.5"]["name"], "Sofaglow")
 
 
 class DiscoveryMergeTests(unittest.TestCase):
@@ -175,6 +182,25 @@ class CommandTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             webui.build_command(config, m)
 
+    def test_media_cannot_smuggle_mpv_options(self):
+        config = make_config(mode="launch", media="--script=/tmp/evil.lua")
+        config["lights"] = {"10.0.0.1": {"enabled": True}}
+        with self.assertRaises(ValueError):
+            webui.build_command(config, m)
+
+    def test_media_with_control_characters_is_rejected(self):
+        config = make_config(mode="launch", media="movie.mkv\n--script=x")
+        config["lights"] = {"10.0.0.1": {"enabled": True}}
+        with self.assertRaises(ValueError):
+            webui.build_command(config, m)
+
+    def test_identify_rejects_unknown_ip(self):
+        panel = webui.Panel(m, demo=True)
+        with self.assertRaises(ValueError):
+            panel.identify("8.8.8.8")
+        with self.assertRaises(ValueError):
+            panel.set_power("8.8.8.8", True)
+
 
 class DemoPanelTests(unittest.TestCase):
     def setUp(self):
@@ -198,6 +224,8 @@ class DemoPanelTests(unittest.TestCase):
         self.assertIn("model", snapshot["lights"][0])
         self.assertEqual(snapshot["session"]["running"], False)
         self.assertIn("hue", snapshot["styles"])
+        self.assertIn("fps", snapshot["style_details"]["hue"])
+        self.assertTrue(snapshot["config_path"].endswith("lights.json"))
 
     def test_light_update_is_in_memory_only(self):
         panel = webui.Panel(m, demo=True)
@@ -239,6 +267,15 @@ class HttpTests(unittest.TestCase):
         request = urllib.request.Request(self.base + path, data=data, headers=headers or {})
         return urllib.request.urlopen(request, timeout=5)
 
+    def auth_headers(self, extra=None):
+        headers = {
+            "Content-Type": "application/json",
+            "Origin": self.base,
+            "X-Wiz-Token": self.panel.token,
+        }
+        headers.update(extra or {})
+        return headers
+
     def test_index_and_state(self):
         with self.request("/") as response:
             self.assertIn(b"Wiz Ambilight", response.read())
@@ -246,27 +283,51 @@ class HttpTests(unittest.TestCase):
             snapshot = json.loads(response.read())
         self.assertTrue(snapshot["demo"])
 
+    def test_index_embeds_the_token(self):
+        with self.request("/") as response:
+            body = response.read()
+        self.assertIn(self.panel.token.encode(), body)
+        self.assertNotIn(b"__WIZ_TOKEN__", body)
+        self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+        self.assertIn("default-src 'none'", response.headers["Content-Security-Policy"])
+
     def test_config_post(self):
-        headers = {
-            "Content-Type": "application/json",
-            "Origin": self.base,
-        }
-        with self.request("/api/config", {"brightness": 55}, headers) as response:
+        with self.request(
+            "/api/config", {"brightness": 55}, self.auth_headers()
+        ) as response:
             snapshot = json.loads(response.read())
         self.assertEqual(snapshot["config"]["brightness"], 55)
 
-    def test_rejects_wrong_origin(self):
-        headers = {
-            "Content-Type": "application/json",
-            "Origin": "http://evil.example",
-        }
+    def test_rejects_missing_token(self):
+        headers = {"Content-Type": "application/json", "Origin": self.base}
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.request("/api/config", {"brightness": 55}, headers)
         caught.exception.close()
         self.assertEqual(caught.exception.code, 403)
 
+    def test_rejects_wrong_origin(self):
+        headers = self.auth_headers({"Origin": "http://evil.example"})
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request("/api/config", {"brightness": 55}, headers)
+        caught.exception.close()
+        self.assertEqual(caught.exception.code, 403)
+
+    def test_rejects_wrong_host(self):
+        headers = self.auth_headers({"Host": "evil.example"})
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request("/api/config", {"brightness": 55}, headers)
+        caught.exception.close()
+        self.assertEqual(caught.exception.code, 403)
+
+    def test_get_rejects_wrong_host(self):
+        headers = {"Host": "evil.example"}
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request("/api/state", headers=headers)
+        caught.exception.close()
+        self.assertEqual(caught.exception.code, 403)
+
     def test_rejects_non_json(self):
-        headers = {"Content-Type": "text/plain"}
+        headers = self.auth_headers({"Content-Type": "text/plain"})
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.request("/api/config", {"brightness": 55}, headers)
         caught.exception.close()
@@ -277,6 +338,15 @@ class HttpTests(unittest.TestCase):
             self.request("/../mpv_ambilight.py")
         caught.exception.close()
         self.assertEqual(caught.exception.code, 404)
+
+
+class ConfigPermissionTests(unittest.TestCase):
+    def test_config_file_is_private(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sub" / "lights.json"
+            webui.write_json(path, {"lights": {}})
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
 
 
 if __name__ == "__main__":

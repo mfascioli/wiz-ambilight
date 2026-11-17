@@ -13,13 +13,17 @@ const refs = {
   demoBadge: document.getElementById("demoBadge"),
   versionBadge: document.getElementById("versionBadge"),
   quitBtn: document.getElementById("quitBtn"),
+  offlineBanner: document.getElementById("offlineBanner"),
   scanBtn: document.getElementById("scanBtn"),
+  enableAllBtn: document.getElementById("enableAllBtn"),
+  enableNoneBtn: document.getElementById("enableNoneBtn"),
   lights: document.getElementById("lights"),
   lightsEmpty: document.getElementById("lightsEmpty"),
   luaBanner: document.getElementById("luaBanner"),
   luaText: document.getElementById("luaText"),
   installBtn: document.getElementById("installBtn"),
   sessionPill: document.getElementById("sessionPill"),
+  sessionDetail: document.getElementById("sessionDetail"),
   startBtn: document.getElementById("startBtn"),
   stopBtn: document.getElementById("stopBtn"),
   mediaField: document.getElementById("mediaField"),
@@ -27,16 +31,28 @@ const refs = {
   browseBtn: document.getElementById("browseBtn"),
   modeHint: document.getElementById("modeHint"),
   styleSelect: document.getElementById("styleSelect"),
+  styleHint: document.getElementById("styleHint"),
   layoutSelect: document.getElementById("layoutSelect"),
   brightness: document.getElementById("brightness"),
   brightnessOut: document.getElementById("brightnessOut"),
   dryRun: document.getElementById("dryRun"),
+  mapping: document.getElementById("mapping"),
   log: document.getElementById("log"),
   clearLog: document.getElementById("clearLog"),
+  configPath: document.getElementById("configPath"),
   toast: document.getElementById("toast"),
 };
 
-const state = { snapshot: null, cards: new Map(), poll: null, logFrom: 0, busy: false };
+const TOKEN = document.querySelector('meta[name="wiz-token"]')?.content || "";
+
+const state = {
+  snapshot: null,
+  cards: new Map(),
+  poll: null,
+  logFrom: 0,
+  busy: false,
+  closed: false,
+};
 
 // --------------------------------------------------------------------- utils
 
@@ -51,17 +67,21 @@ function toast(message, isError) {
 async function api(path, body) {
   const response = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Wiz-Token": TOKEN },
     body: JSON.stringify(body || {}),
   });
   const data = await response.json().catch(() => ({}));
+  if (response.status === 403) {
+    throw new Error("The panel was restarted or the request was blocked — reload the page.");
+  }
   if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
   return data;
 }
 
-async function action(path, body, message) {
+async function action(path, body, message, button = null) {
   if (state.busy) return;
   state.busy = true;
+  if (button) button.classList.add("loading");
   try {
     const data = await api(path, body);
     if (data && data.lights) apply(data);
@@ -71,6 +91,7 @@ async function action(path, body, message) {
     toast(error.message, true);
   } finally {
     state.busy = false;
+    if (button) button.classList.remove("loading");
   }
 }
 
@@ -98,10 +119,12 @@ function buildCard(light) {
   name.setAttribute("aria-label", "Light name");
 
   const meta = el("div", "meta");
+  const online = el("span", "online-dot");
   const ipLabel = el("span", "ip");
   const modelLabel = el("span", "model");
+  const zoneChip = el("span", "zone-chip");
   const extraLabel = el("span", "extra");
-  meta.append(ipLabel, modelLabel, extraLabel);
+  meta.append(online, ipLabel, modelLabel, zoneChip, extraLabel);
 
   const main = el("div", "light-main");
   main.append(name, meta);
@@ -134,32 +157,64 @@ function buildCard(light) {
   root.append(swatch, main, controls);
 
   name.addEventListener("change", () => {
-    action("/api/light", { ip: light.ip, name: name.value.trim() });
+    const value = name.value.trim();
+    if (value === (card.light?.name || "")) return;
+    action("/api/light", { ip: light.ip, name: value });
   });
   name.addEventListener("keydown", (event) => {
     if (event.key === "Enter") name.blur();
+    if (event.key === "Escape") {
+      name.value = card.light?.name || "";
+      name.blur();
+    }
   });
   toggleInput.addEventListener("change", () => {
+    if (toggleInput.checked === Boolean(card.light?.enabled)) return;
     action("/api/light", { ip: light.ip, enabled: toggleInput.checked });
   });
   zone.addEventListener("change", () => {
+    if (zone.value === (card.light?.zone || "")) return;
     action("/api/light", { ip: light.ip, zone: zone.value });
   });
   identify.addEventListener("click", () => {
-    action("/api/identify", { ip: light.ip }, "Flashing the bulb…");
+    action("/api/identify", { ip: light.ip }, "Flashing the bulb…", identify);
   });
   power.addEventListener("click", () => {
-    action("/api/power", { ip: light.ip, on: !light.state });
+    action(
+      "/api/power",
+      { ip: light.ip, on: !(card.light?.state) },
+      card.light?.state ? "Turning the bulb off…" : "Turning the bulb on…",
+      power,
+    );
   });
 
-  return { root, swatch, name, ipLabel, modelLabel, extraLabel, zone, toggleInput, identify, power };
+  const card = {
+    root,
+    swatch,
+    name,
+    online,
+    ipLabel,
+    modelLabel,
+    zoneChip,
+    extraLabel,
+    zone,
+    toggleInput,
+    identify,
+    power,
+    light: null,
+  };
+  return card;
 }
 
 function updateCard(card, light) {
+  card.light = light;
   card.root.classList.toggle("on", light.state);
   card.root.classList.toggle("enabled", light.enabled);
   card.root.classList.toggle("offline", !light.online);
   if (document.activeElement !== card.name) card.name.value = light.name;
+
+  card.online.className = `online-dot ${light.online ? "up" : "down"}`;
+  card.online.title = light.online ? "Online" : "Offline";
   card.ipLabel.textContent = light.ip;
   card.modelLabel.textContent = light.model || "unknown model";
   card.extraLabel.textContent = light.online
@@ -167,6 +222,10 @@ function updateCard(card, light) {
         .filter(Boolean)
         .join(" · ")
     : "offline";
+  card.zoneChip.classList.toggle("hidden", !light.enabled || !light.online);
+  card.zoneChip.textContent = `→ ${zoneLabel(light.effective_zone)}`;
+  card.zoneChip.title = `This bulb shows the ${zoneLabel(light.effective_zone)} zone`;
+
   if (document.activeElement !== card.zone) {
     const known = new Set(["", ...card.zone.dataset.zones.split(",")]);
     if (!known.has(light.zone)) {
@@ -183,6 +242,8 @@ function updateCard(card, light) {
   card.swatch.classList.toggle("on", light.state && light.enabled);
   card.identify.disabled = !light.online;
   card.power.disabled = !light.online;
+  card.power.title = light.state ? "Turn this bulb off" : "Turn this bulb on";
+  card.power.setAttribute("aria-label", card.power.title);
 }
 
 function renderLights(lights, zones) {
@@ -224,11 +285,24 @@ function renderSession(snapshot) {
   refs.sessionPill.classList.toggle("live", running);
   refs.stopBtn.disabled = !running;
 
+  if (running && session.started) {
+    const when = new Date(session.started * 1000).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    refs.sessionDetail.textContent = `Started at ${when} · changing settings restarts the sync.`;
+  } else {
+    refs.sessionDetail.textContent = "No sync running.";
+  }
+
   const enabled = snapshot.lights.filter((light) => light.enabled).length;
   const online = snapshot.lights.filter((light) => light.online).length;
   refs.subtitle.textContent = snapshot.demo
     ? "Demo mode — no packets are sent"
     : `${online} of ${snapshot.lights.length} lights online · ${enabled} in the show`;
+
+  refs.enableAllBtn.disabled = snapshot.lights.length === 0 || enabled === snapshot.lights.length;
+  refs.enableNoneBtn.disabled = enabled === 0;
 
   const mode = snapshot.config.mode;
   for (const button of document.querySelectorAll(".mode")) {
@@ -261,9 +335,36 @@ function renderSettings(snapshot) {
   fillSelect(refs.layoutSelect, snapshot.layouts);
   if (document.activeElement !== refs.styleSelect) refs.styleSelect.value = config.style;
   if (document.activeElement !== refs.layoutSelect) refs.layoutSelect.value = config.layout;
-  if (document.activeElement !== refs.brightness) refs.brightness.value = String(config.brightness);
-  refs.brightnessOut.value = String(config.brightness);
+  if (document.activeElement !== refs.brightness) {
+    refs.brightness.value = String(config.brightness);
+    refs.brightnessOut.value = String(config.brightness);
+  }
   refs.dryRun.checked = Boolean(config.dry_run);
+
+  const details = snapshot.style_details?.[config.style];
+  refs.styleHint.textContent = details
+    ? `${details.fps} fps capture · ${details.smooth ? `${details.smooth} ms fade` : "no fade"} · ` +
+      `${details.send_hz} Hz output · ${Math.round(details.edge * 100)}% edge`
+    : "";
+}
+
+function renderMapping(snapshot) {
+  refs.mapping.replaceChildren();
+  const enabled = snapshot.lights.filter((light) => light.enabled);
+  if (!enabled.length) {
+    refs.mapping.append(el("span", "mapping-empty", "No lights enabled."));
+    return;
+  }
+  for (const light of enabled) {
+    const chip = el("span", "map-chip");
+    if (!light.online) chip.classList.add("offline");
+    chip.append(
+      el("strong", "", light.name || light.ip),
+      el("span", "map-zone", `→ ${zoneLabel(light.effective_zone)}`),
+    );
+    chip.title = `${light.name || light.ip} shows the ${zoneLabel(light.effective_zone)} zone`;
+    refs.mapping.append(chip);
+  }
 }
 
 function renderLua(snapshot) {
@@ -294,9 +395,12 @@ function apply(snapshot) {
   state.snapshot = snapshot;
   refs.versionBadge.textContent = `v${snapshot.version}`;
   refs.demoBadge.classList.toggle("hidden", !snapshot.demo);
+  refs.configPath.textContent = `Config: ${snapshot.config_path}`;
+  refs.configPath.title = snapshot.config_path;
   renderLights(snapshot.lights, snapshot.zones);
   renderSession(snapshot);
   renderSettings(snapshot);
+  renderMapping(snapshot);
   renderLua(snapshot);
   renderLog(snapshot);
 }
@@ -304,18 +408,41 @@ function apply(snapshot) {
 // --------------------------------------------------------------------- events
 
 function saveConfig(patch, message) {
-  return action("/api/config", patch, message);
+  const running = Boolean(state.snapshot?.session.running);
+  return action(
+    "/api/config",
+    patch,
+    message || (running ? "Saved — restarting the sync…" : null),
+  );
+}
+
+function setAllEnabled(enabled) {
+  if (!state.snapshot) return;
+  const lights = {};
+  for (const light of state.snapshot.lights) lights[light.ip] = { enabled };
+  saveConfig({ lights }, enabled ? "All lights included" : "No lights included");
 }
 
 for (const button of document.querySelectorAll(".mode")) {
   button.addEventListener("click", () => saveConfig({ mode: button.dataset.mode }));
 }
 
-refs.scanBtn.addEventListener("click", () => action("/api/scan", {}, "Network scan finished"));
-refs.startBtn.addEventListener("click", () => action("/api/start", {}, "Ambilight started"));
-refs.stopBtn.addEventListener("click", () => action("/api/stop", {}, "Ambilight stopped"));
+refs.scanBtn.addEventListener("click", async () => {
+  const original = refs.scanBtn.textContent;
+  refs.scanBtn.textContent = "Scanning…";
+  refs.scanBtn.disabled = true;
+  const data = await action("/api/scan", {}, null, refs.scanBtn);
+  refs.scanBtn.textContent = original;
+  refs.scanBtn.disabled = false;
+  if (data) toast(`Scan finished · ${data.lights.length} lights known`);
+});
+
+refs.enableAllBtn.addEventListener("click", () => setAllEnabled(true));
+refs.enableNoneBtn.addEventListener("click", () => setAllEnabled(false));
+refs.startBtn.addEventListener("click", () => action("/api/start", {}, "Ambilight started", refs.startBtn));
+refs.stopBtn.addEventListener("click", () => action("/api/stop", {}, "Ambilight stopped", refs.stopBtn));
 refs.installBtn.addEventListener("click", () =>
-  action("/api/install-script", {}, "Lua script installed — restart mpv"),
+  action("/api/install-script", {}, "Lua script installed — restart mpv", refs.installBtn),
 );
 refs.browseBtn.addEventListener("click", async () => {
   try {
@@ -328,35 +455,62 @@ refs.browseBtn.addEventListener("click", async () => {
     toast(error.message, true);
   }
 });
-refs.mediaInput.addEventListener("change", () => saveConfig({ media: refs.mediaInput.value.trim() }));
+refs.mediaInput.addEventListener("change", () => {
+  const value = refs.mediaInput.value.trim();
+  if (value !== (state.snapshot?.config.media || "")) saveConfig({ media: value });
+});
 refs.styleSelect.addEventListener("change", () => saveConfig({ style: refs.styleSelect.value }));
 refs.layoutSelect.addEventListener("change", () => saveConfig({ layout: refs.layoutSelect.value }));
 refs.brightness.addEventListener("input", () => {
   refs.brightnessOut.value = refs.brightness.value;
 });
-refs.brightness.addEventListener("change", () =>
-  saveConfig({ brightness: Number(refs.brightness.value) }),
-);
-refs.dryRun.addEventListener("change", () => saveConfig({ dry_run: refs.dryRun.checked }));
+refs.brightness.addEventListener("change", () => {
+  const value = Number(refs.brightness.value);
+  if (value !== state.snapshot?.config.brightness) saveConfig({ brightness: value });
+});
+refs.dryRun.addEventListener("change", () => {
+  if (refs.dryRun.checked !== Boolean(state.snapshot?.config.dry_run)) {
+    saveConfig({ dry_run: refs.dryRun.checked });
+  }
+});
 refs.clearLog.addEventListener("click", () => {
   state.logFrom = state.snapshot ? state.snapshot.session.log.length : 0;
   refs.log.textContent = "No activity yet.";
 });
+
+let quitArmed = false;
+let quitTimer = null;
 refs.quitBtn.addEventListener("click", async () => {
+  if (!quitArmed) {
+    quitArmed = true;
+    refs.quitBtn.textContent = "Confirm quit";
+    refs.quitBtn.classList.add("danger");
+    toast("Press Quit again to stop the sync and close the panel.");
+    quitTimer = window.setTimeout(() => {
+      quitArmed = false;
+      refs.quitBtn.textContent = "Quit";
+      refs.quitBtn.classList.remove("danger");
+    }, 5000);
+    return;
+  }
+  window.clearTimeout(quitTimer);
+  state.closed = true;
   try {
     await api("/api/quit");
   } catch (_) {
-    /* server may close the socket before answering */
+    /* the server may close the socket before answering */
   }
   window.clearInterval(state.poll);
   refs.statusDot.classList.remove("live");
   refs.sessionPill.textContent = "closed";
   refs.sessionPill.classList.remove("live");
-  toast("Panel closed. Your lights keep running until you stop mpv.");
+  refs.sessionDetail.textContent = "Panel closed.";
+  refs.offlineBanner.classList.add("hidden");
+  toast("Panel closed. Lights stop when the sync child exits.");
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) refresh();
+  if (!document.hidden && !state.closed) refresh();
 });
 
 async function refresh() {
@@ -364,16 +518,19 @@ async function refresh() {
     const response = await fetch("/api/state", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     apply(await response.json());
+    refs.offlineBanner.classList.add("hidden");
   } catch (error) {
+    if (state.closed) return;
     refs.statusDot.classList.remove("live");
     refs.subtitle.textContent = "Panel connection lost";
+    refs.offlineBanner.classList.remove("hidden");
   }
 }
 
 async function boot() {
   await refresh();
   state.poll = window.setInterval(() => {
-    if (!document.hidden) refresh();
+    if (!document.hidden && !state.closed) refresh();
   }, 1200);
 }
 

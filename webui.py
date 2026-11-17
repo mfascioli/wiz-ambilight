@@ -9,6 +9,7 @@ files in ``web/`` and a JSON API, and the panel owns at most one sync process
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
 import subprocess
@@ -103,9 +104,13 @@ def read_json(path: Path, default):
 
 
 def write_json(path: Path, payload) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
     tmp.replace(path)
 
 
@@ -144,7 +149,7 @@ def normalize_config(raw, core) -> dict:
         if zone not in core.ZONE_NAMES:
             zone = ""
         lights[ip] = {
-            "name": str(entry.get("name") or "")[:40],
+            "name": "".join(ch for ch in str(entry.get("name") or "") if ch.isprintable())[:40],
             "enabled": bool(entry.get("enabled", True)),
             "zone": zone,
             "model": str(entry.get("model") or "")[:40],
@@ -247,7 +252,17 @@ def build_command(config: dict, core, demo: bool = False):
     if config["mode"] == "attach":
         argv.append("--attach")
     else:
-        argv.append(config["media"].strip())
+        media = config["media"].strip()
+        if not media:
+            raise ValueError("choose a video file or switch to attach mode")
+        # argv is already shell-free. Refuse values that mpv would parse as
+        # options (for example --script=evil.lua) so the file field can never
+        # turn into an mpv command.
+        if media.startswith("-"):
+            raise ValueError("media paths cannot start with '-'")
+        if any(ord(ch) < 32 for ch in media):
+            raise ValueError("invalid media path")
+        argv.append(media)
     return argv, ips, zones
 
 
@@ -267,11 +282,16 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _looks_like_ours(pid: int) -> bool:
+    if pid == os.getpid():
+        return False
+    proc = Path(f"/proc/{pid}/cmdline")
+    if not Path("/proc").exists():
+        return True  # no /proc: trust the PID file written by us
     try:
-        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        raw = proc.read_bytes()
     except OSError:
-        return True  # no /proc: trust the PID file
-    return b"mpv_ambilight" in raw
+        return False
+    return str(SCRIPT).encode() in raw and b"mpv_ambilight" in raw
 
 
 class Session:
@@ -425,6 +445,7 @@ class Panel:
         self.core = core
         self.port = port
         self.demo = demo
+        self.token = secrets.token_urlsafe(24)
         self.lock = threading.RLock()
         self.config = load_config(core)
         self.live = {}
@@ -543,9 +564,13 @@ class Panel:
             "zones": sorted(self.core.ZONE_NAMES),
             "layouts": ["auto", *self.core.LAYOUTS],
             "styles": list(self.core.STYLES),
+            "style_details": {
+                name: dict(values) for name, values in self.core.STYLES.items()
+            },
             "session": self.session.snapshot(),
             "lua": self.lua_status(),
             "scanned": self.scanned,
+            "config_path": str(config_path()),
         }
 
     # -- mutations -------------------------------------------------------- #
@@ -606,7 +631,17 @@ class Panel:
         self.session.stop()
         return self.snapshot()
 
+    def _known_ip(self, ip: str) -> str:
+        """Only allow actions on bulbs this panel knows about."""
+        ip = str(ip or "").strip()
+        if ip not in self.config["lights"] and ip not in self.live:
+            raise ValueError("unknown light")
+        if not _IP_RE.match(ip):
+            raise ValueError("invalid light address")
+        return ip
+
     def identify(self, ip: str) -> None:
+        ip = self._known_ip(ip)
         if self.demo:
             self.session.write_log(f"demo: identify {ip}")
             return
@@ -631,6 +666,7 @@ class Panel:
             sender.close()
 
     def set_power(self, ip: str, on: bool) -> None:
+        ip = self._known_ip(ip)
         if self.demo:
             self.live.setdefault(ip, {})["state"] = bool(on)
             return
@@ -674,15 +710,31 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
+    def _host_ok(self) -> bool:
+        host = (self.headers.get("Host") or "").lower()
+        port = self.panel.port
+        return host in {
+            f"127.0.0.1:{port}",
+            f"localhost:{port}",
+            f"[::1]:{port}",
+            "127.0.0.1",
+            "localhost",
+            "[::1]",
+        }
+
     def _origin_ok(self) -> bool:
         origin = self.headers.get("Origin")
         if not origin:
-            return True  # non-browser clients (curl) are fine
+            return True  # non-browser clients still need the token
         allowed = {
             f"http://127.0.0.1:{self.panel.port}",
             f"http://localhost:{self.panel.port}",
         }
         return origin in allowed
+
+    def _token_ok(self) -> bool:
+        supplied = self.headers.get("X-Wiz-Token") or ""
+        return secrets.compare_digest(supplied, self.panel.token)
 
     def _send(self, status: int, body: bytes, ctype: str) -> None:
         self.send_response(status)
@@ -690,6 +742,17 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'none'; script-src 'self'; style-src 'self'; "
+            "img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
+            "form-action 'none'; frame-ancestors 'none'",
+        )
         self.end_headers()
         self.wfile.write(body)
 
@@ -701,6 +764,9 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"error": message}, status)
 
     def do_GET(self):
+        if not self._host_ok():
+            self._error("bad host", 403)
+            return
         path = urlparse(self.path).path
         if path == "/api/state":
             self.panel.maybe_scan()
@@ -716,11 +782,19 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             self._error("missing web asset", 500)
             return
+        if name == "index.html":
+            body = body.replace(b"__WIZ_TOKEN__", self.panel.token.encode())
         self._send(200, body, ctype)
 
     def do_POST(self):
+        if not self._host_ok():
+            self._error("bad host", 403)
+            return
         if not self._origin_ok():
             self._error("bad origin", 403)
+            return
+        if not self._token_ok():
+            self._error("invalid token", 403)
             return
         if "application/json" not in (self.headers.get("Content-Type") or ""):
             self._error("expected application/json", 415)
@@ -824,7 +898,7 @@ def pick_file() -> str:
             continue
         try:
             result = subprocess.run(
-                argv, capture_output=True, text=True, timeout=300
+                argv, capture_output=True, text=True, timeout=120
             )
         except (OSError, subprocess.TimeoutExpired):
             continue

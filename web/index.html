@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="wiz-token" content="__WIZ_TOKEN__">
 <title>Wiz Ambilight</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -18,9 +19,13 @@
   <div class="top-actions">
     <span class="badge hidden" id="demoBadge">demo</span>
     <span class="badge" id="versionBadge">v—</span>
-    <button class="ghost" id="quitBtn" title="Stop the panel">Quit</button>
+    <button class="ghost" id="quitBtn" title="Close the panel (the sync child stops too)">Quit</button>
   </div>
 </header>
+
+<div class="offline-banner hidden" id="offlineBanner" role="status">
+  Connection to the panel lost — retrying…
+</div>
 
 <main>
   <section class="card lights-card">
@@ -29,7 +34,11 @@
         <h2>Lights</h2>
         <p class="hint">Pick which bulbs take part. Names are stored locally.</p>
       </div>
-      <button class="ghost" id="scanBtn">Scan network</button>
+      <div class="head-actions">
+        <button class="ghost small" id="enableAllBtn" title="Include every known light">All</button>
+        <button class="ghost small" id="enableNoneBtn" title="Include no lights">None</button>
+        <button class="ghost" id="scanBtn">Scan network</button>
+      </div>
     </div>
     <div class="lua-banner hidden" id="luaBanner">
       <span id="luaText"></span>
@@ -47,6 +56,7 @@
         <h2>Session</h2>
         <span class="pill" id="sessionPill">stopped</span>
       </div>
+      <p class="meta-line" id="sessionDetail">No sync running.</p>
       <div class="modes" role="group" aria-label="Sync mode">
         <button class="mode" data-mode="attach">Attach to mpv</button>
         <button class="mode" data-mode="launch">Launch a video</button>
@@ -72,6 +82,7 @@
       <div class="field">
         <label for="styleSelect">Style preset</label>
         <select id="styleSelect"></select>
+        <p class="hint tight" id="styleHint"></p>
       </div>
       <div class="field">
         <label for="layoutSelect">Layout</label>
@@ -85,18 +96,28 @@
         <input type="checkbox" id="dryRun">
         <span>Dry run (log colors, no UDP)</span>
       </label>
-    </section>
-
-    <section class="card log-card">
-      <div class="card-head">
-        <h2>Activity</h2>
-        <button class="ghost small" id="clearLog">Clear</button>
+      <div class="mapping-block">
+        <span class="mapping-label">Zone map</span>
+        <div class="mapping" id="mapping"></div>
       </div>
-      <pre class="log" id="log" aria-live="polite"></pre>
     </section>
   </aside>
+
+  <section class="card log-card">
+    <div class="card-head">
+      <h2>Activity</h2>
+      <button class="ghost small" id="clearLog">Clear</button>
+    </div>
+    <pre class="log" id="log" aria-live="polite"></pre>
+  </section>
 </main>
 
+<footer class="footer">
+  <span>Only reachable from this computer · 127.0.0.1</span>
+  <span class="config-path" id="configPath"></span>
+</footer>
+
+<noscript><p class="noscript">This panel needs JavaScript enabled.</p></noscript>
 <div class="toast hidden" id="toast" role="status"></div>
 <script src="app.js"></script>
 </body>

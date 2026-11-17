@@ -103,14 +103,23 @@ It opens `http://127.0.0.1:8765/` in your browser. The panel scans the LAN,
 lists every bulb it finds, and lets you:
 
 - choose which bulbs take part and name them (`Sofa`, `TV wall`, …);
-- see each bulb's model, firmware, IP and live state;
+- see each bulb's model, firmware, IP, online state and **effective zone**;
 - assign a zone per bulb or pick a layout, style and brightness;
+- preview the **zone map** (`Sofa glow → top-left`) before starting;
+- include or exclude every light at once, with one **All / None** click;
 - flash a bulb to identify it, or toggle its power;
 - start/stop the sync in **attach** mode or launch a **video file**;
-- follow the sync log and install the mpv Lua script with one click.
+- follow the sync log, with connection-loss recovery and a confirm-to-quit step;
+- install the mpv Lua script with one click.
 
 <p align="center">
-  <img src="docs/gui.png" alt="Wiz Ambilight web panel" width="820">
+  <img src="docs/gui.png" alt="Wiz Ambilight panel while syncing" width="820"><br>
+  <em>Attach mode while syncing: names, live state, zone map and activity log.</em>
+</p>
+
+<p align="center">
+  <img src="docs/gui-launch.png" alt="Wiz Ambilight panel in launch mode" width="820"><br>
+  <em>Launch mode: pick a file once, then start and stop from the same panel.</em>
 </p>
 
 Useful flags:
@@ -121,17 +130,35 @@ Useful flags:
 | `--no-browser` | do not open a browser automatically |
 | `--demo` | fake lights, never send UDP — good for trying the UI |
 
-The panel is a standard-library `ThreadingHTTPServer` bound to `127.0.0.1`. It
-accepts JSON POSTs only from its own origin. The sync runs as a child process,
-so closing the tab or the panel does not leave a stray daemon behind; the panel
-also adopts a sync it started before a restart (PID file in
-`$XDG_RUNTIME_DIR/wiz-ambilight/gui-daemon.json`).
+The panel is a standard-library `ThreadingHTTPServer` bound to `127.0.0.1`. The
+sync runs as a child process, so closing the tab or the panel does not leave a
+stray daemon behind; the panel also adopts a sync it started before a restart
+(PID file in `$XDG_RUNTIME_DIR/wiz-ambilight/gui-daemon.json`).
 
 Settings and names live in
 `~/.config/wiz-ambilight/lights.json` (override with
 `WIZ_AMBILIGHT_GUI_CONFIG`). WiZ does not expose app-assigned names over UDP,
 so names are stored locally. If DHCP moves a bulb, the panel matches it by MAC
 and keeps its name and zone.
+
+### Panel security
+
+The panel is deliberately boring about security:
+
+- **Local only.** It binds to `127.0.0.1` and rejects requests whose `Host` or
+  `Origin` is not the panel itself, which also blocks DNS-rebinding tricks.
+- **Per-run token.** Every POST needs a random `X-Wiz-Token` embedded in the
+  page; another site cannot read it, and browsers cannot send JSON cross-origin
+  without a preflight the panel does not allow.
+- **Strict headers.** CSP (`default-src 'none'`, only its own JS/CSS), no
+  framing, no referrers, no camera/mic/geolocation.
+- **No shell.** Child processes and the file picker use argument lists, never a
+  shell string. A video path that starts with `-` is rejected so it can never
+  become an mpv option such as `--script=`.
+- **Scoped actions.** Identify and power only accept bulbs the panel already
+  knows about.
+- **Private config.** `lights.json` is written `0600` inside a `0700`
+  directory.
 
 ## Styles
 
@@ -294,6 +321,7 @@ Repository layout:
 ├── lua/wiz_ambilight.lua   # runs inside mpv, writes zone colors as JSON
 ├── tests/                  # dependency-free unit tests
 ├── docs/gui.png            # panel screenshot used by this README
+├── docs/gui-launch.png     # launch-mode screenshot
 ├── contrib/                # optional systemd user service
 └── upstream/               # original wiz-hack toolkit, kept for reference
 ```
