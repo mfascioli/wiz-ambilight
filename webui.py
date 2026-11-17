@@ -1,0 +1,863 @@
+"""Local web panel for WiZ Ambilight.
+
+No third-party dependencies: a small ThreadingHTTPServer serves the static
+files in ``web/`` and a JSON API, and the panel owns at most one sync process
+(``mpv_ambilight.py --attach`` or a media launch). The panel binds to
+127.0.0.1 and only accepts JSON POSTs from its own origin.
+"""
+
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+import time
+import webbrowser
+from collections import deque
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlparse
+
+HERE = Path(__file__).resolve().parent
+WEB_DIR = HERE / "web"
+SCRIPT = HERE / "mpv_ambilight.py"
+DEFAULT_PORT = 8765
+APP_NAME = "wiz-ambilight"
+
+CONFIG_KEYS = ("layout", "style", "brightness", "mode", "media", "dry_run")
+DEFAULT_CONFIG = {
+    "layout": "auto",
+    "style": "hue",
+    "brightness": 100,
+    "mode": "attach",
+    "media": "",
+    "dry_run": False,
+    "lights": {},
+}
+
+DEMO_LIGHTS = {
+    "10.0.0.11": {
+        "model": "ESP24_SHRGBC_01",
+        "mac": "d8a01154f818",
+        "state": True,
+        "dimming": 62,
+        "temp": 3012,
+        "r": 255,
+        "g": 190,
+        "b": 120,
+    },
+    "10.0.0.12": {
+        "model": "ESP24_SHRGBC_01",
+        "mac": "d8a01154fba8",
+        "state": True,
+        "dimming": 48,
+        "temp": 3012,
+        "r": 120,
+        "g": 200,
+        "b": 255,
+    },
+    "10.0.0.13": {
+        "model": "ESP15_SHTW_01",
+        "mac": "d8a01154a1c2",
+        "state": False,
+        "dimming": 100,
+        "temp": 2700,
+        "r": 255,
+        "g": 255,
+        "b": 255,
+    },
+}
+
+
+# --------------------------------------------------------------------------- #
+# Paths / config
+# --------------------------------------------------------------------------- #
+
+
+def config_dir() -> Path:
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / APP_NAME
+
+
+def config_path() -> Path:
+    override = os.environ.get("WIZ_AMBILIGHT_GUI_CONFIG")
+    return Path(override) if override else config_dir() / "lights.json"
+
+
+def runtime_dir() -> Path:
+    base = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    path = Path(base) / APP_NAME
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return path
+
+
+def read_json(path: Path, default):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return default
+
+
+def write_json(path: Path, payload) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
+
+
+_IP_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+
+
+def normalize_config(raw, core) -> dict:
+    """Return a config that always has the expected shape and sane values."""
+    raw = raw if isinstance(raw, dict) else {}
+    config = dict(DEFAULT_CONFIG)
+    for key in CONFIG_KEYS:
+        if key in raw:
+            config[key] = raw[key]
+
+    if config["layout"] not in ("auto", *core.LAYOUTS):
+        config["layout"] = "auto"
+    if config["style"] not in core.STYLES:
+        config["style"] = "hue"
+    try:
+        config["brightness"] = max(10, min(100, int(config["brightness"])))
+    except (TypeError, ValueError):
+        config["brightness"] = 100
+    if config["mode"] not in ("attach", "launch"):
+        config["mode"] = "attach"
+    config["media"] = str(config["media"] or "")[:4096]
+    config["dry_run"] = bool(config["dry_run"])
+
+    lights = {}
+    raw_lights = raw.get("lights") if isinstance(raw.get("lights"), dict) else {}
+    for ip, entry in raw_lights.items():
+        ip = str(ip).strip()
+        if not _IP_RE.match(ip):
+            continue
+        entry = entry if isinstance(entry, dict) else {}
+        zone = entry.get("zone") or ""
+        if zone not in core.ZONE_NAMES:
+            zone = ""
+        lights[ip] = {
+            "name": str(entry.get("name") or "")[:40],
+            "enabled": bool(entry.get("enabled", True)),
+            "zone": zone,
+            "model": str(entry.get("model") or "")[:40],
+            "mac": re.sub(r"[^0-9a-f]", "", str(entry.get("mac") or "").lower())[:12],
+            "firmware": str(entry.get("firmware") or "")[:20],
+        }
+    config["lights"] = lights
+    return config
+
+
+def load_config(core) -> dict:
+    return normalize_config(read_json(config_path(), {}), core)
+
+
+def save_config(config: dict, core) -> dict:
+    clean = normalize_config(config, core)
+    write_json(config_path(), clean)
+    return clean
+
+
+def merge_discovered(config: dict, found: dict) -> dict:
+    """Add new bulbs to the config, migrating entries when an IP changed."""
+    by_mac = {}
+    for ip, entry in config["lights"].items():
+        if entry.get("mac"):
+            by_mac[entry["mac"]] = ip
+
+    for ip, info in found.items():
+        mac = re.sub(r"[^0-9a-f]", "", str(info.get("mac") or "").lower())[:12]
+        old_ip = by_mac.get(mac) if mac else None
+        if old_ip and old_ip != ip and old_ip in config["lights"]:
+            # DHCP moved the bulb: keep the name/zone, follow the new address.
+            config["lights"][ip] = config["lights"].pop(old_ip)
+            by_mac[mac] = ip
+        entry = config["lights"].setdefault(
+            ip,
+            {
+                "name": "",
+                "enabled": True,
+                "zone": "",
+                "model": "",
+                "mac": "",
+                "firmware": "",
+            },
+        )
+        entry["model"] = str(info.get("model") or entry.get("model") or "")[:40]
+        entry["firmware"] = str(info.get("firmware") or entry.get("firmware") or "")[:20]
+        if mac:
+            entry["mac"] = mac
+    return config
+
+
+# --------------------------------------------------------------------------- #
+# Effective light plan / commands
+# --------------------------------------------------------------------------- #
+
+
+def enabled_lights(config: dict):
+    return [
+        (ip, entry)
+        for ip, entry in config["lights"].items()
+        if entry.get("enabled", True)
+    ]
+
+
+def effective_zones(config: dict, core):
+    """Zones in the same order as the enabled bulbs."""
+    pairs = enabled_lights(config)
+    defaults = core.zones_for_layout(config["layout"], len(pairs))
+    zones = []
+    for index, (_ip, entry) in enumerate(pairs):
+        zones.append(entry.get("zone") or defaults[index])
+    return zones
+
+
+def build_command(config: dict, core, demo: bool = False):
+    """Return (argv, ips, zones) for the sync process."""
+    pairs = enabled_lights(config)
+    if not pairs:
+        raise ValueError("select at least one light")
+    if config["mode"] == "launch" and not config["media"].strip():
+        raise ValueError("choose a video file or switch to attach mode")
+
+    ips = [ip for ip, _ in pairs]
+    zones = effective_zones(config, core)
+    argv = [
+        sys.executable,
+        str(SCRIPT),
+        "--lights",
+        ",".join(ips),
+        "--zones",
+        ",".join(zones),
+        "--style",
+        config["style"],
+        "--brightness",
+        str(config["brightness"]),
+    ]
+    if demo or config["dry_run"]:
+        argv.append("--dry-run")
+    if config["mode"] == "attach":
+        argv.append("--attach")
+    else:
+        argv.append(config["media"].strip())
+    return argv, ips, zones
+
+
+# --------------------------------------------------------------------------- #
+# Session (the child sync process)
+# --------------------------------------------------------------------------- #
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _looks_like_ours(pid: int) -> bool:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return True  # no /proc: trust the PID file
+    return b"mpv_ambilight" in raw
+
+
+class Session:
+    def __init__(self, panel):
+        self.panel = panel
+        self.lock = threading.Lock()
+        self.process = None
+        self.pid = None
+        self.started = None
+        self.mode = None
+        self.adopted = False
+        self.log = deque(maxlen=250)
+
+    @property
+    def pid_path(self) -> Path:
+        return runtime_dir() / "gui-daemon.json"
+
+    def running(self) -> bool:
+        with self.lock:
+            if self.process is not None:
+                return self.process.poll() is None
+            if self.pid and _pid_alive(self.pid):
+                return True
+            return False
+
+    def write_log(self, line: str) -> None:
+        line = line.rstrip()
+        if not line:
+            return
+        with self.lock:
+            self.log.append(line[:600])
+
+    def snapshot(self) -> dict:
+        running = self.running()
+        with self.lock:
+            return {
+                "running": running,
+                "pid": self.pid if running else None,
+                "mode": self.mode,
+                "adopted": self.adopted and running,
+                "started": self.started if running else None,
+                "log": list(self.log)[-80:],
+            }
+
+    def adopt(self) -> None:
+        info = read_json(self.pid_path, None)
+        if not isinstance(info, dict):
+            return
+        pid = info.get("pid")
+        if isinstance(pid, int) and _pid_alive(pid) and _looks_like_ours(pid):
+            self.pid = pid
+            self.started = info.get("started")
+            self.mode = info.get("mode")
+            self.adopted = True
+            self.write_log(f"adopted running process {pid}")
+
+    def start(self, argv) -> None:
+        with self.lock:
+            if self.process is not None and self.process.poll() is None:
+                raise ValueError("already running")
+            if self.pid and _pid_alive(self.pid):
+                raise ValueError("another sync process is already running")
+            self.log.clear()
+            self.adopted = False
+            self.process = subprocess.Popen(
+                argv,
+                cwd=str(HERE),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                start_new_session=True,
+            )
+            self.pid = self.process.pid
+            self.started = time.time()
+            self.mode = "launch" if "--attach" not in argv else "attach"
+            threading.Thread(target=self._pump, daemon=True).start()
+            write_json(
+                self.pid_path,
+                {"pid": self.pid, "started": self.started, "mode": self.mode},
+            )
+
+    def _pump(self) -> None:
+        process = self.process
+        if process is None or process.stdout is None:
+            return
+        try:
+            for line in process.stdout:
+                self.write_log(line)
+        finally:
+            code = process.wait()
+            self.write_log(f"process exited with code {code}")
+            with self.lock:
+                if self.process is process:
+                    self.process = None
+                    self.pid = None
+                    self.started = None
+                    self.adopted = False
+            try:
+                self.pid_path.unlink()
+            except OSError:
+                pass
+
+    def stop(self, timeout: float = 4.0) -> None:
+        with self.lock:
+            process = self.process
+            pid = self.pid
+        if process is not None and process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except OSError:
+                process.terminate()
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except OSError:
+                    process.kill()
+        elif pid and _pid_alive(pid):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline and _pid_alive(pid):
+                time.sleep(0.05)
+            if _pid_alive(pid):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+        with self.lock:
+            self.process = None
+            self.pid = None
+            self.started = None
+            self.adopted = False
+        try:
+            self.pid_path.unlink()
+        except OSError:
+            pass
+
+
+# --------------------------------------------------------------------------- #
+# Panel: config + discovery + session + snapshot
+# --------------------------------------------------------------------------- #
+
+
+class Panel:
+    def __init__(self, core, port: int = DEFAULT_PORT, demo: bool = False):
+        self.core = core
+        self.port = port
+        self.demo = demo
+        self.lock = threading.RLock()
+        self.config = load_config(core)
+        self.live = {}
+        self.scanned = 0.0
+        self.session = Session(self)
+        self.session.adopt()
+        if demo:
+            self.config["dry_run"] = True
+            self.live = json.loads(json.dumps(DEMO_LIGHTS))
+            for ip, info in self.live.items():
+                self.config["lights"].setdefault(
+                    ip,
+                    {
+                        "name": "",
+                        "enabled": True,
+                        "zone": "",
+                        "model": "",
+                        "mac": "",
+                        "firmware": "",
+                    },
+                )
+                entry = self.config["lights"][ip]
+                entry["model"] = info.get("model") or entry.get("model")
+                entry["mac"] = info.get("mac") or entry.get("mac")
+
+    # -- discovery -------------------------------------------------------- #
+
+    def scan(self) -> int:
+        if self.demo:
+            return len(self.live)
+        found = self.core.discover_lights(timeout=1.2)
+        details = self.core.query_lights(sorted(found))
+        live = {}
+        for ip, info in found.items():
+            system = details.get(ip) or {}
+            merged = dict(info)
+            merged["model"] = system.get("moduleName")
+            merged["firmware"] = system.get("fwVersion")
+            merged["mac"] = system.get("mac") or merged.get("mac")
+            live[ip] = merged
+
+        with self.lock:
+            self.live = live
+            self.scanned = time.time()
+            before = [ip for ip, _ in enabled_lights(self.config)]
+            merge_discovered(self.config, live)
+            self._persist()
+            after = [ip for ip, _ in enabled_lights(self.config)]
+        if after != before and self.session.running():
+            self.restart()
+        return len(live)
+
+    def maybe_scan(self) -> None:
+        if self.demo:
+            return
+        if time.time() - self.scanned > 12.0:
+            try:
+                self.scan()
+            except OSError:
+                pass
+
+    # -- state ------------------------------------------------------------ #
+
+    def light_rows(self) -> list:
+        with self.lock:
+            config = self.config
+            zones = dict(zip([ip for ip, _ in enabled_lights(config)], effective_zones(config, self.core)))
+            rows = []
+            for ip, entry in config["lights"].items():
+                info = self.live.get(ip) or {}
+                rows.append(
+                    {
+                        "ip": ip,
+                        "name": entry.get("name") or "",
+                        "enabled": bool(entry.get("enabled", True)),
+                        "zone": entry.get("zone") or "",
+                        "effective_zone": zones.get(ip, "all"),
+                        "model": info.get("model") or entry.get("model") or "",
+                        "mac": info.get("mac") or entry.get("mac") or "",
+                        "firmware": info.get("firmware") or entry.get("firmware") or "",
+                        "online": ip in self.live if not self.demo else True,
+                        "state": bool(info.get("state", False)),
+                        "dimming": info.get("dimming"),
+                        "temp": info.get("temp"),
+                        "r": info.get("r", 255),
+                        "g": info.get("g", 255),
+                        "b": info.get("b", 255),
+                    }
+                )
+            rows.sort(key=lambda row: [int(part) for part in row["ip"].split(".")])
+            return rows
+
+    def lua_status(self) -> dict:
+        destination = self.core.installed_script_path()
+        installed = destination.exists()
+        stale = False
+        if installed:
+            try:
+                stale = destination.read_bytes() != self.core.LUA_SCRIPT.read_bytes()
+            except OSError:
+                stale = False
+        return {
+            "installed": installed,
+            "stale": stale,
+            "path": str(destination),
+        }
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            config = json.loads(json.dumps(self.config))
+        return {
+            "version": self.core.VERSION,
+            "demo": self.demo,
+            "config": config,
+            "lights": self.light_rows(),
+            "zones": sorted(self.core.ZONE_NAMES),
+            "layouts": ["auto", *self.core.LAYOUTS],
+            "styles": list(self.core.STYLES),
+            "session": self.session.snapshot(),
+            "lua": self.lua_status(),
+            "scanned": self.scanned,
+        }
+
+    # -- mutations -------------------------------------------------------- #
+
+    def _persist(self) -> None:
+        if not self.demo:
+            self.config = save_config(self.config, self.core)
+
+    def update_config(self, patch: dict) -> dict:
+        if not isinstance(patch, dict):
+            raise ValueError("expected a JSON object")
+        with self.lock:
+            merged = json.loads(json.dumps(self.config))
+            for key in CONFIG_KEYS:
+                if key in patch:
+                    merged[key] = patch[key]
+            if isinstance(patch.get("lights"), dict):
+                for ip, entry in patch["lights"].items():
+                    if ip in merged["lights"] and isinstance(entry, dict):
+                        for field in ("name", "enabled", "zone"):
+                            if field in entry:
+                                merged["lights"][ip][field] = entry[field]
+            self.config = normalize_config(merged, self.core)
+            if self.demo:
+                self.config["dry_run"] = True
+            self._persist()
+        if self.session.running() and ("lights" in patch or any(k in patch for k in CONFIG_KEYS)):
+            self.restart()
+        return self.snapshot()
+
+    def set_light(self, ip: str, fields: dict) -> dict:
+        with self.lock:
+            if ip not in self.config["lights"]:
+                raise ValueError("unknown light")
+            for field in ("name", "enabled", "zone"):
+                if field in fields:
+                    self.config["lights"][ip][field] = fields[field]
+            self._persist()
+        if self.session.running():
+            self.restart()
+        return self.snapshot()
+
+    def restart(self) -> None:
+        was_running = self.session.running()
+        self.session.stop()
+        if was_running:
+            self.start()
+
+    def start(self, argv=None) -> dict:
+        with self.lock:
+            config = json.loads(json.dumps(self.config))
+        if argv is None:
+            argv, _ips, _zones = build_command(config, self.core, demo=self.demo)
+        self.session.start(argv)
+        return self.snapshot()
+
+    def stop(self) -> dict:
+        self.session.stop()
+        return self.snapshot()
+
+    def identify(self, ip: str) -> None:
+        if self.demo:
+            self.session.write_log(f"demo: identify {ip}")
+            return
+        info = dict(self.live.get(ip) or {})
+        sender = self.core.WizSender()
+        try:
+            sender.set_temp(ip, 4000, 100)
+            time.sleep(0.45)
+            state = bool(info.get("state", True))
+            if state:
+                if info.get("temp"):
+                    sender.set_temp(ip, int(info["temp"]), int(info.get("dimming") or 100))
+                elif all(channel in info for channel in ("r", "g", "b")):
+                    sender.set_color(
+                        ip,
+                        (info["r"], info["g"], info["b"]),
+                        int(info.get("dimming") or 100),
+                    )
+            else:
+                sender.set_power(ip, False)
+        finally:
+            sender.close()
+
+    def set_power(self, ip: str, on: bool) -> None:
+        if self.demo:
+            self.live.setdefault(ip, {})["state"] = bool(on)
+            return
+        sender = self.core.WizSender()
+        try:
+            sender.set_power(ip, on)
+        finally:
+            sender.close()
+        info = self.live.setdefault(ip, {})
+        info["state"] = bool(on)
+
+    def install_script(self) -> str:
+        import contextlib
+        import io
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+            code = self.core.install_lua_script(True)
+        text = buffer.getvalue().strip() or f"exit code {code}"
+        self.session.write_log(text)
+        return text
+
+
+# --------------------------------------------------------------------------- #
+# HTTP
+# --------------------------------------------------------------------------- #
+
+STATIC_FILES = {
+    "/": ("index.html", "text/html; charset=utf-8"),
+    "/index.html": ("index.html", "text/html; charset=utf-8"),
+    "/style.css": ("style.css", "text/css; charset=utf-8"),
+    "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+}
+
+
+class Handler(BaseHTTPRequestHandler):
+    panel: Panel = None  # set by make_server
+    server_version = f"wiz-ambilight/{getattr(sys.modules.get('mpv_ambilight'), 'VERSION', '?')}"
+    sys_version = ""
+
+    def log_message(self, fmt, *args):
+        pass
+
+    def _origin_ok(self) -> bool:
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True  # non-browser clients (curl) are fine
+        allowed = {
+            f"http://127.0.0.1:{self.panel.port}",
+            f"http://localhost:{self.panel.port}",
+        }
+        return origin in allowed
+
+    def _send(self, status: int, body: bytes, ctype: str) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _json(self, payload, status: int = 200) -> None:
+        body = json.dumps(payload).encode()
+        self._send(status, body, "application/json")
+
+    def _error(self, message: str, status: int = 400) -> None:
+        self._json({"error": message}, status)
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+        if path == "/api/state":
+            self.panel.maybe_scan()
+            self._json(self.panel.snapshot())
+            return
+        target = STATIC_FILES.get(path)
+        if target is None:
+            self._error("not found", 404)
+            return
+        name, ctype = target
+        try:
+            body = (WEB_DIR / name).read_bytes()
+        except OSError:
+            self._error("missing web asset", 500)
+            return
+        self._send(200, body, ctype)
+
+    def do_POST(self):
+        if not self._origin_ok():
+            self._error("bad origin", 403)
+            return
+        if "application/json" not in (self.headers.get("Content-Type") or ""):
+            self._error("expected application/json", 415)
+            return
+        path = urlparse(self.path).path
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length > 65536:
+            self._error("payload too large", 413)
+            return
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+        except ValueError:
+            self._error("invalid JSON")
+            return
+
+        try:
+            if path == "/api/config":
+                self._json(self.panel.update_config(payload))
+            elif path == "/api/light":
+                self._json(
+                    self.panel.set_light(str(payload.get("ip") or ""), payload)
+                )
+            elif path == "/api/scan":
+                count = self.panel.scan()
+                self._json({"found": count, **self.panel.snapshot()})
+            elif path == "/api/start":
+                self._json(self.panel.start())
+            elif path == "/api/stop":
+                self._json(self.panel.stop())
+            elif path == "/api/pick-file":
+                self._json({"path": pick_file()})
+            elif path == "/api/identify":
+                self.panel.identify(str(payload.get("ip") or ""))
+                self._json({"ok": True})
+            elif path == "/api/power":
+                ip = str(payload.get("ip") or "")
+                self.panel.set_power(ip, bool(payload.get("on")))
+                self._json({"ok": True})
+            elif path == "/api/install-script":
+                self._json({"message": self.panel.install_script(), **self.panel.snapshot()})
+            elif path == "/api/quit":
+                self._json({"ok": True})
+                self.panel.stop()
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+            else:
+                self._error("not found", 404)
+        except ValueError as exc:
+            self._error(str(exc))
+        except OSError as exc:
+            self._error(str(exc), 500)
+
+
+def make_server(panel: Panel, port: int = DEFAULT_PORT):
+    handler = type(
+        "BoundHandler",
+        (Handler,),
+        {"panel": panel, "server_version": f"wiz-ambilight/{panel.core.VERSION}"},
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    panel.port = server.server_address[1]
+    return server
+
+
+# --------------------------------------------------------------------------- #
+# Native file picker / entry point
+# --------------------------------------------------------------------------- #
+
+
+def pick_file() -> str:
+    candidates = []
+    if sys.platform == "darwin":
+        candidates.append(
+            [
+                "osascript",
+                "-e",
+                'POSIX path of (choose file with prompt "Choose a video for Ambilight")',
+            ]
+        )
+    candidates.extend(
+        [
+            [
+                "zenity",
+                "--file-selection",
+                "--title=Choose a video for Ambilight",
+                "--file-filter=Video files | *.mkv *.mp4 *.webm *.avi *.mov *.m4v *.ts *.m2ts",
+                "--file-filter=All files | *",
+            ],
+            [
+                "kdialog",
+                "--getopenfilename",
+                str(Path.home()),
+                "video/*|Video files\n*|All files",
+            ],
+        ]
+    )
+    for argv in candidates:
+        if not shutil.which(argv[0]):
+            continue
+        try:
+            result = subprocess.run(
+                argv, capture_output=True, text=True, timeout=300
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip().splitlines()[0]
+        return ""
+    return ""
+
+
+def run(core, port: int = DEFAULT_PORT, demo: bool = False, open_browser: bool = True) -> int:
+    if not (WEB_DIR / "index.html").exists():
+        print(f"error: missing {WEB_DIR / 'index.html'}", file=sys.stderr)
+        return 1
+
+    panel = Panel(core, port=port, demo=demo)
+    try:
+        server = make_server(panel, port)
+    except OSError as exc:
+        print(f"error: cannot listen on 127.0.0.1:{port}: {exc}", file=sys.stderr)
+        print("       try --gui-port with a free port", file=sys.stderr)
+        return 1
+
+    url = f"http://127.0.0.1:{server.server_address[1]}/"
+    print(f"Wiz Ambilight panel: {url}")
+    print(f"config: {config_path()}")
+    print("press Ctrl+C to quit")
+    if open_browser:
+        threading.Timer(0.4, lambda: webbrowser.open(url)).start()
+    try:
+        server.serve_forever(poll_interval=0.3)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        panel.stop()
+        server.server_close()
+    return 0

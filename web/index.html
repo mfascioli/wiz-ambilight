@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wiz Ambilight</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="dot" id="statusDot" aria-hidden="true"></span>
+    <div>
+      <h1>Wiz Ambilight</h1>
+      <p class="sub" id="subtitle">Local control panel</p>
+    </div>
+  </div>
+  <div class="top-actions">
+    <span class="badge hidden" id="demoBadge">demo</span>
+    <span class="badge" id="versionBadge">v—</span>
+    <button class="ghost" id="quitBtn" title="Stop the panel">Quit</button>
+  </div>
+</header>
+
+<main>
+  <section class="card lights-card">
+    <div class="card-head">
+      <div>
+        <h2>Lights</h2>
+        <p class="hint">Pick which bulbs take part. Names are stored locally.</p>
+      </div>
+      <button class="ghost" id="scanBtn">Scan network</button>
+    </div>
+    <div class="lua-banner hidden" id="luaBanner">
+      <span id="luaText"></span>
+      <button class="ghost small" id="installBtn">Install script</button>
+    </div>
+    <div id="lights" class="lights"></div>
+    <p class="empty hidden" id="lightsEmpty">
+      No lights yet. Press <strong>Scan network</strong> or add bulbs with the CLI.
+    </p>
+  </section>
+
+  <aside class="side">
+    <section class="card">
+      <div class="card-head">
+        <h2>Session</h2>
+        <span class="pill" id="sessionPill">stopped</span>
+      </div>
+      <div class="modes" role="group" aria-label="Sync mode">
+        <button class="mode" data-mode="attach">Attach to mpv</button>
+        <button class="mode" data-mode="launch">Launch a video</button>
+      </div>
+      <div class="field hidden" id="mediaField">
+        <label for="mediaInput">Video file</label>
+        <div class="row">
+          <input id="mediaInput" type="text" placeholder="/path/to/movie.mkv" spellcheck="false">
+          <button class="ghost" id="browseBtn" title="Choose a file">Browse…</button>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="primary" id="startBtn">Start ambilight</button>
+        <button class="ghost" id="stopBtn" disabled>Stop</button>
+      </div>
+      <p class="hint" id="modeHint"></p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Look</h2>
+      </div>
+      <div class="field">
+        <label for="styleSelect">Style preset</label>
+        <select id="styleSelect"></select>
+      </div>
+      <div class="field">
+        <label for="layoutSelect">Layout</label>
+        <select id="layoutSelect"></select>
+      </div>
+      <div class="field">
+        <label for="brightness">Brightness <output id="brightnessOut">100</output></label>
+        <input id="brightness" type="range" min="10" max="100" step="1" value="100">
+      </div>
+      <label class="check">
+        <input type="checkbox" id="dryRun">
+        <span>Dry run (log colors, no UDP)</span>
+      </label>
+    </section>
+
+    <section class="card log-card">
+      <div class="card-head">
+        <h2>Activity</h2>
+        <button class="ghost small" id="clearLog">Clear</button>
+      </div>
+      <pre class="log" id="log" aria-live="polite"></pre>
+    </section>
+  </aside>
+</main>
+
+<div class="toast hidden" id="toast" role="status"></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -51,7 +51,7 @@ import sys
 import time
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 DEFAULT_PORT = 38899
 ZONE_NAMES = {"all", "left", "right", "top", "bottom", "t1", "t2", "t3"}
 
@@ -142,6 +142,15 @@ class WizSender:
     def set_power(self, ip: str, on: bool) -> None:
         self._last.pop(ip, None)
         self._send(ip, "setState", {"state": bool(on)})
+
+    def set_temp(self, ip: str, temp: int, dimming: int = 100) -> None:
+        """White temperature, used to flash a bulb when identifying it."""
+        self._last.pop(ip, None)
+        self._send(
+            ip,
+            "setPilot",
+            {"temp": int(temp), "dimming": int(dimming), "state": True},
+        )
 
     def close(self) -> None:
         if self._sock is not None:
@@ -753,11 +762,16 @@ def install_lua_script(force: bool) -> int:
     return 0
 
 
+def split_list(value: str):
+    """Split a comma or space separated list, keeping duplicates and order."""
+    return [item for item in value.replace(" ", ",").split(",") if item]
+
+
 def parse_lights(value: str):
     seen = set()
     result = []
-    for item in value.replace(" ", ",").split(","):
-        if item and item not in seen:
+    for item in split_list(value):
+        if item not in seen:
             seen.add(item)
             result.append(item)
     return result
@@ -785,6 +799,7 @@ def main(argv=None) -> int:
             "  ./mpv_ambilight.py --style cinema movie.mkv\n"
             "  ./mpv_ambilight.py --layout all movie.mkv\n"
             "  ./mpv_ambilight.py --discover\n"
+            "  ./mpv_ambilight.py --gui\n"
             "  ./mpv_ambilight.py --install-script && ./mpv_ambilight.py --attach\n"
         ),
     )
@@ -841,6 +856,18 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--attach", action="store_true", help="follow a running mpv (Lua script must be installed)"
     )
+    parser.add_argument(
+        "--gui", action="store_true", help="open the local web control panel"
+    )
+    parser.add_argument(
+        "--gui-port", type=int, default=8765, help="panel port (default: 8765)"
+    )
+    parser.add_argument(
+        "--no-browser", action="store_true", help="do not open a browser for --gui"
+    )
+    parser.add_argument(
+        "--demo", action="store_true", help="with --gui: fake lights, never send UDP"
+    )
     parser.add_argument("--discover", action="store_true", help="list WiZ lights and exit")
     parser.add_argument(
         "--json", action="store_true", help="machine-readable output for --discover"
@@ -895,6 +922,19 @@ def main(argv=None) -> int:
             )
         return 0
 
+    if args.gui:
+        try:
+            from webui import run as run_gui
+        except ImportError as exc:
+            print(f"error: cannot load the GUI: {exc}", file=sys.stderr)
+            return 1
+        return run_gui(
+            sys.modules[__name__],
+            port=args.gui_port,
+            demo=args.demo,
+            open_browser=not args.no_browser,
+        )
+
     if args.attach and args.media:
         parser.error("--attach does not take files; it follows the mpv that is already running")
 
@@ -922,7 +962,7 @@ def main(argv=None) -> int:
             print(f"  found {ip}", file=sys.stderr)
 
     if args.zones:
-        requested = parse_lights(args.zones)
+        requested = split_list(args.zones)
         invalid = [zone for zone in requested if zone not in ZONE_NAMES]
         if invalid:
             parser.error(f"unknown zone(s): {', '.join(invalid)}")

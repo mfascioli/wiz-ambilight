@@ -32,8 +32,9 @@ its original README.
 - **Actually local.** Plain UDP on port `38899`; nothing leaves your LAN.
 - **No dependencies.** The Python side is standard library only. The other
   half is one small mpv Lua script.
-- **Two ways to run it.** Let it launch mpv, or attach to an mpv you started
-  normally (desktop launcher, file manager, whatever).
+- **Three ways to run it.** Let it launch mpv, attach to an mpv you started
+  normally (desktop launcher, file manager, whatever), or use the local web
+  panel to choose lights and tune the look.
 - **Multi-bulb layouts.** Left/right, top/bottom, thirds, whole-frame, or
   explicitly chosen zones per bulb.
 
@@ -89,6 +90,48 @@ ln -s "$PWD/mpv_ambilight.py" ~/.local/bin/mpv-ambilight
 
 When mpv exits, the bulbs keep their last color. Use `--on-exit off` if you
 want them to turn off instead.
+
+## Web panel
+
+If you would rather click than type:
+
+```bash
+./mpv_ambilight.py --gui
+```
+
+It opens `http://127.0.0.1:8765/` in your browser. The panel scans the LAN,
+lists every bulb it finds, and lets you:
+
+- choose which bulbs take part and name them (`Sofa`, `TV wall`, …);
+- see each bulb's model, firmware, IP and live state;
+- assign a zone per bulb or pick a layout, style and brightness;
+- flash a bulb to identify it, or toggle its power;
+- start/stop the sync in **attach** mode or launch a **video file**;
+- follow the sync log and install the mpv Lua script with one click.
+
+<p align="center">
+  <img src="docs/gui.png" alt="Wiz Ambilight web panel" width="820">
+</p>
+
+Useful flags:
+
+| flag | meaning |
+|---|---|
+| `--gui-port 9000` | listen somewhere else (default `8765`) |
+| `--no-browser` | do not open a browser automatically |
+| `--demo` | fake lights, never send UDP — good for trying the UI |
+
+The panel is a standard-library `ThreadingHTTPServer` bound to `127.0.0.1`. It
+accepts JSON POSTs only from its own origin. The sync runs as a child process,
+so closing the tab or the panel does not leave a stray daemon behind; the panel
+also adopts a sync it started before a restart (PID file in
+`$XDG_RUNTIME_DIR/wiz-ambilight/gui-daemon.json`).
+
+Settings and names live in
+`~/.config/wiz-ambilight/lights.json` (override with
+`WIZ_AMBILIGHT_GUI_CONFIG`). WiZ does not expose app-assigned names over UDP,
+so names are stored locally. If DHCP moves a bulb, the panel matches it by MAC
+and keeps its name and zone.
 
 ## Styles
 
@@ -226,13 +269,15 @@ not decode.
 | **Bulbs lag behind the picture** | Use `--style fast` or `--smooth 40 --send-hz 24`. If your bulbs still lag, try `--send-hz 15`; some firmware coalesces very fast updates. |
 | **Bulbs keep the last color after quitting** | Expected. Use `--on-exit off` if you want them off. |
 | **`--attach` does nothing** | Run `--install-script`, restart mpv, then `--attach`. Check that only one mpv instance is playing (the control file is global). |
-| **Bulb names** | Not available over UDP. Use `--discover` to map IP ↔ model ↔ MAC. |
+| **Panel says “already running”** | A sync child is still alive. Press **Stop**, or use the PID from `sessionPill` / `$XDG_RUNTIME_DIR/wiz-ambilight/gui-daemon.json`. |
+| **Port 8765 is taken** | `./mpv_ambilight.py --gui --gui-port 9000`. |
+| **Bulb names** | Not available over UDP. Use `--discover` to map IP ↔ model ↔ MAC, or name them in the panel (stored locally). |
 
 ## Development
 
 ```bash
 python -m unittest discover -s tests -v
-python -m py_compile mpv_ambilight.py
+python -m py_compile mpv_ambilight.py webui.py
 lua5.4 -e 'assert(loadfile("lua/wiz_ambilight.lua"))'
 ```
 
@@ -244,8 +289,11 @@ Repository layout:
 ```text
 .
 ├── mpv_ambilight.py        # CLI, discovery, fade loop, UDP sender
+├── webui.py                # local web panel server and config
+├── web/                    # panel HTML/CSS/JS (no build step)
 ├── lua/wiz_ambilight.lua   # runs inside mpv, writes zone colors as JSON
 ├── tests/                  # dependency-free unit tests
+├── docs/gui.png            # panel screenshot used by this README
 ├── contrib/                # optional systemd user service
 └── upstream/               # original wiz-hack toolkit, kept for reference
 ```
