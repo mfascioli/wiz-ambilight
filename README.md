@@ -43,9 +43,9 @@ no re-encoding, no cloud, no extra Python packages.
   (the normal GPU outputs do).
 - Python **3.9+**. No `pip install` needed.
 - One or more WiZ bulbs on the **same LAN/VLAN** as the computer.
-- Linux or macOS today. Windows still needs three changes — the runtime
-  directory, the Lua install path and a CI runner — listed in
-  [Roadmap](#roadmap).
+- Linux or macOS today. Windows still needs a handful of changes — the
+  runtime directory, the Lua install path, process control and a CI runner —
+  listed in [Roadmap](#roadmap).
 
 ## 📦 Install
 
@@ -383,7 +383,7 @@ not decode.
 |---|---|
 | **No lights found** | `./mpv_ambilight.py --discover`; check that the bulbs and computer are on the same VLAN and that client isolation / guest Wi-Fi is off. Pin them with `--lights ip1,ip2` or `WIZ_LIGHTS`. |
 | **Only some bulbs are found** | Press **Scan network** again: a manual scan probes the broadcast three times and then every address on the local `/24`, which finds bulbs that ignore broadcast. If one is still missing, it is probably on another VLAN/guest network or outside that subnet; pin it with `--lights ip1,ip2`. |
-| **Buttons do nothing / “No reply from …”** | The panel now names the bulbs that did not answer. Compare **Panel network** in the panel with the bulb IPs: if it says `192.168.1.5 outside this subnet`, the computer is on a different network (hotspot, VPN, Ethernet bridge down). Join the bulbs' Wi-Fi, or check `ip -brief addr` and the router's client list. |
+| **Buttons do nothing / “No reply from …”** | The panel names the bulbs that did not answer. Compare **Panel network** in the panel with the bulb IPs: if it says `192.168.1.5 outside this subnet`, the computer is on a different network (hotspot, VPN, Ethernet bridge down). Join the bulbs' Wi-Fi, or check `ip -brief addr` and the router's client list. |
 | **Crazy mode stops early** | It is capped at 20 updates/s and 20 s on purpose; faster streams make cheap Wi-Fi radios drop packets and look slower. It also refuses to start while the sync is running, because both would fight over the bulbs. |
 | **`mpv could not grab frames`** | Your VO does not support raw screenshots. Try `-- --vo=gpu` or `-- --screenshot-sw=yes`. Do not use `--vo=null` or `--no-video`. |
 | **Colors look wrong / sides swapped** | Reinstall the Lua script (`./mpv_ambilight.py --install-script --force`), restart mpv, and check the order of `--lights` / `--zones`. |
