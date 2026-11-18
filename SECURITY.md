@@ -1,0 +1,123 @@
+# Security
+
+What runs on your machine, what the code touches, what the panel guarantees,
+and what none of it can promise. This is the user-facing summary; keep it in
+step with the code.
+
+## Trust model
+
+Three pieces run as you, none of them as root:
+
+| Piece | Runs as | Reaches |
+| --- | --- | --- |
+| `mpv_ambilight.py` | a normal process | UDP `38899` to bulb IPs, LAN broadcast, loopback HTTP for the panel |
+| `lua/wiz_ambilight.lua` | inside mpv | reads frames, writes one JSON state file |
+| the web panel (`webui.py`) | a normal process | `127.0.0.1` only; spawns the sync as a child |
+
+The only persistent install is `--install-script`, which **copies** the Lua
+file into mpv's scripts folder (`~/.config/mpv/scripts/`), so it loads on every
+mpv start. Nothing downloads code, and no installer fetches anything at all.
+
+## What the code touches
+
+- **Network.** UDP `38899` to the bulbs, broadcast on the LAN for discovery,
+  an optional `/24` sweep when you press **Scan network**, and loopback HTTP
+  for the panel. There is no HTTP client, no DNS lookup, no account, no
+  telemetry and no update check — the Python standard library imports no
+  outbound HTTP module.
+- **Processes.** The panel starts the sync with `subprocess.Popen(argv, ...)`,
+  no shell and no string interpolation, in its own session; stopping it sends
+  `SIGTERM` to that process group and waits 4 s before `SIGKILL`. The file
+  picker tries `osascript` (macOS), `zenity` and `kdialog`, always with an
+  argument list and a 120 s timeout; when none of them exists it returns an
+  empty path and the manual **Video file** field stays the way to choose a
+  file.
+- **Files written.** `state-<pid>.json` and `control.json` under
+  `$XDG_RUNTIME_DIR/wiz-ambilight/` (`/tmp` fallback, `0700`), the
+  `gui-daemon.json` PID file beside them, `lights.json` and `scenes.json` in
+  `~/.config/wiz-ambilight/` (`0600`), and the Lua copy in mpv's scripts
+  folder. Nothing else is created, renamed or deleted.
+
+## Panel guarantees
+
+- **Loopback only.** `ThreadingHTTPServer` bound to `127.0.0.1`; it refuses to
+  start if the port is taken instead of falling back to a public interface.
+- **Host and Origin checked.** Requests whose `Host` is not
+  `127.0.0.1`/`localhost`/`[::1]` are rejected, and a browser `Origin` that is
+  not the panel itself is refused — both block DNS-rebinding tricks.
+- **Per-run token.** `secrets.token_urlsafe(24)`, embedded in the page, sent
+  as `X-Wiz-Token` and compared with `secrets.compare_digest`. Another site
+  cannot read it, and JSON cross-origin POSTs need a preflight the panel does
+  not allow.
+- **Strict headers.** CSP `default-src 'none'` plus only its own script, style,
+  font and connect sources, `base-uri 'none'`, `form-action 'none'`,
+  `frame-ancestors 'none'`, `X-Frame-Options: DENY`, `nosniff`, no referrer,
+  `no-store`, and permissions for camera, microphone and geolocation denied.
+- **No shell, no option smuggling.** A video path that starts with `-` is
+  rejected, so it can never become an mpv option such as `--script=`.
+- **Scoped actions.** Identify, power and direct control only accept bulbs the
+  panel already knows about. Colors, temperatures, scene ids and speeds are
+  range-checked, and saved scenes ignore unknown addresses.
+
+## Provenance
+
+`mpv_ambilight.py`, `webui.py`, `lua/wiz_ambilight.lua`, `web/`, `tests/` and
+the `assets/` generators are ours. `upstream/` is
+[wiz-hack](https://github.com/myselfshravan/wiz-hack) (MIT), kept for reference
+and never imported. `web/fonts/Merriweather-Bold.ttf` is SIL OFL;
+`assets/banner-fonts/` (Fira Sans Condensed, SIL OFL) is used by
+`assets/banner.py` only and is never served by the panel. mpv is not bundled.
+
+## How it was written
+
+Most of the code was generated with **DeepSeek V4.1 Flash Free** in OpenCode
+and reviewed with **Claude Sonnet 5.5** and **GPT-6 Luna**, the same workflow
+as [`mpv-config`](https://github.com/mfascioli/mpv-config).
+
+## Review status (2026-11-18)
+
+A static read of `mpv_ambilight.py`, `webui.py` and the Lua script for this
+documentation pass confirmed the behaviour above: no outbound HTTP, no shell
+string execution, Host/Origin/token checks present, private file modes, and
+`--install-script` copying rather than executing. That is a code read, not an
+audit.
+
+Two weaknesses were found and are documented rather than fixed here:
+
+- **PID adoption without `/proc`.** `_looks_like_ours()` inspects
+  `/proc/<pid>/cmdline` on Linux; where `/proc` does not exist (macOS, Windows)
+  it trusts the PID file. A stale `gui-daemon.json` whose PID now belongs to
+  an unrelated process would be adopted, and **Stop** would signal that
+  process. Keep the runtime directory tidy if you kill a panel by hand.
+- **`os.killpg` is POSIX-only.** The stop path raises `AttributeError` on
+  Windows instead of terminating the child, and `SIGTERM` has a different
+  meaning there. This is part of the Windows work in the roadmap.
+
+What has **not** been done:
+
+- no third-party or antivirus scan of a release archive yet (1.5.0 predates
+  this document);
+- no fuzzing of the UDP parsers or of the panel's JSON bodies;
+- no test on Windows, where the runtime directory, the Lua install path and
+  process control still assume Unix — see the roadmap in the
+  [README](README.md#roadmap).
+
+## Limits
+
+- **The WiZ local API is unauthenticated.** Anyone on the same LAN can drive
+  the bulbs, and a spoofed reply is indistinguishable from a real one. The
+  panel's token protects the panel from other origins, not the bulbs from your
+  network.
+- **Plain UDP, no encryption.** Colors are readable on the LAN by design; a
+  VPN or a guest network with client isolation changes what is reachable, not
+  what is protected.
+- **The panel is a local service.** It trusts everything that can connect to
+  `127.0.0.1` with the token; it is not hardened against a compromised local
+  account.
+
+## Reporting
+
+Open an issue at
+[github.com/mfascioli/wiz-ambilight/issues](https://github.com/mfascioli/wiz-ambilight/issues)
+with the version (`./mpv_ambilight.py --version`), the panel's **Activity**
+log and the exact steps. There is no bounty.

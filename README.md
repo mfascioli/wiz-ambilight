@@ -1,28 +1,22 @@
 # wiz-ambilight
 
-**DIY Philips Hue-style Ambilight for WiZ bulbs and mpv.**
-
 [![tests](https://github.com/mfascioli/wiz-ambilight/actions/workflows/tests.yml/badge.svg)](https://github.com/mfascioli/wiz-ambilight/actions/workflows/tests.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python: 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
 
+![WIZ AMBILIGHT banner: amber title over a charcoal HUD grid, with tags for MPV frames, 18 Hz fade, UDP 38899 and zero dependencies](assets/banner.png?v=1.5.0)
+
 `wiz-ambilight` reads the video frame mpv is already decoding and paints the
-edges of the picture onto your WiZ bulbs over your local network. No capture
-card, no re-encoding, no cloud, no extra Python packages.
+edges of the picture onto WiZ bulbs over your local network. No capture card,
+no re-encoding, no cloud, no extra Python packages.
 
 <p align="center">
   <em>mpv → Lua frame sampler → Python fade loop → WiZ UDP bulbs</em>
 </p>
 
-This is a focused fork of
-[@myselfshravan's **wiz-hack**](https://github.com/myselfshravan/wiz-hack).
-The original toolkit (local API server, music visualizers, stock-market
-lights, OpenCV video visualizer) is preserved in [`upstream/`](upstream/) with
-its original README.
+## 🎬 What you get
 
----
-
-## Why this one?
+![Overview banner: what you get — mpv, Lua, Python and UDP](assets/overview.png)
 
 - **Uses mpv, not a second player.** Hardware decoding, subtitles, uosc, your
   config, 4K, HEVC, network streams — all of it keeps working.
@@ -41,15 +35,21 @@ its original README.
 - **Multi-bulb layouts.** Left/right, top/bottom, thirds, whole-frame, or
   explicitly chosen zones per bulb.
 
-## Requirements
+## 🧰 Requirements
+
+![Requirements banner: what you need — mpv, Python 3.9+ and WiZ bulbs](assets/requirements.png)
 
 - [mpv](https://mpv.io/) with a video output that supports `screenshot-raw`
   (the normal GPU outputs do).
 - Python **3.9+**. No `pip install` needed.
 - One or more WiZ bulbs on the **same LAN/VLAN** as the computer.
-- Linux or macOS. Windows is untested.
+- Linux or macOS today. Windows still needs three changes — the runtime
+  directory, the Lua install path and a CI runner — listed in
+  [Roadmap](#roadmap).
 
-## Install
+## 📦 Install
+
+![Install banner: one clone, --discover names every bulb](assets/install.png)
 
 ```bash
 git clone https://github.com/mfascioli/wiz-ambilight.git
@@ -75,7 +75,9 @@ mkdir -p ~/.local/bin
 ln -s "$PWD/mpv_ambilight.py" ~/.local/bin/mpv-ambilight
 ```
 
-## Quick start
+## ⚡ Quick start
+
+![Quick start banner: one command, six styles and six layouts](assets/quickstart.png)
 
 ```bash
 # auto-discover the bulbs, bulb 1 = left edge, bulb 2 = right edge
@@ -94,7 +96,9 @@ ln -s "$PWD/mpv_ambilight.py" ~/.local/bin/mpv-ambilight
 When mpv exits, the bulbs keep their last color. Use `--on-exit off` if you
 want them to turn off instead.
 
-## Web panel
+## 🖥️ Web panel
+
+![Panel banner: local only — 127.0.0.1, a per-run token and a strict CSP](assets/panel.png)
 
 If you would rather click than type:
 
@@ -123,37 +127,8 @@ lists every bulb it finds, and lets you:
 - follow the sync log, with connection-loss recovery and a confirm-to-quit step;
 - install the mpv Lua script with one click.
 
-<p align="center">
-  <img src="docs/gui.png" alt="Wiz Ambilight panel while syncing" width="820"><br>
-  <em>Attach mode while syncing: names, live state, zone map and activity log.</em>
-</p>
-
-<p align="center">
-  <img src="docs/gui-launch.png" alt="Wiz Ambilight panel in launch mode" width="820"><br>
-  <em>Launch mode: pick a file once, then start and stop from the same panel.</em>
-</p>
-
-<p align="center">
-  <img src="docs/gui-control.png" alt="Wiz Ambilight direct control and scenes" width="820"><br>
-  <em>Direct control: target one bulb or all, send hex colors, and reuse saved scenes.</em>
-</p>
-
-## Design
-
-The panel borrows its visual language from
-[mpv-config](https://github.com/mfascioli/mpv-config): **amber `#FCBE11`**,
-`#1F1F1F` hairlines, a charcoal HUD grid, bracket corners and Merriweather
-Bold for headings. Merriweather ships in `web/fonts/` under the SIL OFL, so
-the panel needs no network and no installed fonts.
-
-The flow is numbered on screen — **01 Lights → 02 Session → 03 Direct
-control → 04 Look → 05 Scenes → 06 Activity** — with a three-step quick
-start at the top, so the first run does not require reading this README.
-
-[`tests/test_design.py`](tests/test_design.py) pins the design: the exact
-amber and outline tokens, square HUD corners, the bundled font and licence,
-and the numbered reading order. A restyle that drifts back to a generic
-dashboard fails CI.
+![The panel while syncing: numbered sections, bulb names, live state, zone map and activity log](docs/gui.png)
+<sub>Attach mode while syncing: names, live state, zone map and activity log.</sub>
 
 Useful flags:
 
@@ -190,7 +165,7 @@ edit scenes without going through the panel:
 Only bulbs the panel already knows about are applied, and every value is
 range-checked.
 
-### Direct control from the CLI
+### 🎛️ Direct control from the CLI
 
 The same controls are available without the browser, which makes them easy to
 use from shell scripts, cron jobs or desktop shortcuts:
@@ -239,27 +214,28 @@ same primitive (and the JSON scenes file) is enough to wire the bulbs into
 desktop shortcuts, media servers or home-automation scripts without adding a
 dependency or a cloud account.
 
-### Panel security
+## 🎨 Design
 
-The panel is deliberately boring about security:
+![Design banner: amber, not white — #FCBE11, Merriweather and a HUD grid](assets/design.png)
 
-- **Local only.** It binds to `127.0.0.1` and rejects requests whose `Host` or
-  `Origin` is not the panel itself, which also blocks DNS-rebinding tricks.
-- **Per-run token.** Every POST needs a random `X-Wiz-Token` embedded in the
-  page; another site cannot read it, and browsers cannot send JSON cross-origin
-  without a preflight the panel does not allow.
-- **Strict headers.** CSP (`default-src 'none'`, only its own JS/CSS), no
-  framing, no referrers, no camera/mic/geolocation.
-- **No shell.** Child processes and the file picker use argument lists, never a
-  shell string. A video path that starts with `-` is rejected so it can never
-  become an mpv option such as `--script=`.
-- **Scoped actions.** Identify, power and direct control only accept bulbs the
-  panel already knows about. Colors, temperatures, scene ids and speeds are
-  range-checked; saved scenes ignore unknown addresses.
-- **Private config.** `lights.json` and `scenes.json` are written `0600` inside
-  a `0700` directory.
+The panel borrows its visual language from
+[mpv-config](https://github.com/mfascioli/mpv-config): **amber `#FCBE11`**,
+`#1F1F1F` hairlines, a charcoal HUD grid, bracket corners and Merriweather
+Bold for headings. Merriweather ships in `web/fonts/` under the SIL OFL, so
+the panel needs no network and no installed fonts.
 
-## Styles
+The flow is numbered on screen — **01 Lights → 02 Session → 03 Direct
+control → 04 Look → 05 Scenes → 06 Activity** — with a three-step quick
+start at the top, so the first run does not require reading this README.
+
+[`tests/test_design.py`](tests/test_design.py) pins the design: the exact
+amber and outline tokens, square HUD corners, the bundled font and licence,
+and the numbered reading order. A restyle that drifts back to a generic
+dashboard fails CI.
+
+## 🎚️ Styles
+
+![Styles banner: capture, fade and send — 12 to 24 fps, 0 to 220 ms, 15 to 30 Hz](assets/styles.png)
 
 A style is a coherent starting point; any individual flag overrides it.
 
@@ -284,7 +260,9 @@ manually.
 ./mpv_ambilight.py --smooth 150 --saturation 1.5 --send-hz 15 movie.mkv
 ```
 
-## Layouts and zones
+## 🧩 Layouts and zones
+
+![Layouts banner: edge to edge — sides, thirds and the whole frame](assets/layouts.png)
 
 The order of `--lights` is the order of the zones.
 
@@ -300,7 +278,9 @@ The order of `--lights` is the order of the zones.
 > Auto-discovery sorts bulbs by IP. If the sides come out swapped, list the
 > IPs in the order you want (`--lights right-ip,left-ip`) or use `--zones`.
 
-## Attach to a running mpv
+## 🔗 Attach to a running mpv
+
+![Attach banner: your own mpv — install once, idles until live](assets/attach.png)
 
 Install the Lua script once:
 
@@ -321,7 +301,7 @@ stops the daemon and the script goes back to sleep. If you are already running
 a daemon, updating the checkout requires
 `./mpv_ambilight.py --install-script --force` and an mpv restart.
 
-### Run it as a user service (optional)
+### 🔌 Run it as a user service (optional)
 
 This needs the `~/.local/bin/mpv-ambilight` symlink from the install section.
 The service starts with your session and waits for mpv on its own — no window
@@ -338,7 +318,9 @@ systemctl --user daemon-reload
 systemctl --user enable --now wiz-ambilight.service
 ```
 
-## How it works
+## 🔍 How it works
+
+![How it works banner: frame to bulb — sample, fade, setPilot](assets/how.png)
 
 ```text
               screenshot-raw (video only, no OSD)
@@ -378,7 +360,9 @@ The bulbs are fire-and-forget UDP devices. The sender de-duplicates unchanged
 colors and refreshes them every 2 seconds, so a single lost packet cannot
 leave a bulb stuck on an old frame.
 
-## Performance
+## 📈 Performance
+
+![Performance banner: fps is the cost — use --fps 8 for 4K](assets/performance.png)
 
 The expensive part is `screenshot-raw`, which copies a full video frame into
 Lua. At 1080p and 15 fps that is fine on a normal desktop. For 4K, try:
@@ -391,7 +375,9 @@ Everything else — the grid sampling, color math and UDP sends — is cheap. If
 mpv stutters, lower `--fps` first; `--send-hz` only affects network traffic,
 not decode.
 
-## Troubleshooting
+## 🩺 Troubleshooting
+
+![Troubleshooting banner: when it misbehaves — discovery, VLAN and video output](assets/troubleshooting.png)
 
 | symptom | fix |
 |---|---|
@@ -410,7 +396,9 @@ not decode.
 | **Port 8765 is taken** | `./mpv_ambilight.py --gui --gui-port 9000`. |
 | **Bulb names** | Not available over UDP. Use `--discover` to map IP ↔ model ↔ MAC, or name them in the panel (stored locally). |
 
-## Development
+## 🧪 Development
+
+![Development banner: no dependencies — unittest, py_compile and lua](assets/development.png)
 
 ```bash
 python -m unittest discover -s tests -v
@@ -431,28 +419,88 @@ Repository layout:
 │   └── fonts/              # bundled Merriweather Bold + SIL OFL licence
 ├── lua/wiz_ambilight.lua   # runs inside mpv, writes zone colors as JSON
 ├── tests/                  # dependency-free unit tests
-├── docs/gui.png            # panel screenshot used by this README
-├── docs/gui-launch.png     # launch-mode screenshot
-├── docs/gui-control.png    # direct-control and scenes screenshot
+├── assets/                 # README banners + their generator
+│   └── banner-fonts/       # Fira Sans Condensed for banner.py only
+├── docs/gui.png            # the one panel screenshot in this README
 ├── contrib/                # optional systemd user service
 └── upstream/               # original wiz-hack toolkit, kept for reference
 ```
 
-## Credits and license
+### Roadmap
 
-- Original **[wiz-hack](https://github.com/myselfshravan/wiz-hack)** by
-  [@myselfshravan](https://github.com/myselfshravan): reverse-engineered the
-  WiZ local UDP protocol and built the API server, music visualizers and the
-  first video/Ambilight experiments.
-- This fork focuses on the mpv Ambilight path: frame sampling in Lua, a fade
-  loop in Python, layouts, styles, attach mode and tests.
-- Panel design language borrowed from
-  [mpv-config](https://github.com/mfascioli/mpv-config): amber `#FCBE11`,
-  charcoal HUD grid and bracket corners.
-- [Merriweather](https://github.com/EbenSorkin/Merriweather) by Eben Sorkin,
-  bundled in `web/fonts/` under the
+Three pieces are known to be missing, in the order they matter:
+
+1. **Windows.** One resolver for the runtime directory (Python and Lua must
+   agree, or attach mode fails silently), `%APPDATA%\mpv\scripts` for
+   `--install-script`, a stop path that does not call `os.killpg` and a PID
+   check that does not depend on `/proc`, a file picker that exists there, and
+   a `windows-latest` job in CI.
+2. **Measured transport.** A diagnostic run that records packets sent,
+   replies, latency and drops per bulb. "Fire and forget" is fine until a
+   datagram is lost; the numbers decide whether re-sending with backoff and
+   reconciling with `getPilot` are worth their complexity.
+3. **Release hygiene.** A `SECURITY.md` refresh and an antivirus scan of each
+   release archive, recorded with its date.
+
+## 🔒 Privacy and security
+
+![Privacy banner: LAN only, by design — no cloud, no account, a per-run token](assets/privacy.png)
+
+- **Local only.** The bulbs are reached with UDP on port `38899`; discovery
+  broadcasts on the LAN and **Scan network** also probes every address on the
+  local `/24`. Nothing is sent to the internet, and the Python side never
+  makes an HTTP request.
+- **No account, no telemetry, no cloud.** No sign-in, no analytics, no update
+  check. The panel is served from `127.0.0.1` and the page loads only its own
+  files.
+- **Panel hardened.** It binds to `127.0.0.1` and rejects requests whose `Host`
+  or `Origin` is not the panel itself, which also blocks DNS-rebinding tricks;
+  every POST needs a random per-run `X-Wiz-Token`; the CSP is
+  `default-src 'none'` with only its own JS/CSS/fonts; child processes and the
+  file picker use argument lists, never a shell; a video path starting with
+  `-` is rejected so it cannot become an mpv option; identify, power and direct
+  control only accept bulbs the panel already knows; colors, temperatures,
+  scene ids and speeds are range-checked; `lights.json` and `scenes.json` are
+  written `0600` inside a `0700` directory.
+- **What the bulbs see.** Plain UDP `setPilot` datagrams from your machine,
+  unauthenticated by design of the WiZ local API. Anyone on the same LAN can
+  do the same — treat the bulbs as LAN devices, not as trusted ones. See
+  [`SECURITY.md`](SECURITY.md) for the full model.
+- **How it was written.** Most of the code was generated with **DeepSeek V4.1
+  Flash Free** in OpenCode and reviewed with **Claude Sonnet 5.5** and
+  **GPT-6 Luna**, the same workflow as
+  [`mpv-config`](https://github.com/mfascioli/mpv-config). No independent audit
+  or release scan has been published yet; the roadmap tracks that gap, and
+  [`SECURITY.md`](SECURITY.md) states what was reviewed and what was not.
+
+## 🙏 Credits and license
+
+![Credits banner: built on mpv, wiz-hack and Merriweather](assets/credits.png)
+
+- **[wiz-hack](https://github.com/myselfshravan/wiz-hack)** by
+  [@myselfshravan](https://github.com/myselfshravan) reverse-engineered the WiZ
+  local UDP protocol and built the API server, the music visualizers and the
+  first video/Ambilight experiments. This is a focused fork of it: the mpv
+  Ambilight path — frame sampling in Lua, a fade loop in Python, layouts,
+  styles, attach mode, the web panel and the tests — is what the fork adds,
+  and the original toolkit stays in [`upstream/`](upstream/) with its own
+  README.
+- **[mpv](https://mpv.io/)** decodes and shows the video; this project only
+  reads frames from it and never patches or bundles it.
+- **[mpv-config](https://github.com/mfascioli/mpv-config)** lent the design
+  language: amber `#FCBE11`, charcoal HUD grid and bracket corners.
+- **[Merriweather](https://github.com/EbenSorkin/Merriweather)** by Eben
+  Sorkin, bundled in `web/fonts/` under the
   [SIL Open Font License](web/fonts/Merriweather-OFL.txt).
-- Built on [mpv](https://mpv.io/) and the WiZ local API.
 
 Both the original work and these changes are released under the
 [MIT license](LICENSE).
+
+## 💡 Also check out
+
+![A crop of the mpv-config keyboard map: amber keys on a charcoal HUD grid](assets/mpv-config.png)
+
+[**mpv-config**](https://github.com/mfascioli/mpv-config) — the mpv setup this
+panel takes its look from, and the other half of the picture: EWA Lanczos
+scaling, amber subtitles that reach into the letterbox bars, four audio
+profiles and a full keybinding map.
