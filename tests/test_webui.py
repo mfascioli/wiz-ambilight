@@ -233,6 +233,8 @@ class DemoPanelTests(unittest.TestCase):
         self.assertIn("hue", snapshot["styles"])
         self.assertIn("fps", snapshot["style_details"]["hue"])
         self.assertTrue(snapshot["config_path"].endswith("lights.json"))
+        self.assertIsInstance(snapshot["network"], list)
+        self.assertIn("active", snapshot["crazy"])
 
     def test_light_update_is_in_memory_only(self):
         panel = webui.Panel(m, demo=True)
@@ -375,6 +377,112 @@ class SceneNormalizeTests(unittest.TestCase):
                     os.environ.pop("WIZ_AMBILIGHT_SCENES_CONFIG", None)
                 else:
                     os.environ["WIZ_AMBILIGHT_SCENES_CONFIG"] = old
+
+
+class PanelDeliveryTests(unittest.TestCase):
+    """The panel must say when a bulb never answered a manual command."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.vars = {}
+        for key, value in {
+            "WIZ_AMBILIGHT_GUI_CONFIG": str(Path(self.tmp.name) / "lights.json"),
+            "WIZ_AMBILIGHT_SCENES_CONFIG": str(Path(self.tmp.name) / "scenes.json"),
+            "XDG_RUNTIME_DIR": self.tmp.name,
+        }.items():
+            self.vars[key] = os.environ.get(key)
+            os.environ[key] = value
+        self.panel = webui.Panel(m)
+        self.panel.config["lights"] = {
+            "10.0.0.5": {
+                "name": "Desk",
+                "enabled": True,
+                "zone": "",
+                "model": "ESP24_SHRGBC_01",
+                "mac": "",
+                "firmware": "",
+            }
+        }
+
+    def tearDown(self):
+        for key, value in self.vars.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        self.tmp.cleanup()
+
+    def test_silent_bulb_gets_a_warning_and_goes_offline(self):
+        with mock.patch.object(m, "send_commands", return_value={}), mock.patch.object(
+            m, "query_lights", return_value={}
+        ), mock.patch.object(
+            m, "local_ipv4_networks", return_value=[("10.0.0.2", 24)]
+        ):
+            snapshot = self.panel.control("all", {"power": True})
+        self.assertIn("10.0.0.5", snapshot["warning"])
+        self.assertIn("10.0.0.2/24", snapshot["warning"])
+        self.assertEqual([row["online"] for row in snapshot["lights"]], [False])
+
+    def test_acknowledged_bulb_is_online_and_quiet(self):
+        with mock.patch.object(
+            m, "send_commands", return_value={"10.0.0.5": {"success": True}}
+        ), mock.patch.object(m, "local_ipv4_networks", return_value=[("10.0.0.2", 24)]):
+            snapshot = self.panel.control("all", {"power": True})
+        self.assertNotIn("warning", snapshot)
+        self.assertEqual([row["online"] for row in snapshot["lights"]], [True])
+
+    def test_a_get_pilot_reply_counts_as_reachable(self):
+        with mock.patch.object(m, "send_commands", return_value={}), mock.patch.object(
+            m, "query_lights", return_value={"10.0.0.5": {"state": True, "dimming": 55}}
+        ), mock.patch.object(m, "local_ipv4_networks", return_value=[("10.0.0.2", 24)]):
+            snapshot = self.panel.control("all", {"brightness": 55})
+        self.assertNotIn("warning", snapshot)
+        self.assertEqual(snapshot["lights"][0]["dimming"], 55)
+
+
+class CrazyTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.vars = {}
+        for key, value in {
+            "WIZ_AMBILIGHT_GUI_CONFIG": str(Path(self.tmp.name) / "lights.json"),
+            "WIZ_AMBILIGHT_SCENES_CONFIG": str(Path(self.tmp.name) / "scenes.json"),
+            "XDG_RUNTIME_DIR": self.tmp.name,
+        }.items():
+            self.vars[key] = os.environ.get(key)
+            os.environ[key] = value
+
+    def tearDown(self):
+        for key, value in self.vars.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        self.tmp.cleanup()
+
+    def test_crazy_streams_then_stops(self):
+        panel = webui.Panel(m, demo=True)
+        panel.start_crazy(seconds=2)
+        thread = panel._crazy_thread
+        self.assertTrue(panel.crazy_status()["active"])
+        self.assertLessEqual(panel.crazy_status()["remaining"], 2.0)
+        panel.stop_crazy()
+        thread.join(timeout=1.0)
+        self.assertFalse(panel.crazy_status()["active"])
+
+    def test_crazy_toggle_stops_an_active_run(self):
+        panel = webui.Panel(m, demo=True)
+        panel.start_crazy(seconds=2)
+        thread = panel._crazy_thread
+        snapshot = panel.crazy({})
+        self.assertFalse(snapshot["crazy"]["active"])
+        thread.join(timeout=1.0)
+
+    def test_crazy_refuses_to_fight_the_sync(self):
+        panel = webui.Panel(m, demo=True)
+        with mock.patch.object(panel.session, "running", return_value=True):
+            with self.assertRaises(ValueError):
+                panel.start_crazy()
 
 
 class ScanTests(unittest.TestCase):

@@ -112,6 +112,10 @@ lists every bulb it finds, and lets you:
 - include or exclude every light at once, with one **All / None** click;
 - use **Direct control** on all bulbs or a single one: power, brightness,
   white temperature, a color picker/**hex** field, WiZ scenes and scene speed;
+- press **Crazy 20 s** for a rainbow at 15 updates/s that stops by itself
+  (capped at 20/s, and it will not start while the sync owns the bulbs);
+- see **which bulbs answer**: every manual command waits for a reply, and a
+  silent bulb is greyed out with a warning instead of failing quietly;
 - click the **hex chip** under a bulb to send that exact color to the target;
 - save the current look as a **scene** and apply or delete it later;
 - flash a bulb to identify it, or toggle its power;
@@ -376,6 +380,8 @@ not decode.
 |---|---|
 | **No lights found** | `./mpv_ambilight.py --discover`; check that the bulbs and computer are on the same VLAN and that client isolation / guest Wi-Fi is off. Pin them with `--lights ip1,ip2` or `WIZ_LIGHTS`. |
 | **Only some bulbs are found** | Press **Scan network** again: a manual scan probes the broadcast three times and then every address on the local `/24`, which finds bulbs that ignore broadcast. If one is still missing, it is probably on another VLAN/guest network or outside that subnet; pin it with `--lights ip1,ip2`. |
+| **Buttons do nothing / “No reply from …”** | The panel now names the bulbs that did not answer. Compare **Panel network** in the panel with the bulb IPs: if it says `192.168.1.5 outside this subnet`, the computer is on a different network (hotspot, VPN, Ethernet bridge down). Join the bulbs' Wi-Fi, or check `ip -brief addr` and the router's client list. |
+| **Crazy mode stops early** | It is capped at 20 updates/s and 20 s on purpose; faster streams make cheap Wi-Fi radios drop packets and look slower. It also refuses to start while the sync is running, because both would fight over the bulbs. |
 | **`mpv could not grab frames`** | Your VO does not support raw screenshots. Try `-- --vo=gpu` or `-- --screenshot-sw=yes`. Do not use `--vo=null` or `--no-video`. |
 | **Colors look wrong / sides swapped** | Reinstall the Lua script (`./mpv_ambilight.py --install-script --force`), restart mpv, and check the order of `--lights` / `--zones`. |
 | **Stutter on 4K** | Lower `--fps` (e.g. `--fps 6`) or use `--style cinema`. |

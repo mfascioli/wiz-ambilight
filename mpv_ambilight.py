@@ -53,7 +53,7 @@ import sys
 import time
 from pathlib import Path
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 DEFAULT_PORT = 38899
 ZONE_NAMES = {"all", "left", "right", "top", "bottom", "t1", "t2", "t3"}
 
@@ -408,6 +408,47 @@ def query_lights(ips, method: str = "getSystemConfig", timeout: float = 0.7) -> 
     finally:
         sock.close()
     return results
+
+
+def send_commands(commands, timeout: float = 0.7, port: int = DEFAULT_PORT) -> dict:
+    """Send (ip, method, params) commands and collect the replies.
+
+    Manual controls in the panel use this instead of fire-and-forget: a reply
+    proves the bulb received the datagram, so the UI can tell "the bulb ignored
+    it" apart from "the packet never left this computer".
+    """
+    if not commands:
+        return {}
+    targets = {ip for ip, _method, _params in commands}
+    replies = {}
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        for index, (ip, method, params) in enumerate(commands, start=1):
+            payload = json.dumps(
+                {"id": index, "method": method, "params": params or {}},
+                separators=(",", ":"),
+            ).encode()
+            try:
+                sock.sendto(payload, (ip, port))
+            except OSError:
+                pass
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            sock.settimeout(max(0.02, deadline - time.monotonic()))
+            try:
+                data, addr = sock.recvfrom(8192)
+            except socket.timeout:
+                break
+            try:
+                message = json.loads(data)
+            except ValueError:
+                continue
+            # Match by address: some firmwares reuse their own request ids.
+            if addr[0] in targets and "result" in message:
+                replies[addr[0]] = message["result"]
+    finally:
+        sock.close()
+    return replies
 
 
 # --------------------------------------------------------------------------- #

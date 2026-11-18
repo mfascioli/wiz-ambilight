@@ -35,6 +35,8 @@ const refs = {
   applySceneBtn: document.getElementById("applySceneBtn"),
   controlSpeed: document.getElementById("controlSpeed"),
   controlSpeedOut: document.getElementById("controlSpeedOut"),
+  crazyBtn: document.getElementById("crazyBtn"),
+  networkNote: document.getElementById("networkNote"),
   sceneName: document.getElementById("sceneName"),
   saveSceneBtn: document.getElementById("saveSceneBtn"),
   sceneList: document.getElementById("sceneList"),
@@ -106,7 +108,8 @@ async function action(path, body, message, button = null) {
   try {
     const data = await api(path, body);
     if (data && data.lights) apply(data);
-    if (message) toast(message);
+    if (data && data.warning) toast(data.warning, true);
+    else if (message) toast(message);
     return data;
   } catch (error) {
     toast(error.message, true);
@@ -470,6 +473,52 @@ function fillSceneOptions(snapshot) {
   }
 }
 
+function ipInCidr(ip, cidr) {
+  const [base, bitsText] = String(cidr).split("/");
+  const bits = Number(bitsText);
+  if (!base || !Number.isFinite(bits) || bits < 0 || bits > 32) return false;
+  const toInt = (value) =>
+    value.split(".").reduce((acc, part) => ((acc << 8) + Number(part)) >>> 0, 0);
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+  return (toInt(ip) & mask) === (toInt(base) & mask);
+}
+
+function renderNetwork(snapshot) {
+  if (!refs.networkNote) return;
+  const networks = snapshot.network || [];
+  const lights = snapshot.lights || [];
+  if (!networks.length) {
+    refs.networkNote.textContent =
+      "This computer has no active IPv4 network — bulbs cannot answer.";
+    refs.networkNote.classList.add("warn");
+    return;
+  }
+  const online = lights.filter((light) => light.online).length;
+  const offline = lights.filter((light) => !light.online);
+  const parts = [`Panel network: ${networks.join(", ")}`];
+  if (lights.length) parts.push(`${online} of ${lights.length} bulbs reachable`);
+  const outside = offline.filter((light) => !networks.some((cidr) => ipInCidr(light.ip, cidr)));
+  if (outside.length) {
+    parts.push(`${outside.map((light) => light.ip).join(", ")} outside this subnet`);
+  }
+  refs.networkNote.textContent = parts.join(" · ");
+  refs.networkNote.classList.toggle("warn", lights.length > 0 && offline.length > 0);
+}
+
+function renderCrazy(snapshot) {
+  if (!refs.crazyBtn) return;
+  const crazy = snapshot.crazy || {};
+  const hasLights = snapshot.lights.length > 0;
+  refs.crazyBtn.disabled = !hasLights;
+  refs.crazyBtn.classList.toggle("active", Boolean(crazy.active));
+  refs.crazyBtn.textContent = crazy.active
+    ? `Stop crazy · ${Math.ceil(crazy.remaining)}s`
+    : "Crazy 20 s";
+  refs.crazyBtn.title = crazy.active
+    ? "Stop the rainbow now"
+    : "Rainbow at 15 updates/s for 20 s, then it stops on its own";
+}
+
 function renderControl(snapshot) {
   fillTargetOptions(snapshot);
   fillSceneOptions(snapshot);
@@ -584,6 +633,8 @@ function apply(snapshot) {
   renderSession(snapshot);
   renderSettings(snapshot);
   renderControl(snapshot);
+  renderNetwork(snapshot);
+  renderCrazy(snapshot);
   renderScenes(snapshot);
   renderMapping(snapshot);
   renderLua(snapshot);
@@ -647,7 +698,10 @@ refs.scanBtn.addEventListener("click", async () => {
   const data = await action("/api/scan", {}, null, refs.scanBtn);
   refs.scanBtn.textContent = original;
   refs.scanBtn.disabled = false;
-  if (data) toast(`Scan finished · ${data.lights.length} lights known`);
+  if (data && !data.warning) {
+    const reachable = data.lights.filter((light) => light.online).length;
+    toast(`Scan finished · ${reachable} ${reachable === 1 ? "bulb" : "bulbs"} reachable`);
+  }
 });
 
 refs.enableAllBtn.addEventListener("click", () => setAllEnabled(true));
@@ -700,6 +754,15 @@ refs.powerOnBtn.addEventListener("click", () =>
 refs.powerOffBtn.addEventListener("click", () =>
   sendControl({ power: false }, `${targetName(state.snapshot)} off`, refs.powerOffBtn),
 );
+refs.crazyBtn.addEventListener("click", () => {
+  const active = Boolean(state.snapshot?.crazy?.active);
+  action(
+    "/api/crazy",
+    { target: targetIp() },
+    active ? "Crazy mode stopped" : "Crazy mode for 20 s",
+    refs.crazyBtn,
+  );
+});
 refs.controlBrightness.addEventListener("input", () => {
   refs.controlBrightnessOut.value = refs.controlBrightness.value;
 });

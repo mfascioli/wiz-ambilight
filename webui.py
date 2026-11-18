@@ -6,6 +6,7 @@ files in ``web/`` and a JSON API, and the panel owns at most one sync process
 127.0.0.1 and only accepts JSON POSTs from its own origin.
 """
 
+import colorsys
 import json
 import os
 import re
@@ -27,6 +28,13 @@ WEB_DIR = HERE / "web"
 SCRIPT = HERE / "mpv_ambilight.py"
 DEFAULT_PORT = 8765
 APP_NAME = "wiz-ambilight"
+
+# Crazy mode streams a rainbow straight to the bulbs. WiZ firmware starts
+# dropping datagrams when you go much faster than this, and the cap keeps a
+# held-down button from hammering a cheap radio.
+CRAZY_HZ = 15.0
+CRAZY_MAX_HZ = 20.0
+CRAZY_SECONDS = 20.0
 
 CONFIG_KEYS = ("layout", "style", "brightness", "mode", "media", "dry_run")
 DEFAULT_CONFIG = {
@@ -515,12 +523,18 @@ class Panel:
         self.config = load_config(core)
         self.scenes = load_scenes()
         self.live = {}
+        self.reachable = set()
         self.scanned = 0.0
+        self._crazy_stop = threading.Event()
+        self._crazy_thread = None
+        self._crazy_target = "all"
+        self._crazy_until = 0.0
         self.session = Session(self)
         self.session.adopt()
         if demo:
             self.config["dry_run"] = True
             self.live = json.loads(json.dumps(DEMO_LIGHTS))
+            self.reachable = set(self.live)
             for ip, info in self.live.items():
                 self.config["lights"].setdefault(
                     ip,
@@ -558,6 +572,12 @@ class Panel:
         with self.lock:
             self.live = live
             self.scanned = time.time()
+            if deep:
+                self.reachable = set(live)
+            else:
+                # A light scan may miss a bulb that only answers unicast, so it
+                # must never take a known bulb offline.
+                self.reachable |= set(live)
             before = [ip for ip, _ in enabled_lights(self.config)]
             merge_discovered(self.config, live)
             self._persist()
@@ -594,7 +614,7 @@ class Panel:
                         "model": info.get("model") or entry.get("model") or "",
                         "mac": info.get("mac") or entry.get("mac") or "",
                         "firmware": info.get("firmware") or entry.get("firmware") or "",
-                        "online": ip in self.live if not self.demo else True,
+                        "online": ip in self.reachable if not self.demo else True,
                         "state": bool(info.get("state", False)),
                         "dimming": info.get("dimming"),
                         "temp": info.get("temp"),
@@ -654,6 +674,11 @@ class Panel:
             "session": self.session.snapshot(),
             "lua": self.lua_status(),
             "scanned": self.scanned,
+            "network": [
+                f"{address}/{prefix}"
+                for address, prefix in self.core.local_ipv4_networks()
+            ],
+            "crazy": self.crazy_status(),
             "config_path": str(config_path()),
         }
 
@@ -704,6 +729,7 @@ class Panel:
             self.start()
 
     def start(self, argv=None) -> dict:
+        self._cancel_crazy()
         with self.lock:
             config = json.loads(json.dumps(self.config))
         if argv is None:
@@ -750,6 +776,109 @@ class Panel:
             if params or power is True:
                 info["state"] = True
 
+    def _unreachable_note(self, ips) -> str:
+        networks = self.core.local_ipv4_networks()
+        where = (
+            ", ".join(f"{address}/{prefix}" for address, prefix in networks)
+            or "no active IPv4 network"
+        )
+        return (
+            f"No reply from {', '.join(ips)}. This computer is on {where}; "
+            "check that the bulb is powered and on the same Wi-Fi/VLAN."
+        )
+
+    # -- crazy mode ------------------------------------------------------- #
+
+    def crazy_status(self) -> dict:
+        thread = self._crazy_thread
+        active = (
+            thread is not None
+            and thread.is_alive()
+            and self._crazy_until > time.time()
+        )
+        return {
+            "active": active,
+            "remaining": round(max(0.0, self._crazy_until - time.time()), 1)
+            if active
+            else 0.0,
+            "target": self._crazy_target,
+            "max_hz": CRAZY_MAX_HZ,
+        }
+
+    def _cancel_crazy(self) -> None:
+        with self.lock:
+            stop = self._crazy_stop
+            self._crazy_until = 0.0
+        if stop is not None:
+            stop.set()
+
+    def stop_crazy(self) -> dict:
+        self._cancel_crazy()
+        return self.snapshot()
+
+    def start_crazy(self, target: str = "all", seconds=CRAZY_SECONDS, hz=CRAZY_HZ) -> dict:
+        """Stream a rainbow as fast as the bulbs can take it, then stop itself."""
+        if self.session.running():
+            raise ValueError("stop the sync first — it already owns the bulbs")
+        ips = self._target_ips(target)
+        if not ips:
+            raise ValueError("no lights available")
+        seconds = max(2.0, min(60.0, float(seconds)))
+        # Cap the rate: above ~20 updates/s the bulb radio starts losing
+        # packets, which looks like stutter rather than more speed.
+        hz = max(1.0, min(CRAZY_MAX_HZ, float(hz)))
+        self._cancel_crazy()
+        stop = threading.Event()
+        thread = threading.Thread(
+            target=self._crazy_loop,
+            args=(ips, seconds, hz, stop),
+            name="wiz-crazy",
+            daemon=True,
+        )
+        with self.lock:
+            self._crazy_stop = stop
+            self._crazy_thread = thread
+            self._crazy_target = str(target)
+            self._crazy_until = time.time() + seconds
+        thread.start()
+        return self.snapshot()
+
+    def _crazy_loop(self, ips, seconds, hz, stop) -> None:
+        sender = self.core.WizSender(dry_run=self.demo)
+        started = time.monotonic()
+        step = 0
+        try:
+            while not stop.is_set():
+                elapsed = time.monotonic() - started
+                if elapsed >= seconds:
+                    break
+                hue = (elapsed * 0.6) % 1.0
+                for index, ip in enumerate(ips):
+                    r, g, b = colorsys.hsv_to_rgb((hue + index * 0.11) % 1.0, 1.0, 1.0)
+                    params = {
+                        "r": int(round(r * 255)),
+                        "g": int(round(g * 255)),
+                        "b": int(round(b * 255)),
+                    }
+                    if step == 0:
+                        params["state"] = True
+                    sender.set_pilot(ip, params)
+                step += 1
+                stop.wait(1.0 / hz)
+        finally:
+            sender.close()
+            with self.lock:
+                if self._crazy_stop is stop:
+                    self._crazy_thread = None
+                    self._crazy_until = 0.0
+
+    def crazy(self, payload: dict) -> dict:
+        if not isinstance(payload, dict):
+            raise ValueError("expected a JSON object")
+        if payload.get("stop") or self.crazy_status()["active"]:
+            return self.stop_crazy()
+        return self.start_crazy(str(payload.get("target") or "all"))
+
     def control(self, target: str, payload: dict) -> dict:
         if not isinstance(payload, dict):
             raise ValueError("expected a JSON object")
@@ -785,24 +914,52 @@ class Panel:
         if not params and power is None:
             raise ValueError("nothing to change")
 
-        sender = self.core.WizSender(dry_run=self.demo)
-        try:
-            for ip in ips:
-                if power is False:
-                    sender.set_power(ip, False)
-                    self._apply_live(ip, {}, power=False)
+        commands = []
+        for ip in ips:
+            if power is False:
+                commands.append((ip, "setState", {"state": False}))
+                continue
+            if params:
+                outgoing = dict(params)
+                if power is True:
+                    outgoing["state"] = True
+                commands.append((ip, "setPilot", outgoing))
+            else:
+                commands.append((ip, "setState", {"state": True}))
+
+        if self.demo:
+            for ip, method, outgoing in commands:
+                print(f"{ip} {method} {outgoing}", flush=True)
+            acked = {ip for ip, _method, _params in commands}
+        else:
+            acked = set(self.core.send_commands(commands, timeout=0.9))
+            silent = [ip for ip, _method, _params in commands if ip not in acked]
+            if silent:
+                # Not every firmware acknowledges a write. A getPilot reply
+                # still proves the bulb is reachable and the packet left here.
+                probes = self.core.query_lights(silent, "getPilot", timeout=0.8)
+                with self.lock:
+                    for ip, info in probes.items():
+                        if isinstance(info, dict):
+                            self.live.setdefault(ip, {}).update(info)
+                acked |= set(probes)
+
+        with self.lock:
+            for ip, _method, outgoing in commands:
+                if ip not in acked:
+                    self.reachable.discard(ip)
                     continue
-                if params:
-                    outgoing = dict(params)
-                    if power is True:
-                        outgoing["state"] = True
-                    sender.set_pilot(ip, outgoing)
-                elif power is True:
-                    sender.set_power(ip, True)
-                self._apply_live(ip, params, power=power)
-        finally:
-            sender.close()
-        return self.snapshot()
+                self.reachable.add(ip)
+                if outgoing.get("state") is False and len(outgoing) == 1:
+                    self._apply_live(ip, {}, power=False)
+                else:
+                    self._apply_live(ip, params, power=power)
+
+        missing = [ip for ip, _method, _params in commands if ip not in acked]
+        snapshot = self.snapshot()
+        if missing:
+            snapshot["warning"] = self._unreachable_note(missing)
+        return snapshot
 
     def _scene_from_live(self):
         entries = {}
@@ -909,18 +1066,8 @@ class Panel:
         finally:
             sender.close()
 
-    def set_power(self, ip: str, on: bool) -> None:
-        ip = self._known_ip(ip)
-        if self.demo:
-            self.live.setdefault(ip, {})["state"] = bool(on)
-            return
-        sender = self.core.WizSender()
-        try:
-            sender.set_power(ip, on)
-        finally:
-            sender.close()
-        info = self.live.setdefault(ip, {})
-        info["state"] = bool(on)
+    def set_power(self, ip: str, on: bool) -> dict:
+        return self.control(ip, {"power": bool(on)})
 
     def install_script(self) -> str:
         import contextlib
@@ -1066,7 +1213,15 @@ class Handler(BaseHTTPRequestHandler):
                 )
             elif path == "/api/scan":
                 count = self.panel.scan()
-                self._json({"found": count, **self.panel.snapshot()})
+                snapshot = self.panel.snapshot()
+                silent = [
+                    row["ip"]
+                    for row in snapshot["lights"]
+                    if not row["online"] and row["enabled"]
+                ]
+                if silent:
+                    snapshot["warning"] = self.panel._unreachable_note(silent)
+                self._json({"found": count, **snapshot})
             elif path == "/api/start":
                 self._json(self.panel.start())
             elif path == "/api/stop":
@@ -1088,12 +1243,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True})
             elif path == "/api/power":
                 ip = str(payload.get("ip") or "")
-                self.panel.set_power(ip, bool(payload.get("on")))
-                self._json({"ok": True})
+                self._json(self.panel.set_power(ip, bool(payload.get("on"))))
+            elif path == "/api/crazy":
+                self._json(self.panel.crazy(payload))
             elif path == "/api/install-script":
                 self._json({"message": self.panel.install_script(), **self.panel.snapshot()})
             elif path == "/api/quit":
                 self._json({"ok": True})
+                self.panel._cancel_crazy()
                 self.panel.stop()
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
             else:

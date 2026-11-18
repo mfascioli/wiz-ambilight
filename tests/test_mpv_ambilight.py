@@ -2,8 +2,11 @@
 
 import contextlib
 import io
+import json
 import os
+import socket
 import sys
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -96,6 +99,46 @@ class ParsingTests(unittest.TestCase):
             m.parse_lights("192.168.1.5 192.168.1.7"),
             ["192.168.1.5", "192.168.1.7"],
         )
+
+
+class SendCommandTests(unittest.TestCase):
+    def test_collects_the_reply_from_a_bulb(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+
+        def responder():
+            data, addr = sock.recvfrom(4096)
+            message = json.loads(data)
+            sock.sendto(
+                json.dumps(
+                    {
+                        "id": message["id"],
+                        "method": message["method"],
+                        "result": {"success": True},
+                    }
+                ).encode(),
+                addr,
+            )
+
+        thread = threading.Thread(target=responder, daemon=True)
+        thread.start()
+        try:
+            replies = m.send_commands(
+                [("127.0.0.1", "setPilot", {"r": 1, "g": 2, "b": 3})],
+                timeout=1.0,
+                port=port,
+            )
+        finally:
+            sock.close()
+        self.assertIn("127.0.0.1", replies)
+        self.assertTrue(replies["127.0.0.1"]["success"])
+
+    def test_reports_nothing_when_the_bulb_is_silent(self):
+        replies = m.send_commands(
+            [("127.0.0.1", "setPilot", {"r": 1})], timeout=0.15, port=9
+        )
+        self.assertEqual(replies, {})
 
 
 class DiscoveryTargetTests(unittest.TestCase):
