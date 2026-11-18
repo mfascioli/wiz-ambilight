@@ -122,17 +122,11 @@ class StructureTests(unittest.TestCase):
             ["Lights", "Session", "Direct control", "Look", "My scenes", "Activity"],
         )
 
-    def test_quick_start_explains_the_flow(self):
-        self.assertEqual(HTML.count('class="quick-step"'), 3)
-        for phrase in (
-            "Find the bulbs on your Wi-Fi.",
-            "Name each one and its screen zone.",
-            "Start with mpv, or control them here.",
-        ):
-            self.assertIn(phrase, HTML)
-        steps = re.findall(r'<div class="quick-step">(.*?)</div>', HTML, re.S)
-        visible = re.sub(r"<[^>]+>", " ", " ".join(steps))
-        self.assertLessEqual(len(" ".join(visible.split())), 150)
+    def test_the_panel_opens_without_a_quick_start_strip(self):
+        self.assertNotIn("quickstart", HTML)
+        self.assertNotIn("quick-step", HTML)
+        self.assertIn("Each bulb copies one", HTML)
+        self.assertLess(HTML.index("lights-card"), HTML.index("session-card"))
 
     def test_sections_can_collapse(self):
         for card in ("lights-card", "session-card", "control-card", "log-card"):
@@ -155,7 +149,9 @@ class StructureTests(unittest.TestCase):
     def test_crazy_is_a_short_hidden_burst(self):
         self.assertNotIn("crazyBtn", HTML)
         self.assertNotIn("Crazy 20", HTML)
-        self.assertIn("crazyEasterEgg", (WEB / "app.js").read_text(encoding="utf-8"))
+        js = (WEB / "app.js").read_text(encoding="utf-8")
+        self.assertIn("crazyEasterEgg", js)
+        self.assertIn("CRAZY_WINDOW = 3000", js)
         self.assertIn("CRAZY_SECONDS = 5.0", WEBUI)
         self.assertIn("dimming", WEBUI)
 

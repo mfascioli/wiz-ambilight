@@ -19,7 +19,7 @@
   <div class="top-actions">
     <span class="badge hidden" id="demoBadge">demo</span>
     <span class="badge" id="versionBadge">v—</span>
-    <button class="ghost" id="quitBtn" title="Close the panel (the sync child stops too)">Quit</button>
+    <button class="ghost" id="quitBtn" title="Close the panel and stop the sync">Quit</button>
   </div>
 </header>
 
@@ -28,24 +28,6 @@
 </div>
 
 <main>
-  <section class="quickstart" aria-label="Quick start">
-    <div class="quick-step">
-      <i>01</i>
-      <b>Scan</b>
-      <span>Find the bulbs on your Wi-Fi.</span>
-    </div>
-    <div class="quick-step">
-      <i>02</i>
-      <b>Pick</b>
-      <span>Name each one and its screen zone.</span>
-    </div>
-    <div class="quick-step">
-      <i>03</i>
-      <b>Sync</b>
-      <span>Start with mpv, or control them here.</span>
-    </div>
-  </section>
-
   <details class="card lights-card" open>
     <summary class="card-head">
       <div class="card-title">
@@ -59,8 +41,8 @@
     </summary>
     <div class="card-body">
       <p class="hint tight">
-        A <strong>zone</strong> is the slice of video a bulb copies: left edge, right edge,
-        top, bottom or a third. Grey bulbs did not answer the last probe.
+        Each bulb copies one <strong>zone</strong> of the frame; grey means it
+        missed the last probe.
       </p>
       <div class="toolbar">
         <button class="ghost small" id="enableAllBtn" title="Include every known light">All</button>
@@ -104,7 +86,7 @@
         </div>
       </div>
       <div class="actions">
-        <button class="primary" id="startBtn">Start ambilight</button>
+        <button class="primary" id="startBtn">Start Ambilight</button>
         <button class="ghost" id="stopBtn" disabled>Stop</button>
       </div>
       <p class="hint" id="modeHint"></p>
@@ -236,7 +218,7 @@
           </div>
         </div>
         <div id="sceneList" class="scene-list"></div>
-        <p class="hint">Plain JSON in <code>~/.config/wiz-ambilight/scenes.json</code>, so scripts can generate scenes too.</p>
+        <p class="hint">Stored in <code>~/.config/wiz-ambilight/scenes.json</code>.</p>
       </div>
     </details>
   </aside>

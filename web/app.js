@@ -7,6 +7,15 @@ const el = (tag, className, text) => {
   return node;
 };
 
+/* Sliders paint their own filled track through the --fill custom property. */
+const paintRange = (input) => {
+  const min = Number(input.min) || 0;
+  const max = Number(input.max) || 100;
+  const value = Number(input.value) || 0;
+  const ratio = max > min ? (value - min) / (max - min) : 0;
+  input.style.setProperty("--fill", `${Math.round(ratio * 100)}%`);
+};
+
 const refs = {
   subtitle: document.getElementById("subtitle"),
   statusDot: document.getElementById("statusDot"),
@@ -182,14 +191,13 @@ function buildCard(light) {
   const online = el("span", "online-dot");
   const ipLabel = el("span", "ip");
   const modelLabel = el("span", "model");
-  const zoneChip = el("span", "zone-chip");
   const hexChip = el("button", "hex-chip");
   hexChip.type = "button";
   hexChip.title = "Send this color to the target";
   hexChip.setAttribute("aria-label", "Use this light's color in direct control");
   hexChip.classList.add("hidden");
   const extraLabel = el("span", "extra");
-  meta.append(online, ipLabel, modelLabel, zoneChip, hexChip, extraLabel);
+  meta.append(online, ipLabel, modelLabel, hexChip, extraLabel);
 
   const main = el("div", "light-main");
   main.append(name, meta);
@@ -275,7 +283,6 @@ function buildCard(light) {
     online,
     ipLabel,
     modelLabel,
-    zoneChip,
     hexChip,
     extraLabel,
     zone,
@@ -304,9 +311,6 @@ function updateCard(card, light) {
         .filter(Boolean)
         .join(" · ")
     : "offline";
-  card.zoneChip.classList.toggle("hidden", !light.enabled || !light.online);
-  card.zoneChip.textContent = `→ ${zoneLabel(light.effective_zone)}`;
-  card.zoneChip.title = `This bulb samples the ${zoneLabel(light.effective_zone)} of the video`;
   card.zonePreview.dataset.zone = light.effective_zone;
   card.zonePreview.title = `Samples the ${zoneLabel(light.effective_zone)} of the video`;
   const hexValue = normalizeHex(light.hex);
@@ -403,12 +407,12 @@ function renderSession(snapshot) {
   }
   refs.mediaField.classList.toggle("hidden", mode !== "launch");
   if (document.activeElement !== refs.mediaInput) refs.mediaInput.value = snapshot.config.media || "";
-  refs.startBtn.textContent = running ? "Restart" : "Start ambilight";
+  refs.startBtn.textContent = running ? "Restart" : "Start Ambilight";
   refs.startBtn.disabled = enabled === 0 || (mode === "launch" && !snapshot.config.media.trim());
   refs.modeHint.textContent =
     mode === "attach"
-      ? "Attach follows any mpv window that loaded the Lua script. Install it once, then restart mpv."
-      : "Launch starts mpv with the chosen file and syncs its frames. Settings are saved for next time.";
+      ? "Attach follows any mpv window that loaded the Lua script."
+      : "Launch starts mpv with the chosen file.";
 }
 
 function fillSelect(select, values) {
@@ -431,6 +435,7 @@ function renderSettings(snapshot) {
   if (document.activeElement !== refs.brightness) {
     refs.brightness.value = String(config.brightness);
     refs.brightnessOut.value = String(config.brightness);
+    paintRange(refs.brightness);
   }
   refs.dryRun.checked = Boolean(config.dry_run);
   refs.lookPill.textContent = config.style;
@@ -562,11 +567,13 @@ function renderControl(snapshot) {
     const value = light.dimming ?? 100;
     refs.controlBrightness.value = String(value);
     refs.controlBrightnessOut.value = String(value);
+    paintRange(refs.controlBrightness);
   }
   if (document.activeElement !== refs.controlTemp) {
     const value = light.temp ?? 3000;
     refs.controlTemp.value = String(value);
     refs.controlTempOut.value = `${value} K`;
+    paintRange(refs.controlTemp);
   }
   if (document.activeElement !== refs.controlHex && document.activeElement !== refs.controlColor) {
     const value = normalizeHex(light.hex) || "#ffffff";
@@ -780,19 +787,29 @@ refs.powerOffBtn.addEventListener("click", () =>
   sendControl({ power: false }, `${targetName(state.snapshot)} off`, refs.powerOffBtn),
 );
 let dotClicks = [];
+const CRAZY_WINDOW = 3000;
+
+function tapDot() {
+  refs.statusDot.classList.remove("tap");
+  void refs.statusDot.offsetWidth;
+  refs.statusDot.classList.add("tap");
+}
+
 function crazyEasterEgg() {
   const now = Date.now();
-  dotClicks = dotClicks.filter((stamp) => now - stamp < 1600);
+  dotClicks = dotClicks.filter((stamp) => now - stamp < CRAZY_WINDOW);
   dotClicks.push(now);
+  tapDot();
   if (dotClicks.length < 3) return;
   dotClicks = [];
   const active = Boolean(state.snapshot?.crazy?.active);
-  action(
-    "/api/crazy",
-    { target: "all" },
-    active ? "Crazy mode stopped" : "Crazy for 5 s",
-    refs.statusDot,
-  );
+  const wasRunning = Boolean(state.snapshot?.session?.running);
+  const message = active
+    ? "Crazy mode stopped"
+    : wasRunning
+      ? "Crazy for 5 s — Ambilight resumes after"
+      : "Crazy for 5 s";
+  action("/api/crazy", { target: "all" }, message, refs.statusDot);
 }
 
 refs.statusDot.addEventListener("click", crazyEasterEgg);
@@ -904,6 +921,11 @@ async function refresh() {
 }
 
 async function boot() {
+  const sliders = [refs.brightness, refs.controlBrightness, refs.controlTemp, refs.controlSpeed];
+  for (const input of sliders) {
+    paintRange(input);
+    input.addEventListener("input", () => paintRange(input));
+  }
   await refresh();
   state.poll = window.setInterval(() => {
     if (!document.hidden && !state.closed) refresh();

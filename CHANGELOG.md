@@ -2,6 +2,23 @@
 
 Releases before 1.4.0 were never tagged; their history is in `git log`.
 
+## Unreleased
+
+- **Panel:** crazy mode now pauses an attach-mode sync, restores every bulb's
+  previous `getPilot` state after the burst and then resumes the sync. If the
+  state cannot be read, the burst still ends on a full-brightness amber frame
+  instead of the dim end of the sweep. Launch mode still asks you to stop the
+  player first.
+- **Panel:** the hidden gesture is more forgiving — three clicks within three
+  seconds, with a small tap animation on the status dot.
+- **Panel:** compact Apple-like pass over the existing mpv-config tokens: the
+  three-step intro strip is gone, the header and cards are shorter, light rows
+  are dense lists, buttons and sliders are smaller, the active sync mode is a
+  solid amber segment and Activity spans the full width.
+- **Tests:** pin `restore_params`, the attach pause/resume path and the
+  three-second gesture window.
+- **Docs:** refresh `docs/gui.png`.
+
 ## 1.6.0 — 2026-11-18
 
 - **Panel:** every card collapses. Direct control and Activity start closed,

@@ -581,6 +581,49 @@ def crazy_frame(elapsed: float, seconds: float, index: int = 0) -> dict:
     }
 
 
+def restore_params(info) -> dict:
+    """Translate a getPilot result into a setPilot payload.
+
+    Crazy mode uses this to put the bulbs back the way they were. Anything
+    that cannot be represented safely is left out; a scene wins over rgb
+    because replaying the scene keeps its animation, and an off bulb is simply
+    turned off.
+    """
+    if not isinstance(info, dict):
+        return {}
+    if info.get("state") is False:
+        return {"state": False}
+    params = {"state": True}
+    if info.get("dimming") is not None:
+        try:
+            params["dimming"] = max(10, min(100, int(info["dimming"])))
+        except (TypeError, ValueError):
+            pass
+    try:
+        scene = int(info.get("sceneId") or 0)
+    except (TypeError, ValueError):
+        scene = 0
+    if scene > 0:
+        params["sceneId"] = scene
+        return params
+    channels = {}
+    for key in ("r", "g", "b"):
+        try:
+            channels[key] = max(0, min(255, int(info.get(key))))
+        except (TypeError, ValueError):
+            channels = {}
+            break
+    if len(channels) == 3:
+        params.update(channels)
+        return params
+    if info.get("temp") is not None:
+        try:
+            params["temp"] = max(2200, min(6500, int(info["temp"])))
+        except (TypeError, ValueError):
+            pass
+    return params
+
+
 class Panel:
     def __init__(self, core, port: int = DEFAULT_PORT, demo: bool = False):
         self.core = core
@@ -597,6 +640,9 @@ class Panel:
         self._crazy_thread = None
         self._crazy_target = "all"
         self._crazy_until = 0.0
+        self._crazy_restore = {}
+        self._crazy_resume = False
+        self._closing = False
         self.session = Session(self)
         self.session.adopt()
         if demo:
@@ -886,12 +932,28 @@ class Panel:
         return self.snapshot()
 
     def start_crazy(self, target: str = "all", seconds=CRAZY_SECONDS, hz=CRAZY_HZ) -> dict:
-        """Stream a rainbow and a brightness sweep, then stop itself."""
+        """Stream a rainbow and a brightness sweep, then restore the bulbs."""
+        resume = False
         if self.session.running():
-            raise ValueError("stop the sync first — it already owns the bulbs")
+            # Attach mode can be paused and resumed without losing the movie.
+            # Launch mode owns mpv, so stopping it would close the player.
+            if self.session.mode == "attach":
+                self.session.stop()
+                resume = True
+            else:
+                raise ValueError("stop the player first — crazy mode needs the bulbs")
         ips = self._target_ips(target)
         if not ips:
             raise ValueError("no lights available")
+        restore = {}
+        if not self.demo:
+            # One short getPilot pass, then put the bulbs back after the burst.
+            probes = self.core.query_lights(ips, "getPilot", timeout=0.45)
+            restore = {
+                ip: params
+                for ip, info in probes.items()
+                if (params := restore_params(info))
+            }
         seconds = max(2.0, min(30.0, float(seconds)))
         # Cap the rate: above ~20 updates/s the bulb radio starts losing
         # packets, which looks like stutter rather than more speed.
@@ -900,7 +962,7 @@ class Panel:
         stop = threading.Event()
         thread = threading.Thread(
             target=self._crazy_loop,
-            args=(ips, seconds, hz, stop),
+            args=(ips, seconds, hz, stop, restore),
             name="wiz-crazy",
             daemon=True,
         )
@@ -909,10 +971,12 @@ class Panel:
             self._crazy_thread = thread
             self._crazy_target = str(target)
             self._crazy_until = time.time() + seconds
+            self._crazy_restore = restore
+            self._crazy_resume = resume
         thread.start()
         return self.snapshot()
 
-    def _crazy_loop(self, ips, seconds, hz, stop) -> None:
+    def _crazy_loop(self, ips, seconds, hz, stop, restore=None) -> None:
         sender = self.core.WizSender(dry_run=self.demo)
         started = time.monotonic()
         step = 0
@@ -928,12 +992,28 @@ class Panel:
                     sender.set_pilot(ip, params)
                 step += 1
                 stop.wait(1.0 / hz)
+            if not stop.is_set():
+                # Never leave a bulb at the dim end of the sweep if the state
+                # snapshot was unavailable.
+                for ip in ips:
+                    sender.set_pilot(ip, {"r": 255, "g": 190, "b": 17, "dimming": 100})
         finally:
+            for ip, params in (restore or {}).items():
+                sender.set_pilot(ip, params)
             sender.close()
+            resume = False
             with self.lock:
                 if self._crazy_stop is stop:
                     self._crazy_thread = None
                     self._crazy_until = 0.0
+                    self._crazy_restore = {}
+                    resume = self._crazy_resume
+                    self._crazy_resume = False
+            if resume and not self._closing:
+                try:
+                    self.start()
+                except (ValueError, OSError) as exc:
+                    self.session.write_log(f"crazy: could not resume the sync: {exc}")
 
     def crazy(self, payload: dict) -> dict:
         if not isinstance(payload, dict):
@@ -1314,6 +1394,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"message": self.panel.install_script(), **self.panel.snapshot()})
             elif path == "/api/quit":
                 self._json({"ok": True})
+                self.panel._closing = True
                 self.panel._cancel_crazy()
                 self.panel.stop()
                 threading.Thread(target=self.server.shutdown, daemon=True).start()

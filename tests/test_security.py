@@ -96,6 +96,28 @@ class CrazyTests(unittest.TestCase):
                 self.assertGreaterEqual(frame[channel], 0)
                 self.assertLessEqual(frame[channel], 255)
 
+    def test_the_burst_restores_the_previous_look(self):
+        self.assertEqual(
+            webui.restore_params({"state": True, "r": 10, "g": 20, "b": 30, "dimming": 70}),
+            {"state": True, "dimming": 70, "r": 10, "g": 20, "b": 30},
+        )
+        self.assertEqual(webui.restore_params({"state": False, "dimming": 10}), {"state": False})
+        self.assertEqual(
+            webui.restore_params({"state": True, "sceneId": 4, "dimming": 55}),
+            {"state": True, "dimming": 55, "sceneId": 4},
+        )
+        self.assertEqual(
+            webui.restore_params({"state": True, "temp": 2700, "dimming": 100}),
+            {"state": True, "dimming": 100, "temp": 2700},
+        )
+        self.assertEqual(webui.restore_params(None), {})
+
+    def test_an_attach_session_is_paused_and_resumed(self):
+        self.assertIn('if self.session.mode == "attach":', WEBUI)
+        self.assertIn("self.session.stop()", WEBUI)
+        self.assertIn("self._crazy_resume", WEBUI)
+        self.assertIn("if resume and not self._closing:", WEBUI)
+
 
 class DocumentationTests(unittest.TestCase):
     def test_architecture_diagram_is_committed(self):

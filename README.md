@@ -231,8 +231,9 @@ Bold for headings. Merriweather ships in `web/fonts/` under the SIL OFL, so
 the panel needs no network and no installed fonts.
 
 The flow is numbered on screen — **01 Lights → 02 Session → 03 Direct
-control → 04 Look → 05 Scenes → 06 Activity** — with a three-step quick
-start at the top, so the first run does not require reading this README.
+control → 04 Look → 05 Scenes → 06 Activity**. There is no intro strip: the
+first card is the lights list, the header is short, and the heavier controls
+stay collapsed.
 
 [`tests/test_design.py`](tests/test_design.py) pins the design: the exact
 amber and outline tokens, square HUD corners, the bundled font and licence,
