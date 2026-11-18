@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 820" role="img" aria-labelledby="title desc">
+  <title id="title">wiz-ambilight architecture</title>
+  <desc id="desc">mpv samples video frames with a Lua script and writes zone colors to the runtime directory. A Python sync process reads them, fades, and sends UDP setPilot packets to WiZ bulbs on the local network. An optional panel runs on 127.0.0.1:8765 and can spawn the sync and control bulbs directly. No component uses the internet.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#a8a49a"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#fcbe11"/>
+    </marker>
+    <marker id="arrow-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#ff6b5e"/>
+    </marker>
+  </defs>
+  <style>
+    .bg { fill: #0a0a0a; }
+    .box { fill: #0d0d0d; stroke: #3a3a3a; stroke-width: 1; }
+    .box-hot { fill: #0d0d0d; stroke: #fcbe11; stroke-width: 1.5; }
+    .zone { fill: none; stroke: #3a3a3a; stroke-width: 1.25; stroke-dasharray: 5 6; }
+    .zone-bad { fill: none; stroke: #ff6b5e; stroke-width: 1.25; stroke-dasharray: 5 6; }
+    .title { fill: #fcbe11; font-family: Georgia, "Times New Roman", serif; font-size: 26px; font-weight: 700; }
+    .subtitle { fill: #a8a49a; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 13px; }
+    .box-title { fill: #f2efe6; font-family: Georgia, "Times New Roman", serif; font-size: 17px; font-weight: 700; }
+    .label { fill: #a8a49a; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; letter-spacing: .09em; }
+    .label-hot { fill: #fcbe11; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; letter-spacing: .12em; }
+    .body { fill: #a8a49a; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 12px; }
+    .mono { fill: #d8d3c6; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; }
+    .small { fill: #a8a49a; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10px; letter-spacing: .04em; }
+    .bad { fill: #ff6b5e; }
+    .hot { fill: #fcbe11; }
+    .edge { stroke: #a8a49a; stroke-width: 1.2; fill: none; }
+    .edge-amber { stroke: #fcbe11; stroke-width: 1.4; fill: none; }
+    .edge-amber-dash { stroke: #fcbe11; stroke-width: 1.2; fill: none; stroke-dasharray: 6 5; }
+    .edge-bad { stroke: #ff6b5e; stroke-width: 1.2; fill: none; stroke-dasharray: 6 5; }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="1200" height="820"/>
+
+  <text class="title" x="48" y="52">wiz-ambilight — architecture</text>
+  <text class="subtitle" x="48" y="76">mpv samples, Python fades, WiZ bulbs listen on the LAN. Everything stays local.</text>
+  <rect x="1080" y="32" width="72" height="26" fill="none" stroke="#fcbe11"/>
+  <text class="label-hot" x="1096" y="49">v1.6.0</text>
+
+  <!-- Boundaries -->
+  <rect class="zone" x="36" y="104" width="740" height="600"/>
+  <text class="label" x="52" y="128">THIS COMPUTER · TRUSTED</text>
+
+  <rect class="zone" x="824" y="104" width="340" height="420"/>
+  <text class="label-hot" x="840" y="128">LOCAL NETWORK · UNTRUSTED</text>
+
+  <rect class="zone-bad" x="824" y="556" width="340" height="148"/>
+  <text class="label-hot bad" x="840" y="580">INTERNET · NOT USED</text>
+
+  <!-- Browser -->
+  <rect class="box" x="432" y="152" width="310" height="96"/>
+  <text class="box-title" x="448" y="180">Browser</text>
+  <text class="body" x="448" y="202">same machine · opens 127.0.0.1:8765</text>
+  <text class="mono" x="448" y="222">per-run token · strict CSP</text>
+
+  <!-- mpv -->
+  <rect class="box" x="64" y="292" width="300" height="112"/>
+  <text class="box-title" x="80" y="320">mpv</text>
+  <text class="body" x="80" y="342">video decode + video output</text>
+  <text class="mono" x="80" y="362">lua/wiz_ambilight.lua</text>
+  <text class="body" x="80" y="382">samples an 80-column grid</text>
+
+  <!-- Panel -->
+  <rect class="box-hot" x="432" y="292" width="310" height="112"/>
+  <text class="box-title" x="448" y="320">Panel <tspan class="body">(optional --gui)</tspan></text>
+  <text class="mono" x="448" y="342">webui.py · 127.0.0.1:8765</text>
+  <text class="body" x="448" y="364">scans, names zones, starts the sync</text>
+  <text class="body hot" x="448" y="384">only listening socket in the project</text>
+
+  <!-- Sync -->
+  <rect class="box" x="64" y="452" width="300" height="112"/>
+  <text class="box-title" x="80" y="480">Sync process</text>
+  <text class="body" x="80" y="502">mpv_ambilight.py</text>
+  <text class="mono" x="80" y="522">fade + setPilot</text>
+  <text class="body" x="80" y="542">outbound UDP only · no listener</text>
+
+  <!-- Filesystem -->
+  <rect class="box" x="432" y="452" width="310" height="112"/>
+  <text class="box-title" x="448" y="480">Filesystem</text>
+  <text class="mono" x="448" y="502">runtime: state-&lt;pid&gt;.json · control.json</text>
+  <text class="mono" x="448" y="522">config: lights.json · scenes.json</text>
+  <text class="body" x="448" y="544">runtime dir 0700 · files 0600</text>
+
+  <!-- Exposed interface callout -->
+  <rect class="box" x="64" y="596" width="678" height="82"/>
+  <text class="label-hot" x="80" y="620">EXPOSED INTERFACE</text>
+  <text class="body" x="80" y="642">127.0.0.1:8765 — panel only, while --gui. Foreign Host/Origin is rejected.</text>
+  <text class="body" x="80" y="662">No other listening socket: the sync sends UDP and never calls listen/accept.</text>
+
+  <!-- Bulbs -->
+  <rect class="box" x="884" y="300" width="240" height="130"/>
+  <text class="box-title" x="900" y="328">WiZ bulbs</text>
+  <text class="mono" x="900" y="350">UDP 38899</text>
+  <text class="body" x="900" y="370">setPilot · getPilot</text>
+  <text class="body" x="900" y="390">no auth · same LAN only</text>
+  <text class="mono" x="900" y="410">ESP24 · firmware 1.38</text>
+
+  <text class="body" x="884" y="456">Any host on this LAN can spoof</text>
+  <text class="body" x="884" y="474">WiZ datagrams. Treat the bulbs</text>
+  <text class="body" x="884" y="492">as untrusted devices.</text>
+
+  <!-- Internet -->
+  <text class="body" x="840" y="608">No HTTP client, DNS, account,</text>
+  <text class="body" x="840" y="626">telemetry or update check.</text>
+  <text class="body" x="840" y="652">The only route out is UDP to the</text>
+  <text class="body" x="840" y="670">bulbs on the LAN.</text>
+  <line class="edge-bad" x1="1088" y1="582" x2="1120" y2="614"/>
+  <line class="edge-bad" x1="1120" y1="582" x2="1088" y2="614"/>
+
+  <!-- Edges -->
+  <path class="edge" marker-start="url(#arrow)" marker-end="url(#arrow)" d="M587 248 L587 292"/>
+  <text class="small" x="598" y="274">HTTP 127.0.0.1:8765</text>
+
+  <path class="edge" marker-end="url(#arrow)" d="M214 404 L214 452"/>
+  <text class="small" x="226" y="434">state file (zone colors)</text>
+
+  <path class="edge" marker-start="url(#arrow)" marker-end="url(#arrow)" d="M587 404 L587 452"/>
+  <text class="small" x="598" y="432">lights.json · scenes.json</text>
+
+  <path class="edge" marker-start="url(#arrow)" marker-end="url(#arrow)" d="M364 508 L432 508"/>
+
+  <path class="edge" marker-end="url(#arrow)" d="M432 360 L400 360 L400 420 L330 420 L330 452"/>
+  <text class="small" x="340" y="412">spawn / stop (argv)</text>
+
+  <path class="edge-amber" marker-end="url(#arrow-amber)" d="M330 564 L330 580 L790 580 L790 360 L884 360"/>
+  <text class="small hot" x="500" y="574">UDP 38899 · setPilot</text>
+
+  <path class="edge-amber-dash" marker-end="url(#arrow-amber)" d="M742 348 L790 348 L790 330 L884 330"/>
+  <text class="small hot" x="746" y="320">direct setPilot</text>
+
+  <!-- Footer -->
+  <text class="small" x="48" y="744">Legend: grey solid = local file or IPC · amber = UDP to bulbs · red = exposed or unused.</text>
+  <text class="small" x="48" y="766">Trust boundaries: loopback (local user) · LAN (unauthenticated WiZ API) · internet (none).</text>
+  <text class="small" x="48" y="788">Source: docs/architecture.mmd · the same invariants are asserted in tests/test_security.py.</text>
+</svg>

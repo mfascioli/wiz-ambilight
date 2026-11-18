@@ -2,7 +2,8 @@
 
 What runs on your machine, what the code touches, what the panel guarantees,
 and what none of it can promise. This is the user-facing summary; keep it in
-step with the code.
+step with the code. The [architecture diagram](docs/architecture.svg) shows
+the same model visually, including the trust boundaries.
 
 ## Trust model
 
@@ -24,19 +25,40 @@ mpv start. Nothing downloads code, and no installer fetches anything at all.
   an optional `/24` sweep when you press **Scan network**, and loopback HTTP
   for the panel. There is no HTTP client, no DNS lookup, no account, no
   telemetry and no update check — the Python standard library imports no
-  outbound HTTP module.
+  outbound HTTP module. **The sync process never listens**: it creates an
+  unbound UDP socket, which the kernel assigns an ephemeral local port, and
+  only sends on it (discovery and direct control read replies with short
+  timeouts). It does not call `bind`, `listen` or `accept`.
 - **Processes.** The panel starts the sync with `subprocess.Popen(argv, ...)`,
-  no shell and no string interpolation, in its own session; stopping it sends
-  `SIGTERM` to that process group and waits 4 s before `SIGKILL`. The file
-  picker tries `osascript` (macOS), `zenity` and `kdialog`, always with an
-  argument list and a 120 s timeout; when none of them exists it returns an
-  empty path and the manual **Video file** field stays the way to choose a
-  file.
+  no shell and no string interpolation, in its own session. Stopping it sends
+  `SIGTERM` to the process group when `os.killpg` exists and falls back to
+  `terminate()`/`kill()` where it does not, waiting 4 s before the hard stop.
+  After a panel restart, a PID file is adopted only if `/proc/<pid>/cmdline`
+  (Linux) or `ps -p <pid> -o command=` (macOS/BSD) contains both this script
+  and `mpv_ambilight`; when neither source exists (Windows), the panel refuses
+  to adopt. The file picker tries `osascript` (macOS), `zenity` and `kdialog`,
+  always with an argument list and a 120 s timeout; when none of them exists
+  it returns an empty path and the manual **Video file** field stays the way
+  to choose a file.
 - **Files written.** `state-<pid>.json` and `control.json` under
   `$XDG_RUNTIME_DIR/wiz-ambilight/` (`/tmp` fallback, `0700`), the
   `gui-daemon.json` PID file beside them, `lights.json` and `scenes.json` in
   `~/.config/wiz-ambilight/` (`0600`), and the Lua copy in mpv's scripts
   folder. Nothing else is created, renamed or deleted.
+
+## Exposed interfaces
+
+Every surface is listed here; if it is not in this table, it does not exist.
+
+| Surface | When | Why it exists | Mitigation |
+| --- | --- | --- | --- |
+| `127.0.0.1:8765` TCP | only with `--gui` | serve the local panel | loopback bind, Host/Origin checks, per-run token, strict CSP |
+| ephemeral UDP source port | during sync, discovery and direct control | send `setPilot`/`getPilot` and read replies | not a service, no `listen`/`accept`, short timeouts, no `bind` to a public interface |
+| `state-<pid>.json`, `control.json` | during sync | hand zone colors from mpv to Python | runtime dir `0700` |
+| `lights.json`, `scenes.json` | panel | names, zones and saved looks | files `0600`; values range-checked |
+
+There is no inbound TCP service other than the optional panel, no UDP listener
+started by design, and no internet endpoint.
 
 ## Panel guarantees
 
@@ -70,9 +92,8 @@ and never imported. `web/fonts/Merriweather-Bold.ttf` is SIL OFL;
 
 ## How it was written
 
-Most of the code was generated with **DeepSeek V4.1 Flash Free** in OpenCode
-and reviewed with **Claude Sonnet 5.5** and **GPT-6 Luna**, the same workflow
-as [`mpv-config`](https://github.com/mfascioli/mpv-config).
+Most of the code was generated with **DeepSeek V4.1 Flash Free** in OpenCode.
+No other model or tool is claimed for this repository.
 
 ## Review status (2026-11-18)
 
@@ -82,24 +103,21 @@ string execution, Host/Origin/token checks present, private file modes, and
 `--install-script` copying rather than executing. That is a code read, not an
 audit.
 
-Two weaknesses were found and are documented rather than fixed here:
+Two weaknesses found in the 1.5.0 read were fixed in 1.6.0:
 
-- **PID adoption without `/proc`.** `_looks_like_ours()` inspects
-  `/proc/<pid>/cmdline` on Linux; where `/proc` does not exist (macOS, Windows)
-  it trusts the PID file. A stale `gui-daemon.json` whose PID now belongs to
-  an unrelated process would be adopted, and **Stop** would signal that
-  process. Keep the runtime directory tidy if you kill a panel by hand.
-- **`os.killpg` is POSIX-only.** The stop path raises `AttributeError` on
-  Windows instead of terminating the child, and `SIGTERM` has a different
-  meaning there. This is part of the Windows work in the roadmap.
+- **PID adoption without `/proc`.** The panel now verifies the process command
+  line through `/proc` or `ps`; when neither exists it refuses to adopt. A
+  stale `gui-daemon.json` can no longer make **Stop** signal a foreign PID.
+- **`os.killpg` is POSIX-only.** The stop path uses `os.killpg` only when the
+  function exists, then falls back to `terminate()`/`kill()`, so Windows no
+  longer raises `AttributeError` instead of stopping the child.
 
 What has **not** been done:
 
-- no third-party or antivirus scan of a release archive yet (1.5.0 predates
-  this document);
+- no third-party or antivirus scan of a release archive yet;
 - no fuzzing of the UDP parsers or of the panel's JSON bodies;
 - no test on Windows, where the runtime directory, the Lua install path and
-  process control still assume Unix — see the roadmap in the
+  the file picker still assume Unix — see the roadmap in the
   [README](README.md#roadmap).
 
 ## Limits
@@ -107,7 +125,9 @@ What has **not** been done:
 - **The WiZ local API is unauthenticated.** Anyone on the same LAN can drive
   the bulbs, and a spoofed reply is indistinguishable from a real one. The
   panel's token protects the panel from other origins, not the bulbs from your
-  network.
+  network. Discovery and `getPilot` replies are keyed by source address but not
+  restricted to the local subnet, so a host on the LAN can advertise a fake
+  bulb entry; the next command to it is still just UDP.
 - **Plain UDP, no encryption.** Colors are readable on the LAN by design; a
   VPN or a guest network with client isolation changes what is reachable, not
   what is protected.

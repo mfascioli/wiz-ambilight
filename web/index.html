@@ -10,7 +10,7 @@
 <body>
 <header class="topbar">
   <div class="brand">
-    <span class="dot" id="statusDot" aria-hidden="true"></span>
+    <span class="dot" id="statusDot" role="button" tabindex="0" aria-label="Panel status"></span>
     <div>
       <h1>Wiz Ambilight</h1>
       <p class="sub" id="subtitle">Local control panel</p>
@@ -30,188 +30,235 @@
 <main>
   <section class="quickstart" aria-label="Quick start">
     <div class="quick-step">
-      <i>Step 01</i>
-      <b>Scan the LAN</b>
-      <span>Press <strong>Scan network</strong>. Every bulb that answers appears with its model and IP.</span>
+      <i>01</i>
+      <b>Scan</b>
+      <span>Find the bulbs on your Wi-Fi.</span>
     </div>
     <div class="quick-step">
-      <i>Step 02</i>
-      <b>Choose your lights</b>
-      <span>Give each bulb a name and a zone, then include only the ones you want.</span>
+      <i>02</i>
+      <b>Pick</b>
+      <span>Name each one and its screen zone.</span>
     </div>
     <div class="quick-step">
-      <i>Step 03</i>
-      <b>Sync or control</b>
-      <span>Start Ambilight with mpv, or use <strong>Direct control</strong> for power, color and scenes.</span>
+      <i>03</i>
+      <b>Sync</b>
+      <span>Start with mpv, or control them here.</span>
     </div>
   </section>
 
-  <section class="card lights-card">
-    <div class="card-head">
+  <details class="card lights-card" open>
+    <summary class="card-head">
       <div class="card-title">
         <span class="step">01</span>
         <h2>Lights</h2>
       </div>
-      <div class="head-actions">
+      <div class="head-right">
+        <span class="pill" id="lightsPill">0</span>
+        <span class="chev" aria-hidden="true"></span>
+      </div>
+    </summary>
+    <div class="card-body">
+      <p class="hint tight">
+        A <strong>zone</strong> is the slice of video a bulb copies: left edge, right edge,
+        top, bottom or a third. Grey bulbs did not answer the last probe.
+      </p>
+      <div class="toolbar">
         <button class="ghost small" id="enableAllBtn" title="Include every known light">All</button>
         <button class="ghost small" id="enableNoneBtn" title="Include no lights">None</button>
         <button class="ghost" id="scanBtn" title="Probe broadcast and every address on the local /24">Scan network</button>
       </div>
+      <div class="lua-banner hidden" id="luaBanner">
+        <span id="luaText"></span>
+        <button class="ghost small" id="installBtn">Install script</button>
+      </div>
+      <div id="lights" class="lights"></div>
+      <p class="network-note" id="networkNote"></p>
+      <p class="empty hidden" id="lightsEmpty">
+        No lights yet. Press <strong>Scan network</strong> or add bulbs with the CLI.
+      </p>
     </div>
-    <p class="hint tight">Grey bulbs did not answer the last probe. Names are stored only on this computer.</p>
-    <div class="lua-banner hidden" id="luaBanner">
-      <span id="luaText"></span>
-      <button class="ghost small" id="installBtn">Install script</button>
-    </div>
-    <div id="lights" class="lights"></div>
-    <p class="network-note" id="networkNote"></p>
-    <p class="empty hidden" id="lightsEmpty">
-      No lights yet. Press <strong>Scan network</strong> or add bulbs with the CLI.
-    </p>
-  </section>
+  </details>
 
-  <section class="card session-card">
-    <div class="card-head">
+  <details class="card session-card" open>
+    <summary class="card-head">
       <div class="card-title">
         <span class="step">02</span>
         <h2>Session</h2>
       </div>
-      <span class="pill" id="sessionPill">stopped</span>
-    </div>
-    <p class="meta-line" id="sessionDetail">No sync running.</p>
-    <div class="modes" role="group" aria-label="Sync mode">
-      <button class="mode" data-mode="attach">Attach to mpv</button>
-      <button class="mode" data-mode="launch">Launch a video</button>
-    </div>
-    <div class="field hidden" id="mediaField">
-      <label for="mediaInput">Video file</label>
-      <div class="row">
-        <input id="mediaInput" type="text" placeholder="/path/to/movie.mkv" spellcheck="false">
-        <button class="ghost" id="browseBtn" title="Choose a file">Browse…</button>
+      <div class="head-right">
+        <span class="pill" id="sessionPill">stopped</span>
+        <span class="chev" aria-hidden="true"></span>
       </div>
+    </summary>
+    <div class="card-body">
+      <p class="meta-line" id="sessionDetail">No sync running.</p>
+      <div class="modes" role="group" aria-label="Sync mode">
+        <button class="mode" data-mode="attach">Attach to mpv</button>
+        <button class="mode" data-mode="launch">Launch a video</button>
+      </div>
+      <div class="field hidden" id="mediaField">
+        <label for="mediaInput">Video file</label>
+        <div class="row">
+          <input id="mediaInput" type="text" placeholder="/path/to/movie.mkv" spellcheck="false">
+          <button class="ghost" id="browseBtn" title="Choose a file">Browse…</button>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="primary" id="startBtn">Start ambilight</button>
+        <button class="ghost" id="stopBtn" disabled>Stop</button>
+      </div>
+      <p class="hint" id="modeHint"></p>
     </div>
-    <div class="actions">
-      <button class="primary" id="startBtn">Start ambilight</button>
-      <button class="ghost" id="stopBtn" disabled>Stop</button>
-    </div>
-    <p class="hint" id="modeHint"></p>
-  </section>
+  </details>
 
-  <section class="card control-card">
-    <div class="card-head">
+  <details class="card control-card" id="controlCard">
+    <summary class="card-head">
       <div class="card-title">
         <span class="step">03</span>
         <h2>Direct control</h2>
       </div>
-      <span class="pill" id="targetPill">all lights</span>
-    </div>
-    <p class="hint tight" id="controlNote">Control bulbs without starting Ambilight.</p>
-    <div class="control-grid">
-      <div class="field">
-        <label for="targetSelect">Target</label>
-        <select id="targetSelect">
-          <option value="all">All lights</option>
-        </select>
+      <div class="head-right">
+        <span class="pill" id="targetPill">all lights</span>
+        <span class="chev" aria-hidden="true"></span>
       </div>
-      <div class="field">
-        <label>Power</label>
-        <div class="power-row">
-          <button class="ghost small" id="powerOnBtn">On</button>
-          <button class="ghost small" id="powerOffBtn">Off</button>
+    </summary>
+    <div class="card-body">
+      <p class="hint tight" id="controlNote">Control bulbs without starting Ambilight.</p>
+      <div class="control-grid">
+        <div class="field">
+          <label for="targetSelect">Target</label>
+          <select id="targetSelect">
+            <option value="all">All lights</option>
+          </select>
         </div>
-        <button class="ghost small crazy" id="crazyBtn" title="Rainbow at 15 updates/s for 20 s, then it stops on its own">Crazy 20 s</button>
+        <div class="field">
+          <label>Power</label>
+          <div class="power-row">
+            <button class="ghost small" id="powerOnBtn">On</button>
+            <button class="ghost small" id="powerOffBtn">Off</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="controlBrightness">Brightness <output id="controlBrightnessOut">100</output></label>
+          <input id="controlBrightness" type="range" min="10" max="100" step="1" value="100">
+        </div>
+        <div class="field">
+          <label for="controlTemp">White <output id="controlTempOut">3000 K</output></label>
+          <input id="controlTemp" type="range" min="2200" max="6500" step="100" value="3000">
+        </div>
+      </div>
+      <div class="field">
+        <label for="controlHex">Color</label>
+        <div class="color-row">
+          <input type="color" id="controlColor" value="#fcbe11" aria-label="Pick a color">
+          <input type="text" id="controlHex" class="hex-input" value="#fcbe11" maxlength="7" spellcheck="false" aria-label="Hex color">
+          <button class="ghost small" id="applyColorBtn">Apply</button>
+        </div>
+      </div>
+      <div class="control-grid">
+        <div class="field">
+          <label for="sceneSelect">WiZ scene</label>
+          <select id="sceneSelect"></select>
+        </div>
+        <div class="field">
+          <label for="controlSpeed">Scene speed <output id="controlSpeedOut">100</output></label>
+          <input id="controlSpeed" type="range" min="20" max="200" step="5" value="100">
+        </div>
+      </div>
+      <div class="actions">
+        <button class="ghost" id="applySceneBtn">Apply scene</button>
       </div>
     </div>
-    <div class="field">
-      <label for="controlBrightness">Brightness <output id="controlBrightnessOut">100</output></label>
-      <input id="controlBrightness" type="range" min="10" max="100" step="1" value="100">
-    </div>
-    <div class="field">
-      <label for="controlTemp">White temperature <output id="controlTempOut">3000 K</output></label>
-      <input id="controlTemp" type="range" min="2200" max="6500" step="100" value="3000">
-    </div>
-    <div class="field">
-      <label for="controlHex">Color</label>
-      <div class="color-row">
-        <input type="color" id="controlColor" value="#fcbe11" aria-label="Pick a color">
-        <input type="text" id="controlHex" class="hex-input" value="#fcbe11" maxlength="7" spellcheck="false" aria-label="Hex color">
-        <button class="ghost small" id="applyColorBtn">Apply</button>
-      </div>
-    </div>
-    <div class="field">
-      <label for="sceneSelect">WiZ scene</label>
-      <div class="row">
-        <select id="sceneSelect"></select>
-        <button class="ghost small" id="applySceneBtn">Apply</button>
-      </div>
-    </div>
-    <div class="field">
-      <label for="controlSpeed">Scene speed <output id="controlSpeedOut">100</output></label>
-      <input id="controlSpeed" type="range" min="20" max="200" step="5" value="100">
-    </div>
-  </section>
+  </details>
 
   <aside class="side">
-    <section class="card">
-      <div class="card-head">
+    <details class="card look-card" open>
+      <summary class="card-head">
         <div class="card-title">
           <span class="step">04</span>
           <h2>Look</h2>
         </div>
+        <div class="head-right">
+          <span class="pill" id="lookPill">hue</span>
+          <span class="chev" aria-hidden="true"></span>
+        </div>
+      </summary>
+      <div class="card-body">
+        <div class="field">
+          <label for="styleSelect">Style preset</label>
+          <select id="styleSelect"></select>
+          <p class="hint tight" id="styleHint"></p>
+        </div>
+        <div class="field">
+          <label for="layoutSelect">Layout</label>
+          <select id="layoutSelect"></select>
+        </div>
+        <div class="field">
+          <label for="brightness">Brightness <output id="brightnessOut">100</output></label>
+          <input id="brightness" type="range" min="10" max="100" step="1" value="100">
+        </div>
+        <label class="check">
+          <input type="checkbox" id="dryRun">
+          <span>Dry run (log colors, no UDP)</span>
+        </label>
+        <div class="zone-help">
+          <span class="zone-help-title">What a zone samples</span>
+          <div class="zone-legend">
+            <span class="zone-legend-item"><span class="zone-preview" data-zone="all"></span>Whole frame</span>
+            <span class="zone-legend-item"><span class="zone-preview" data-zone="left"></span>Left edge</span>
+            <span class="zone-legend-item"><span class="zone-preview" data-zone="t1"></span>Left third</span>
+          </div>
+        </div>
+        <div class="mapping-block">
+          <span class="mapping-label">Zone map</span>
+          <div class="mapping" id="mapping"></div>
+        </div>
       </div>
-      <div class="field">
-        <label for="styleSelect">Style preset</label>
-        <select id="styleSelect"></select>
-        <p class="hint tight" id="styleHint"></p>
-      </div>
-      <div class="field">
-        <label for="layoutSelect">Layout</label>
-        <select id="layoutSelect"></select>
-      </div>
-      <div class="field">
-        <label for="brightness">Brightness <output id="brightnessOut">100</output></label>
-        <input id="brightness" type="range" min="10" max="100" step="1" value="100">
-      </div>
-      <label class="check">
-        <input type="checkbox" id="dryRun">
-        <span>Dry run (log colors, no UDP)</span>
-      </label>
-      <div class="mapping-block">
-        <span class="mapping-label">Zone map</span>
-        <div class="mapping" id="mapping"></div>
-      </div>
-    </section>
+    </details>
 
-    <section class="card scenes-card">
-      <div class="card-head">
+    <details class="card scenes-card" open>
+      <summary class="card-head">
         <div class="card-title">
           <span class="step">05</span>
           <h2>My scenes</h2>
         </div>
-        <span class="pill" id="scenePill">0</span>
-      </div>
-      <div class="field">
-        <label for="sceneName">Save current look</label>
-        <div class="row">
-          <input id="sceneName" type="text" placeholder="Movie night" maxlength="40">
-          <button class="ghost small" id="saveSceneBtn">Save</button>
+        <div class="head-right">
+          <span class="pill" id="scenePill">0</span>
+          <span class="chev" aria-hidden="true"></span>
         </div>
+      </summary>
+      <div class="card-body">
+        <div class="field">
+          <label for="sceneName">Save current look</label>
+          <div class="row">
+            <input id="sceneName" type="text" placeholder="Movie night" maxlength="40">
+            <button class="ghost small" id="saveSceneBtn">Save</button>
+          </div>
+        </div>
+        <div id="sceneList" class="scene-list"></div>
+        <p class="hint">Plain JSON in <code>~/.config/wiz-ambilight/scenes.json</code>, so scripts can generate scenes too.</p>
       </div>
-      <div id="sceneList" class="scene-list"></div>
-      <p class="hint">Plain JSON in <code>~/.config/wiz-ambilight/scenes.json</code>, so scripts can generate scenes too.</p>
-    </section>
+    </details>
   </aside>
 
-  <section class="card log-card">
-    <div class="card-head">
+  <details class="card log-card" id="logCard">
+    <summary class="card-head">
       <div class="card-title">
         <span class="step">06</span>
         <h2>Activity</h2>
       </div>
-      <button class="ghost small" id="clearLog">Clear</button>
+      <div class="head-right">
+        <span class="pill" id="logPill">idle</span>
+        <span class="chev" aria-hidden="true"></span>
+      </div>
+    </summary>
+    <div class="card-body">
+      <div class="log-tools">
+        <button class="ghost small" id="clearLog">Clear</button>
+      </div>
+      <pre class="log" id="log" aria-live="polite"></pre>
     </div>
-    <pre class="log" id="log" aria-live="polite"></pre>
-  </section>
+  </details>
 </main>
 
 <footer class="footer">

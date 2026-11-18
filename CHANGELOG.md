@@ -2,8 +2,34 @@
 
 Releases before 1.4.0 were never tagged; their history is in `git log`.
 
-## Unreleased
+## 1.6.0 — 2026-11-18
 
+- **Panel:** every card collapses. Direct control and Activity start closed,
+  so the first screen is lights, session and look; the quick start is three
+  short steps instead of three sentences.
+- **Panel:** zones are explained with a miniature video frame that highlights
+  the sampled region, in each bulb row and in the zone map. The misleading
+  `t1/t2/t3 → top-left/top-centre/top-right` labels are gone: thirds are
+  left, middle and right.
+- **Panel:** Direct control is more compact — two-column fields, shorter
+  sliders and the target pill in the collapsed header.
+- **Panel:** crazy mode is now a hidden five-second burst on the grey status
+  dot (three clicks), at the 20 updates/s ceiling, with brightness sweeping
+  from 10% to 100% and back instead of only changing hue.
+- **Security:** stopping a sync no longer calls `os.killpg` unconditionally;
+  it uses the process group when available and falls back to
+  `terminate()`/`kill()`. PID adoption now verifies `/proc/<pid>/cmdline` or
+  `ps -p <pid> -o command=` and refuses to trust a stale `gui-daemon.json`.
+- **Docs:** new architecture diagram (`docs/architecture.mmd` and
+  `docs/architecture.svg`) covering components, data exchanged, dependencies,
+  local vs internet, exposed interfaces and trust boundaries; `SECURITY.md`
+  gets an exposed-interface table and a review-status update.
+- **Docs:** the AI note now claims only DeepSeek V4.1 Flash Free in OpenCode,
+  which is what was used in this repository.
+- **Tests:** new `tests/test_security.py` pins loopback-only binding, no
+  wildcard binds, portable process control, PID verification, the five-second
+  crazy defaults and the architecture docs. `tests/test_design.py` now pins
+  the collapsible layout, the concise quick start and the zone previews.
 - **Docs:** the README is restructured around the mpv-config layout — hero
   banner, one strip per section, and a single panel screenshot instead of
   three. The fork note moves from the intro to **Credits**, which now names

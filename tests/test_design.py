@@ -124,8 +124,40 @@ class StructureTests(unittest.TestCase):
 
     def test_quick_start_explains_the_flow(self):
         self.assertEqual(HTML.count('class="quick-step"'), 3)
-        for phrase in ("Scan the LAN", "Choose your lights", "Sync or control"):
+        for phrase in (
+            "Find the bulbs on your Wi-Fi.",
+            "Name each one and its screen zone.",
+            "Start with mpv, or control them here.",
+        ):
             self.assertIn(phrase, HTML)
+        steps = re.findall(r'<div class="quick-step">(.*?)</div>', HTML, re.S)
+        visible = re.sub(r"<[^>]+>", " ", " ".join(steps))
+        self.assertLessEqual(len(" ".join(visible.split())), 150)
+
+    def test_sections_can_collapse(self):
+        for card in ("lights-card", "session-card", "control-card", "log-card"):
+            with self.subTest(card=card):
+                self.assertRegex(HTML, r'<details class="card %s"' % card)
+        # Direct control and the activity console are not the normal path.
+        self.assertNotRegex(HTML, r'<details class="card control-card"[^>]* open')
+        self.assertNotRegex(HTML, r'<details class="card log-card"[^>]* open')
+
+    def test_zones_are_explained_visually(self):
+        self.assertIn("What a zone samples", HTML)
+        self.assertIn('class="zone-preview"', HTML)
+        self.assertIn("zone-preview", CSS)
+        self.assertIn("data-zone", CSS)
+        for label in ("left edge", "right edge", "left third", "middle third", "right third"):
+            with self.subTest(label=label):
+                self.assertIn(label, (WEB / "app.js").read_text(encoding="utf-8"))
+        self.assertNotIn("top-left", (WEB / "app.js").read_text(encoding="utf-8"))
+
+    def test_crazy_is_a_short_hidden_burst(self):
+        self.assertNotIn("crazyBtn", HTML)
+        self.assertNotIn("Crazy 20", HTML)
+        self.assertIn("crazyEasterEgg", (WEB / "app.js").read_text(encoding="utf-8"))
+        self.assertIn("CRAZY_SECONDS = 5.0", WEBUI)
+        self.assertIn("dimming", WEBUI)
 
     def test_panel_stays_local_only(self):
         self.assertIn("127.0.0.1", WEBUI)

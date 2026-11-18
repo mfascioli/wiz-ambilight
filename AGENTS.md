@@ -46,6 +46,11 @@ headings, and leave interface names, option values and file paths untranslated.
   radius at most `2px`, Merriweather Bold 700 served from `web/fonts/`, and the
   numbered reading order `01`–`06`. `tests/test_design.py` is the contract: if
   a restyle breaks it, the restyle is wrong.
+- **Panel ergonomics.** Direct control and Activity are `<details>` cards and
+  start closed; Lights, Session and Look start open. Zones are explained with
+  the miniature frame preview, never only with the raw name. The status dot is
+  the hidden five-second crazy trigger; do not turn it back into a visible
+  button or document the gesture.
 
 ## Terminology
 
@@ -85,8 +90,8 @@ headings, and leave interface names, option values and file paths untranslated.
 ## Images
 
 - `assets/banner.py` (Pillow + numpy) draws the 1600×470 hero
-  (`banner.png`) and one 1200×158 strip per section. The only other image is
-  the crop described below.
+  (`banner.png`) and one 1200×158 strip per section. The only other images are
+  the crop described below and the architecture diagram.
 - Type is Fira Sans Condensed from `assets/banner-fonts/` (SIL OFL). Those
   files belong to the generator; the panel serves `web/fonts/` and nothing
   else.
@@ -100,6 +105,9 @@ headings, and leave interface names, option values and file paths untranslated.
   do not draw a look-alike.
 - `docs/gui.png` is a real screenshot of the panel. If the panel's layout
   changes, retake it — do not mock one up.
+- `docs/architecture.mmd` is the Mermaid source; `docs/architecture.svg` is the
+  committed render linked from **How it works** and `SECURITY.md`. Keep both in
+  step, and keep the exposed-interface callout accurate.
 
 ## Privacy and security docs
 
@@ -112,8 +120,8 @@ limits. Keep it in step with the code.
 - The README's **Privacy and security** section names only verified behaviour;
   the detail stays in `SECURITY.md`.
 - The **How it was written** note records the workflow: generated with
-  DeepSeek V4.1 Flash Free in OpenCode, reviewed with Claude Sonnet 5.5 and
-  GPT-6 Luna.
+  DeepSeek V4.1 Flash Free in OpenCode. Do not add other models unless they
+  were actually used in this repository.
 - If a change touches the network, process control, the file picker or a
   persisted file, update `SECURITY.md` in the same commit.
 
@@ -156,11 +164,14 @@ Before calling a change done:
 | `web/fonts/` | Merriweather Bold + SIL OFL licence, served to the panel |
 | `lua/wiz_ambilight.lua` | runs inside mpv, samples the frame and writes the state file |
 | `tests/test_design.py` | pins the design tokens and the numbered order |
+| `tests/test_security.py` | pins loopback, process and architecture-doc invariants |
 | `tests/test_mpv_ambilight.py` | CLI, parsing, colors, discovery helpers |
 | `tests/test_webui.py` | config shape, panel handlers, ranges, token |
 | `assets/banner.py` | generator for the README banners |
 | `assets/banner-fonts/` | Fira Sans Condensed + OFL, generator only, never served |
 | `assets/*.png` | hero, one strip per section, `mpv-config.png` crop |
+| `docs/architecture.mmd` | architecture source, kept next to the render |
+| `docs/architecture.svg` | architecture diagram linked from README and SECURITY |
 | `docs/gui.png` | the one panel screenshot in the README |
 | `contrib/` | optional systemd user service and its env example |
 | `upstream/` | original wiz-hack toolkit, reference only, never imported |

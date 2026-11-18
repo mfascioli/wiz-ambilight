@@ -4,7 +4,7 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python: 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
 
-![WIZ AMBILIGHT banner: amber title over a charcoal HUD grid, with tags for MPV frames, 18 Hz fade, UDP 38899 and zero dependencies](assets/banner.png?v=1.5.0)
+![WIZ AMBILIGHT banner: amber title over a charcoal HUD grid, with tags for MPV frames, 18 Hz fade, UDP 38899 and zero dependencies](assets/banner.png?v=1.6.0)
 
 `wiz-ambilight` reads the video frame mpv is already decoding and paints the
 edges of the picture onto WiZ bulbs over your local network. No capture card,
@@ -44,8 +44,9 @@ no re-encoding, no cloud, no extra Python packages.
 - Python **3.9+**. No `pip install` needed.
 - One or more WiZ bulbs on the **same LAN/VLAN** as the computer.
 - Linux or macOS today. Windows still needs a handful of changes — the
-  runtime directory, the Lua install path, process control and a CI runner —
-  listed in [Roadmap](#roadmap).
+  runtime directory, the Lua install path, a file picker and a CI runner —
+  listed in [Roadmap](#roadmap). Process control and PID verification are
+  already platform-safe.
 
 ## 📦 Install
 
@@ -112,12 +113,13 @@ lists every bulb it finds, and lets you:
 - choose which bulbs take part and name them (`Sofa`, `TV wall`, …);
 - see each bulb's model, firmware, IP, online state and **effective zone**;
 - assign a zone per bulb or pick a layout, style and brightness;
-- preview the **zone map** (`Sofa glow → top-left`) before starting;
+- see a **miniature of the video frame** that highlights the region each bulb
+  samples, instead of guessing what “left edge” or “thirds” means;
+- preview the **zone map** (`Sofa glow → left edge`) before starting;
 - include or exclude every light at once, with one **All / None** click;
 - use **Direct control** on all bulbs or a single one: power, brightness,
-  white temperature, a color picker/**hex** field, WiZ scenes and scene speed;
-- press **Crazy 20 s** for a rainbow at 15 updates/s that stops by itself
-  (capped at 20/s, and it will not start while the sync owns the bulbs);
+  white temperature, a color picker/**hex** field, WiZ scenes and scene speed
+  (it starts collapsed — it is a remote, not the normal path);
 - see **which bulbs answer**: every manual command waits for a reply, and a
   silent bulb is greyed out with a warning instead of failing quietly;
 - click the **hex chip** under a bulb to send that exact color to the target;
@@ -125,10 +127,12 @@ lists every bulb it finds, and lets you:
 - flash a bulb to identify it, or toggle its power;
 - start/stop the sync in **attach** mode or launch a **video file**;
 - follow the sync log, with connection-loss recovery and a confirm-to-quit step;
-- install the mpv Lua script with one click.
+- install the mpv Lua script with one click;
+- collapse any section: **Direct control** and **Activity** start closed, so
+  the first screen is just lights, session and look.
 
-![The panel while syncing: numbered sections, bulb names, live state, zone map and activity log](docs/gui.png)
-<sub>Attach mode while syncing: names, live state, zone map and activity log.</sub>
+![The panel in demo mode: three bulbs assigned to thirds, each row with a miniature zone preview, and Direct control and Activity collapsed](docs/gui.png)
+<sub>Demo mode with three bulbs on thirds: the zone preview shows what each bulb samples, and the heavier controls stay collapsed.</sub>
 
 Useful flags:
 
@@ -140,8 +144,10 @@ Useful flags:
 
 The panel is a standard-library `ThreadingHTTPServer` bound to `127.0.0.1`. The
 sync runs as a child process, so closing the tab or the panel does not leave a
-stray daemon behind; the panel also adopts a sync it started before a restart
-(PID file in `$XDG_RUNTIME_DIR/wiz-ambilight/gui-daemon.json`).
+stray daemon behind. After a restart it adopts a sync it started before only
+when the PID file and the process command line agree; otherwise it refuses to
+touch that PID. On platforms without `/proc`, it asks `ps`; when neither is
+available (Windows), it does not adopt.
 
 Settings and names live in
 `~/.config/wiz-ambilight/lights.json` (override with
@@ -322,6 +328,24 @@ systemctl --user enable --now wiz-ambilight.service
 
 ![How it works banner: frame to bulb — sample, fade, setPilot](assets/how.png)
 
+![Architecture: browser, panel, mpv and the sync process inside the computer; WiZ bulbs on the LAN; the internet unused](docs/architecture.svg)
+<sub>Everything inside the dashed computer boundary runs as your user. The bulbs are the only untrusted peer; no component talks to the internet.</sub>
+
+**Components and data.** mpv decodes the video and a Lua script samples it,
+writing zone colors to `state-<pid>.json` at 15 writes/s. The sync process
+reads that file, fades the colors and sends `setPilot` datagrams to the bulbs.
+The optional panel serves its own HTML/CSS/JS from `127.0.0.1:8765`, writes
+`lights.json` and `scenes.json`, and starts or stops the sync with an argument
+list. The [Mermaid source](docs/architecture.mmd) is next to the SVG.
+
+**Exposure.** The panel is the only listening socket in the project, and only
+while `--gui` runs. The sync process opens no socket for inbound traffic: its
+UDP sockets are ephemeral senders to port `38899`. There is no HTTP client, DNS
+lookup, account, telemetry or update check. [`SECURITY.md`](SECURITY.md) lists
+each file, process and network surface.
+
+The same flow, step by step:
+
 ```text
               screenshot-raw (video only, no OSD)
  mpv ──────────────────────────────────────────────┐
@@ -384,7 +408,6 @@ not decode.
 | **No lights found** | `./mpv_ambilight.py --discover`; check that the bulbs and computer are on the same VLAN and that client isolation / guest Wi-Fi is off. Pin them with `--lights ip1,ip2` or `WIZ_LIGHTS`. |
 | **Only some bulbs are found** | Press **Scan network** again: a manual scan probes the broadcast three times and then every address on the local `/24`, which finds bulbs that ignore broadcast. If one is still missing, it is probably on another VLAN/guest network or outside that subnet; pin it with `--lights ip1,ip2`. |
 | **Buttons do nothing / “No reply from …”** | The panel names the bulbs that did not answer. Compare **Panel network** in the panel with the bulb IPs: if it says `192.168.1.5 outside this subnet`, the computer is on a different network (hotspot, VPN, Ethernet bridge down). Join the bulbs' Wi-Fi, or check `ip -brief addr` and the router's client list. |
-| **Crazy mode stops early** | It is capped at 20 updates/s and 20 s on purpose; faster streams make cheap Wi-Fi radios drop packets and look slower. It also refuses to start while the sync is running, because both would fight over the bulbs. |
 | **`mpv could not grab frames`** | Your VO does not support raw screenshots. Try `-- --vo=gpu` or `-- --screenshot-sw=yes`. Do not use `--vo=null` or `--no-video`. |
 | **Colors look wrong / sides swapped** | Reinstall the Lua script (`./mpv_ambilight.py --install-script --force`), restart mpv, and check the order of `--lights` / `--zones`. |
 | **Stutter on 4K** | Lower `--fps` (e.g. `--fps 6`) or use `--style cinema`. |
@@ -419,9 +442,14 @@ Repository layout:
 │   └── fonts/              # bundled Merriweather Bold + SIL OFL licence
 ├── lua/wiz_ambilight.lua   # runs inside mpv, writes zone colors as JSON
 ├── tests/                  # dependency-free unit tests
+│   ├── test_design.py      # the mpv-config design contract
+│   └── test_security.py    # loopback, process and docs invariants
 ├── assets/                 # README banners + their generator
 │   └── banner-fonts/       # Fira Sans Condensed for banner.py only
-├── docs/gui.png            # the one panel screenshot in this README
+├── docs/
+│   ├── architecture.mmd    # architecture source (Mermaid)
+│   ├── architecture.svg    # rendered architecture diagram
+│   └── gui.png             # the one panel screenshot in this README
 ├── contrib/                # optional systemd user service
 └── upstream/               # original wiz-hack toolkit, kept for reference
 ```
@@ -432,9 +460,8 @@ Three pieces are known to be missing, in the order they matter:
 
 1. **Windows.** One resolver for the runtime directory (Python and Lua must
    agree, or attach mode fails silently), `%APPDATA%\mpv\scripts` for
-   `--install-script`, a stop path that does not call `os.killpg` and a PID
-   check that does not depend on `/proc`, a file picker that exists there, and
-   a `windows-latest` job in CI.
+   `--install-script`, a cmdline source for PID adoption, a file picker that
+   exists there, and a `windows-latest` job in CI.
 2. **Measured transport.** A diagnostic run that records packets sent,
    replies, latency and drops per bulb. "Fire and forget" is fine until a
    datagram is lost; the numbers decide whether re-sending with backoff and
@@ -453,6 +480,11 @@ Three pieces are known to be missing, in the order they matter:
 - **No account, no telemetry, no cloud.** No sign-in, no analytics, no update
   check. The panel is served from `127.0.0.1` and the page loads only its own
   files.
+- **One exposed interface, justified.** The panel is the only listener:
+  `127.0.0.1:8765`, only while `--gui`. The sync opens no inbound socket; it
+  sends UDP from an ephemeral port to `38899`. The
+  [architecture diagram](docs/architecture.svg) draws both the data flow and
+  the trust boundaries.
 - **Panel hardened.** It binds to `127.0.0.1` and rejects requests whose `Host`
   or `Origin` is not the panel itself, which also blocks DNS-rebinding tricks;
   every POST needs a random per-run `X-Wiz-Token`; the CSP is
@@ -462,16 +494,20 @@ Three pieces are known to be missing, in the order they matter:
   control only accept bulbs the panel already knows; colors, temperatures,
   scene ids and speeds are range-checked; `lights.json` and `scenes.json` are
   written `0600` inside a `0700` directory.
+- **PID adoption checks the process.** A stale PID file alone can never make
+  the panel adopt (and later stop) a foreign process: it verifies the command
+  line through `/proc` or `ps`, and refuses to adopt when neither exists.
+  Stopping a sync uses `killpg` when the platform has it and the portable
+  `terminate`/`kill` path otherwise.
 - **What the bulbs see.** Plain UDP `setPilot` datagrams from your machine,
   unauthenticated by design of the WiZ local API. Anyone on the same LAN can
   do the same — treat the bulbs as LAN devices, not as trusted ones. See
   [`SECURITY.md`](SECURITY.md) for the full model.
-- **How it was written.** Most of the code was generated with **DeepSeek V4.1
-  Flash Free** in OpenCode and reviewed with **Claude Sonnet 5.5** and
-  **GPT-6 Luna**, the same workflow as
-  [`mpv-config`](https://github.com/mfascioli/mpv-config). No independent audit
-  or release scan has been published yet; the roadmap tracks that gap, and
-  [`SECURITY.md`](SECURITY.md) states what was reviewed and what was not.
+- **How it was written.** The code was generated with **DeepSeek V4.1 Flash
+  Free** in OpenCode. No other model or tool is claimed for this repository.
+  There is no independent audit or published release scan yet; the roadmap
+  tracks that gap, and [`SECURITY.md`](SECURITY.md) states what was reviewed
+  and what was not.
 
 ## 🙏 Credits and license
 

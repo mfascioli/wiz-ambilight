@@ -1,0 +1,20 @@
+flowchart LR
+  subgraph C["This computer (trusted)"]
+    B["Browser<br/>same machine"]
+    P["webui.py<br/>panel · optional --gui<br/>127.0.0.1:8765"]
+    M["mpv<br/>+ lua/wiz_ambilight.lua"]
+    S["mpv_ambilight.py<br/>sync · fade · UDP sender"]
+    F[("Filesystem<br/>state-<pid>.json · control.json<br/>lights.json · scenes.json")]
+  end
+  subgraph L["Local network (untrusted)"]
+    W["WiZ bulbs<br/>UDP 38899<br/>setPilot / getPilot"]
+  end
+  I["Internet<br/>not used: no HTTP, DNS or telemetry"]:::unused
+  B <-->|"HTTP 127.0.0.1:8765<br/>per-run token + CSP"| P
+  P <-->|"lights.json · scenes.json"| F
+  P -->|"spawn / stop (argv)"| S
+  M -->|"state JSON (zone colors)"| S
+  S <-->|"state read · control.json"| F
+  S -->|"UDP 38899 setPilot"| W
+  P -.->|"direct setPilot"| W
+  classDef unused fill:#1a0f0f,stroke:#ff6b5e,stroke-dasharray:5 5,color:#ff6b5e

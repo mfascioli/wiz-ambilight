@@ -53,7 +53,7 @@ import sys
 import time
 from pathlib import Path
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 DEFAULT_PORT = 38899
 ZONE_NAMES = {"all", "left", "right", "top", "bottom", "t1", "t2", "t3"}
 

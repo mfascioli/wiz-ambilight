@@ -8,6 +8,7 @@ files in ``web/`` and a JSON API, and the panel owns at most one sync process
 
 import colorsys
 import json
+import math
 import os
 import re
 import secrets
@@ -29,12 +30,12 @@ SCRIPT = HERE / "mpv_ambilight.py"
 DEFAULT_PORT = 8765
 APP_NAME = "wiz-ambilight"
 
-# Crazy mode streams a rainbow straight to the bulbs. WiZ firmware starts
-# dropping datagrams when you go much faster than this, and the cap keeps a
-# held-down button from hammering a cheap radio.
-CRAZY_HZ = 15.0
+# Crazy mode streams a rainbow straight to the bulbs for a short burst. WiZ
+# firmware starts dropping datagrams when you go much faster than this, so 20
+# updates/s is the practical ceiling, not an arbitrary limit.
+CRAZY_HZ = 20.0
 CRAZY_MAX_HZ = 20.0
-CRAZY_SECONDS = 20.0
+CRAZY_SECONDS = 5.0
 
 CONFIG_KEYS = ("layout", "style", "brightness", "mode", "media", "dry_run")
 DEFAULT_CONFIG = {
@@ -114,6 +115,15 @@ def read_json(path: Path, default):
             return json.load(handle)
     except (OSError, ValueError):
         return default
+
+
+def display_path(path: Path) -> str:
+    """Shorten a path inside the home directory to ``~/…`` for display."""
+    try:
+        relative = path.expanduser().relative_to(Path.home())
+    except ValueError:
+        return str(path)
+    return "~/" + str(relative)
 
 
 def write_json(path: Path, payload) -> None:
@@ -354,17 +364,67 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def _read_cmdline(pid: int) -> str:
+    """Best effort command line for pid, without trusting the PID file.
+
+    Linux exposes ``/proc/<pid>/cmdline``. macOS and the BSDs do not, so fall
+    back to ``ps`` with an argument list (never a shell). On Windows there is
+    no ``ps``; the empty result means the process is not adopted.
+    """
+    proc = Path(f"/proc/{pid}/cmdline")
+    if Path("/proc").exists():
+        try:
+            return proc.read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
+        except OSError:
+            return ""
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip()
+
+
 def _looks_like_ours(pid: int) -> bool:
     if pid == os.getpid():
         return False
-    proc = Path(f"/proc/{pid}/cmdline")
-    if not Path("/proc").exists():
-        return True  # no /proc: trust the PID file written by us
+    cmdline = _read_cmdline(pid)
+    return str(SCRIPT) in cmdline and "mpv_ambilight" in cmdline
+
+
+def _stop_process_tree(process, timeout: float) -> None:
+    """Stop the child and its group; portable when os.killpg is missing."""
+    killpg = getattr(os, "killpg", None)
     try:
-        raw = proc.read_bytes()
+        if killpg is not None:
+            killpg(process.pid, signal.SIGTERM)
+        else:
+            process.terminate()
     except OSError:
-        return False
-    return str(SCRIPT).encode() in raw and b"mpv_ambilight" in raw
+        try:
+            process.terminate()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=timeout)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    hard = getattr(signal, "SIGKILL", signal.SIGTERM)
+    try:
+        if killpg is not None:
+            killpg(process.pid, hard)
+        else:
+            process.kill()
+    except OSError:
+        try:
+            process.kill()
+        except OSError:
+            pass
 
 
 class Session:
@@ -473,18 +533,8 @@ class Session:
             process = self.process
             pid = self.pid
         if process is not None and process.poll() is None:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except OSError:
-                process.terminate()
-            try:
-                process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except OSError:
-                    process.kill()
-        elif pid and _pid_alive(pid):
+            _stop_process_tree(process, timeout)
+        elif pid and _pid_alive(pid) and _looks_like_ours(pid):
             try:
                 os.kill(pid, signal.SIGTERM)
             except OSError:
@@ -494,7 +544,7 @@ class Session:
                 time.sleep(0.05)
             if _pid_alive(pid):
                 try:
-                    os.kill(pid, signal.SIGKILL)
+                    os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
                 except OSError:
                     pass
         with self.lock:
@@ -511,6 +561,24 @@ class Session:
 # --------------------------------------------------------------------------- #
 # Panel: config + discovery + session + snapshot
 # --------------------------------------------------------------------------- #
+
+
+def crazy_frame(elapsed: float, seconds: float, index: int = 0) -> dict:
+    """One crazy-mode frame: fast hue drift plus a brightness sweep.
+
+    The sweep is a cosine so it starts at 10%, peaks at 100% halfway through
+    the burst and comes back down, instead of jumping between two levels.
+    """
+    phase = 0.0 if seconds <= 0 else min(1.0, max(0.0, elapsed / seconds))
+    hue = (elapsed * 0.6 + index * 0.11) % 1.0
+    r, g, b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
+    level = 10 + 90 * (0.5 - 0.5 * math.cos(2 * math.pi * phase))
+    return {
+        "r": int(round(r * 255)),
+        "g": int(round(g * 255)),
+        "b": int(round(b * 255)),
+        "dimming": int(round(level)),
+    }
 
 
 class Panel:
@@ -680,6 +748,7 @@ class Panel:
             ],
             "crazy": self.crazy_status(),
             "config_path": str(config_path()),
+            "config_display": display_path(config_path()),
         }
 
     # -- mutations -------------------------------------------------------- #
@@ -817,13 +886,13 @@ class Panel:
         return self.snapshot()
 
     def start_crazy(self, target: str = "all", seconds=CRAZY_SECONDS, hz=CRAZY_HZ) -> dict:
-        """Stream a rainbow as fast as the bulbs can take it, then stop itself."""
+        """Stream a rainbow and a brightness sweep, then stop itself."""
         if self.session.running():
             raise ValueError("stop the sync first — it already owns the bulbs")
         ips = self._target_ips(target)
         if not ips:
             raise ValueError("no lights available")
-        seconds = max(2.0, min(60.0, float(seconds)))
+        seconds = max(2.0, min(30.0, float(seconds)))
         # Cap the rate: above ~20 updates/s the bulb radio starts losing
         # packets, which looks like stutter rather than more speed.
         hz = max(1.0, min(CRAZY_MAX_HZ, float(hz)))
@@ -852,14 +921,8 @@ class Panel:
                 elapsed = time.monotonic() - started
                 if elapsed >= seconds:
                     break
-                hue = (elapsed * 0.6) % 1.0
                 for index, ip in enumerate(ips):
-                    r, g, b = colorsys.hsv_to_rgb((hue + index * 0.11) % 1.0, 1.0, 1.0)
-                    params = {
-                        "r": int(round(r * 255)),
-                        "g": int(round(g * 255)),
-                        "b": int(round(b * 255)),
-                    }
+                    params = crazy_frame(elapsed, seconds, index)
                     if step == 0:
                         params["state"] = True
                     sender.set_pilot(ip, params)

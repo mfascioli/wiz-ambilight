@@ -35,7 +35,9 @@ const refs = {
   applySceneBtn: document.getElementById("applySceneBtn"),
   controlSpeed: document.getElementById("controlSpeed"),
   controlSpeedOut: document.getElementById("controlSpeedOut"),
-  crazyBtn: document.getElementById("crazyBtn"),
+  lightsPill: document.getElementById("lightsPill"),
+  lookPill: document.getElementById("lookPill"),
+  logPill: document.getElementById("logPill"),
   networkNote: document.getElementById("networkNote"),
   sceneName: document.getElementById("sceneName"),
   saveSceneBtn: document.getElementById("saveSceneBtn"),
@@ -120,7 +122,17 @@ async function action(path, body, message, button = null) {
 }
 
 function zoneLabel(zone) {
-  return zone === "t1" ? "top-left" : zone === "t2" ? "top-centre" : zone === "t3" ? "top-right" : zone;
+  const labels = {
+    all: "whole frame",
+    left: "left edge",
+    right: "right edge",
+    top: "top edge",
+    bottom: "bottom edge",
+    t1: "left third",
+    t2: "middle third",
+    t3: "right third",
+  };
+  return labels[zone] || zone;
 }
 
 function rgbCss(light) {
@@ -183,11 +195,15 @@ function buildCard(light) {
   main.append(name, meta);
 
   const controls = el("div", "light-controls");
+  const zonePick = el("div", "zone-pick");
+  const zonePreview = el("span", "zone-preview");
+  zonePreview.setAttribute("aria-hidden", "true");
   const zone = el("select", "zone");
   zone.setAttribute("aria-label", "Zone for this light");
   const auto = el("option", "", "Auto zone");
   auto.value = "";
   zone.append(auto);
+  zonePick.append(zonePreview, zone);
 
   const identify = el("button", "icon-btn identify", "✦");
   identify.type = "button";
@@ -206,7 +222,7 @@ function buildCard(light) {
   toggleInput.setAttribute("aria-label", "Include light");
   toggle.append(toggleInput, el("span"));
 
-  controls.append(zone, identify, power, toggle);
+  controls.append(zonePick, identify, power, toggle);
   root.append(swatch, main, controls);
 
   name.addEventListener("change", () => {
@@ -263,6 +279,7 @@ function buildCard(light) {
     hexChip,
     extraLabel,
     zone,
+    zonePreview,
     toggleInput,
     identify,
     power,
@@ -289,7 +306,9 @@ function updateCard(card, light) {
     : "offline";
   card.zoneChip.classList.toggle("hidden", !light.enabled || !light.online);
   card.zoneChip.textContent = `→ ${zoneLabel(light.effective_zone)}`;
-  card.zoneChip.title = `This bulb shows the ${zoneLabel(light.effective_zone)} zone`;
+  card.zoneChip.title = `This bulb samples the ${zoneLabel(light.effective_zone)} of the video`;
+  card.zonePreview.dataset.zone = light.effective_zone;
+  card.zonePreview.title = `Samples the ${zoneLabel(light.effective_zone)} of the video`;
   const hexValue = normalizeHex(light.hex);
   card.hexChip.classList.toggle("hidden", !hexValue || !light.online);
   if (hexValue) {
@@ -342,6 +361,9 @@ function renderLights(lights, zones) {
     }
   }
   refs.lightsEmpty.classList.toggle("hidden", lights.length > 0);
+  const online = lights.filter((light) => light.online).length;
+  refs.lightsPill.textContent = lights.length ? `${online}/${lights.length}` : "0";
+  refs.lightsPill.classList.toggle("warn", lights.length > 0 && online < lights.length);
 }
 
 // --------------------------------------------------------------------- panels
@@ -411,6 +433,7 @@ function renderSettings(snapshot) {
     refs.brightnessOut.value = String(config.brightness);
   }
   refs.dryRun.checked = Boolean(config.dry_run);
+  refs.lookPill.textContent = config.style;
 
   const details = snapshot.style_details?.[config.style];
   refs.styleHint.textContent = details
@@ -429,11 +452,15 @@ function renderMapping(snapshot) {
   for (const light of enabled) {
     const chip = el("span", "map-chip");
     if (!light.online) chip.classList.add("offline");
+    const preview = el("span", "zone-preview");
+    preview.dataset.zone = light.effective_zone;
+    preview.setAttribute("aria-hidden", "true");
     chip.append(
+      preview,
       el("strong", "", light.name || light.ip),
-      el("span", "map-zone", `→ ${zoneLabel(light.effective_zone)}`),
+      el("span", "map-zone", zoneLabel(light.effective_zone)),
     );
-    chip.title = `${light.name || light.ip} shows the ${zoneLabel(light.effective_zone)} zone`;
+    chip.title = `${light.name || light.ip} samples the ${zoneLabel(light.effective_zone)} of the video`;
     refs.mapping.append(chip);
   }
 }
@@ -506,17 +533,10 @@ function renderNetwork(snapshot) {
 }
 
 function renderCrazy(snapshot) {
-  if (!refs.crazyBtn) return;
   const crazy = snapshot.crazy || {};
-  const hasLights = snapshot.lights.length > 0;
-  refs.crazyBtn.disabled = !hasLights;
-  refs.crazyBtn.classList.toggle("active", Boolean(crazy.active));
-  refs.crazyBtn.textContent = crazy.active
-    ? `Stop crazy · ${Math.ceil(crazy.remaining)}s`
-    : "Crazy 20 s";
-  refs.crazyBtn.title = crazy.active
-    ? "Stop the rainbow now"
-    : "Rainbow at 15 updates/s for 20 s, then it stops on its own";
+  const active = Boolean(crazy.active);
+  refs.statusDot.classList.toggle("crazy", active);
+  refs.statusDot.title = active ? "Crazy mode — click 3× to stop" : "";
 }
 
 function renderControl(snapshot) {
@@ -614,6 +634,11 @@ function renderLua(snapshot) {
 
 function renderLog(snapshot) {
   const lines = snapshot.session.log;
+  refs.logPill.textContent = lines.length
+    ? `${lines.length}`
+    : snapshot.session.running
+      ? "starting"
+      : "idle";
   if (lines.length < state.logFrom) state.logFrom = 0;
   const visible = lines.slice(state.logFrom);
   const text = visible.join("\n");
@@ -627,7 +652,7 @@ function apply(snapshot) {
   state.snapshot = snapshot;
   refs.versionBadge.textContent = `v${snapshot.version}`;
   refs.demoBadge.classList.toggle("hidden", !snapshot.demo);
-  refs.configPath.textContent = `Config: ${snapshot.config_path}`;
+  refs.configPath.textContent = `Config: ${snapshot.config_display || snapshot.config_path}`;
   refs.configPath.title = snapshot.config_path;
   renderLights(snapshot.lights, snapshot.zones);
   renderSession(snapshot);
@@ -754,14 +779,28 @@ refs.powerOnBtn.addEventListener("click", () =>
 refs.powerOffBtn.addEventListener("click", () =>
   sendControl({ power: false }, `${targetName(state.snapshot)} off`, refs.powerOffBtn),
 );
-refs.crazyBtn.addEventListener("click", () => {
+let dotClicks = [];
+function crazyEasterEgg() {
+  const now = Date.now();
+  dotClicks = dotClicks.filter((stamp) => now - stamp < 1600);
+  dotClicks.push(now);
+  if (dotClicks.length < 3) return;
+  dotClicks = [];
   const active = Boolean(state.snapshot?.crazy?.active);
   action(
     "/api/crazy",
-    { target: targetIp() },
-    active ? "Crazy mode stopped" : "Crazy mode for 20 s",
-    refs.crazyBtn,
+    { target: "all" },
+    active ? "Crazy mode stopped" : "Crazy for 5 s",
+    refs.statusDot,
   );
+}
+
+refs.statusDot.addEventListener("click", crazyEasterEgg);
+refs.statusDot.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    crazyEasterEgg();
+  }
 });
 refs.controlBrightness.addEventListener("input", () => {
   refs.controlBrightnessOut.value = refs.controlBrightness.value;
