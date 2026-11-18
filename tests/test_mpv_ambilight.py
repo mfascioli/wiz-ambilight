@@ -101,6 +101,119 @@ class ParsingTests(unittest.TestCase):
         )
 
 
+class SamplingTests(unittest.TestCase):
+    def args(self, **overrides):
+        base = {
+            "sampling": "auto",
+            "sample_grid": None,
+            "sample_block": None,
+            "capture": None,
+            "fps": 20.0,
+        }
+        base.update(overrides)
+        return SimpleNamespace(**base)
+
+    def test_auto_leaves_resolution_only_sentinels(self):
+        args = m.resolve_sampling(self.args())
+        self.assertEqual(args.sample_grid, 0)
+        self.assertEqual(args.sample_block, 0)
+        self.assertEqual(args.capture, "scaled")
+        self.assertEqual(args.fps, 20.0)
+
+    def test_profiles_trade_detail_for_fps(self):
+        lean = m.resolve_sampling(self.args(sampling="lean"))
+        self.assertEqual((lean.sample_grid, lean.sample_block), (48, 1))
+        self.assertEqual(lean.capture, "scaled")
+        self.assertEqual(lean.fps, 10.0)
+
+        balanced = m.resolve_sampling(self.args(sampling="balanced"))
+        self.assertEqual((balanced.sample_grid, balanced.sample_block), (80, 2))
+        self.assertEqual(balanced.capture, "scaled")
+        self.assertEqual(balanced.fps, 15.0)
+
+        quality = m.resolve_sampling(self.args(sampling="quality"))
+        self.assertEqual((quality.sample_grid, quality.sample_block), (120, 3))
+        self.assertEqual(quality.capture, "video")
+        self.assertEqual(quality.fps, 20.0)
+
+    def test_explicit_flags_beat_the_profile(self):
+        args = m.resolve_sampling(
+            self.args(sampling="balanced", fps=24.0, capture="source"),
+            {"fps": True, "capture": True},
+        )
+        self.assertEqual(args.fps, 24.0)
+        self.assertEqual(args.capture, "video")
+        self.assertEqual(args.sample_grid, 80)
+
+    def test_manual_uses_the_knobs(self):
+        args = m.resolve_sampling(
+            self.args(
+                sampling="manual",
+                sample_grid=96,
+                sample_block=2,
+                capture="source",
+                fps=12.0,
+            )
+        )
+        self.assertEqual(args.sample_grid, 96)
+        self.assertEqual(args.sample_block, 2)
+        self.assertEqual(args.capture, "video")
+        self.assertEqual(args.fps, 12.0)
+
+    def test_manual_defaults_and_clamps(self):
+        args = m.resolve_sampling(self.args(sampling="manual"))
+        self.assertEqual((args.sample_grid, args.sample_block), (80, 1))
+        self.assertEqual(args.capture, "scaled")
+        clamped = m.resolve_sampling(
+            self.args(
+                sampling="manual",
+                sample_grid=999,
+                sample_block=99,
+                capture="auto",
+            )
+        )
+        self.assertEqual(clamped.sample_grid, 240)
+        self.assertEqual(clamped.sample_block, 4)
+        self.assertEqual(clamped.capture, "scaled")
+
+
+class SenderCounterTests(unittest.TestCase):
+    def test_real_datagrams_are_counted(self):
+        sent = []
+
+        class FakeSocket:
+            def setsockopt(self, *_args):
+                pass
+
+            def sendto(self, payload, address):
+                sent.append((payload, address))
+
+            def close(self):
+                pass
+
+        with mock.patch.object(m.socket, "socket", return_value=FakeSocket()):
+            sender = m.WizSender()
+            sender.set_color("10.0.0.1", (1, 2, 3), 50)
+            self.assertEqual(sender.packets_sent, 1)
+            self.assertEqual(sender.bytes_sent, len(sent[0][0]))
+
+            # The refresh de-duplication must not inflate the network graph.
+            sender.set_color("10.0.0.1", (1, 2, 3), 50)
+            self.assertEqual(sender.packets_sent, 1)
+
+            sender.set_color("10.0.0.1", (4, 5, 6), 50)
+            self.assertEqual(sender.packets_sent, 2)
+            self.assertGreater(sender.bytes_sent, len(sent[0][0]))
+            sender.close()
+
+    def test_dry_run_counts_nothing(self):
+        sender = m.WizSender(dry_run=True)
+        with contextlib.redirect_stdout(io.StringIO()):
+            sender.set_color("10.0.0.1", (1, 2, 3), 50)
+        self.assertEqual(sender.packets_sent, 0)
+        self.assertEqual(sender.bytes_sent, 0)
+
+
 class SendCommandTests(unittest.TestCase):
     def test_collects_the_reply_from_a_bulb(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

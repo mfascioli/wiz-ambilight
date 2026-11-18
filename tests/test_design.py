@@ -20,6 +20,7 @@ WEB = ROOT / "web"
 CSS = (WEB / "style.css").read_text(encoding="utf-8")
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
 WEBUI = (ROOT / "webui.py").read_text(encoding="utf-8")
+CORE = (ROOT / "mpv_ambilight.py").read_text(encoding="utf-8")
 
 
 def root_tokens():
@@ -154,6 +155,34 @@ class StructureTests(unittest.TestCase):
         self.assertIn("CRAZY_WINDOW = 3000", js)
         self.assertIn("CRAZY_SECONDS = 5.0", WEBUI)
         self.assertIn("dimming", WEBUI)
+
+    def test_sampling_profiles_are_selectable(self):
+        for control in (
+            "samplingSelect",
+            "samplingManual",
+            "samplingFps",
+            "samplingGrid",
+            "samplingBlock",
+            "samplingCapture",
+        ):
+            with self.subTest(control=control):
+                self.assertIn(f'id="{control}"', HTML)
+        js = (WEB / "app.js").read_text(encoding="utf-8")
+        for label in ("Auto (by resolution)", "Lean", "Balanced", "Quality", "Manual"):
+            with self.subTest(label=label):
+                self.assertIn(label, js)
+        self.assertIn("SAMPLING_PROFILES", CORE)
+        self.assertIn("--sampling", CORE)
+
+    def test_resources_strip_has_cpu_ram_and_network(self):
+        self.assertEqual(HTML.count('class="spark"'), 3)
+        for control in ("resCpu", "resRam", "resNet", "sparkCpu", "sparkRam", "sparkNet"):
+            with self.subTest(control=control):
+                self.assertIn(f'id="{control}"', HTML)
+        js = (WEB / "app.js").read_text(encoding="utf-8")
+        self.assertIn("sparkPath", js)
+        self.assertIn("network_bps", WEBUI)
+        self.assertIn("stats-", CORE)
 
     def test_panel_stays_local_only(self):
         self.assertIn("127.0.0.1", WEBUI)

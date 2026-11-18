@@ -17,7 +17,27 @@ Releases before 1.4.0 were never tagged; their history is in `git log`.
   solid amber segment and Activity spans the full width.
 - **Tests:** pin `restore_params`, the attach pause/resume path and the
   three-second gesture window.
-- **Docs:** refresh `docs/gui.png`.
+- **Performance:** sampling is now separate from the style preset and
+  resolution-aware. `auto` (default) uses `scaled` capture and picks 80/96/112
+  columns, 1×1 or 2×2 blocks and the style rate / 12 / 8 fps from the captured
+  height; `lean`, `balanced` and `quality` are fixed trade-offs; `manual`
+  exposes `--fps`, `--sample-grid`, `--sample-block` and `--capture`. An
+  explicit `--fps` or `--capture` still wins over the profile, so `--style`
+  keeps controlling fade, edge, saturation and send rate independently.
+- **Capture:** `screenshot-raw scaled` copies the window-size frame instead of
+  the decoded source (a 4K movie in a 720p window copies one ninth of the
+  pixels) and falls back to `video` once if the output refuses the flag.
+- **Panel:** the Look card gets a **Sampling** menu with the same profiles and
+  manual controls; values are saved in `lights.json` and applied on start.
+- **Panel:** a thin resource strip under the cards graphs CPU, RAM and WiZ UDP
+  for the panel and its sync child. CPU/RSS come from `/proc` (graceful `n/a`
+  elsewhere); UDP counts real datagrams from the new `stats-<pid>.json`, so
+  dry runs and demo mode stay at zero.
+- **Tests:** cover sampling normalization and `build_command`, the profile
+  resolver, sender byte/packet counters, the resources payload and the new UI
+  contracts.
+- **Docs:** refresh `docs/gui.png` and document the profiles and the resource
+  strip in the README; `SECURITY.md` lists `stats-<pid>.json`.
 
 ## 1.6.0 — 2026-11-18
 

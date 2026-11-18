@@ -502,7 +502,7 @@ button.danger:hover:not(:disabled) {
 .zone-preview[data-zone="t2"]::before { top: 0; bottom: 0; left: 33.33%; width: 33.33%; }
 .zone-preview[data-zone="t3"]::before { top: 0; right: 0; bottom: 0; width: 33.33%; }
 
-select, .field input[type="text"] {
+select, .field input[type="text"], .field input[type="number"] {
   background: rgba(255, 255, 255, .035);
   border: 1px solid #2a2a2a;
   border-radius: var(--radius);
@@ -838,6 +838,59 @@ input[type="range"]::-moz-range-thumb {
 .toast.error::before { background: var(--bad); }
 .hidden { display: none !important; }
 
+/* --------------------------------------------------------------- resources */
+
+.resources {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 8px clamp(14px, 3vw, 30px) 9px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  font-family: var(--font-mono);
+  font-size: .58rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.res-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #8a857a;
+}
+.res-title::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  background: var(--amber);
+}
+.res-item { display: inline-flex; align-items: center; gap: 7px; }
+.res-label { color: #6f6b62; }
+.res-value {
+  color: var(--amber);
+  min-width: 56px;
+  text-transform: none;
+  letter-spacing: .02em;
+  font-variant-numeric: tabular-nums;
+}
+.spark { width: 104px; height: 20px; display: block; }
+.spark path {
+  fill: none;
+  stroke: var(--amber);
+  stroke-width: 1.1;
+  opacity: .8;
+  vector-effect: non-scaling-stroke;
+}
+.res-note {
+  margin-left: auto;
+  color: #6f6b62;
+  text-transform: none;
+  letter-spacing: .02em;
+}
+
 .footer {
   max-width: 1240px;
   margin: 0 auto;
@@ -879,6 +932,11 @@ input[type="range"]::-moz-range-thumb {
   .session-card .card-body { display: block; }
   .session-card .card-body > .hint { margin-top: 5px; }
   .control-grid { grid-template-columns: 1fr; }
+  .resources { gap: 4px 12px; }
+  .res-item { flex: 1 1 100%; }
+  .res-item .spark { margin-left: auto; }
+  .spark { width: 96px; }
+  .res-note { margin-left: 0; width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

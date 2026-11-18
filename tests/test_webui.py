@@ -55,6 +55,37 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(webui.normalize_config({"brightness": 2}, m)["brightness"], 10)
         self.assertEqual(webui.normalize_config({"brightness": 900}, m)["brightness"], 100)
 
+    def test_sampling_defaults_and_normalization(self):
+        config = webui.normalize_config({}, m)
+        self.assertEqual(config["sampling"], "auto")
+        self.assertEqual(config["sampling_fps"], 15)
+        self.assertEqual(config["sampling_grid"], 80)
+        self.assertEqual(config["sampling_block"], 1)
+        self.assertEqual(config["sampling_capture"], "auto")
+
+        bad = webui.normalize_config(
+            {
+                "sampling": "ultra",
+                "sampling_fps": 99,
+                "sampling_grid": 5,
+                "sampling_block": 9,
+                "sampling_capture": "gpu",
+            },
+            m,
+        )
+        self.assertEqual(bad["sampling"], "auto")
+        self.assertEqual(bad["sampling_fps"], 30)
+        self.assertEqual(bad["sampling_grid"], 24)
+        self.assertEqual(bad["sampling_block"], 4)
+        self.assertEqual(bad["sampling_capture"], "auto")
+
+    def test_known_sampling_profiles_survive(self):
+        for profile in ("auto", "manual", *m.SAMPLING_PROFILES):
+            with self.subTest(profile=profile):
+                self.assertEqual(
+                    webui.normalize_config({"sampling": profile}, m)["sampling"], profile
+                )
+
     def test_light_fields(self):
         config = webui.normalize_config(
             {
@@ -165,6 +196,22 @@ class CommandTests(unittest.TestCase):
         self.assertIn("--attach", argv)
         self.assertIn("--dry-run", argv)
         self.assertEqual(argv[argv.index("--zones") + 1], "left,right")
+        self.assertEqual(argv[argv.index("--sampling") + 1], "auto")
+
+    def test_manual_sampling_passes_every_knob(self):
+        config = make_config(
+            sampling="manual",
+            sampling_fps=12,
+            sampling_grid=96,
+            sampling_block=3,
+            sampling_capture="source",
+        )
+        config["lights"] = {"10.0.0.1": {"enabled": True}}
+        argv, _ips, _zones = webui.build_command(config, m)
+        self.assertEqual(argv[argv.index("--fps") + 1], "12")
+        self.assertEqual(argv[argv.index("--sample-grid") + 1], "96")
+        self.assertEqual(argv[argv.index("--sample-block") + 1], "3")
+        self.assertEqual(argv[argv.index("--capture") + 1], "source")
 
     def test_launch_command_includes_media(self):
         config = make_config(mode="launch", media="/media/movie.mkv")
@@ -242,6 +289,19 @@ class DemoPanelTests(unittest.TestCase):
         self.assertTrue(snapshot["config_path"].endswith("lights.json"))
         self.assertIsInstance(snapshot["network"], list)
         self.assertIn("active", snapshot["crazy"])
+        self.assertIn("resources", snapshot)
+
+    def test_resources_payload_is_well_formed(self):
+        panel = webui.Panel(m, demo=True)
+        resources = panel.resources()
+        for key in ("at", "available", "cpu", "ram_mb", "network_bps", "capture_fps"):
+            self.assertIn(key, resources)
+        self.assertEqual(resources["network_bps"], 0.0)
+        self.assertIsNone(resources["capture_fps"])
+        if Path("/proc").is_dir():
+            self.assertTrue(resources["available"])
+            self.assertGreater(resources["ram_mb"], 0)
+            self.assertGreaterEqual(resources["processes"], 1)
 
     def test_light_update_is_in_memory_only(self):
         panel = webui.Panel(m, demo=True)

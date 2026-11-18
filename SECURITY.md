@@ -40,11 +40,11 @@ mpv start. Nothing downloads code, and no installer fetches anything at all.
   always with an argument list and a 120 s timeout; when none of them exists
   it returns an empty path and the manual **Video file** field stays the way
   to choose a file.
-- **Files written.** `state-<pid>.json` and `control.json` under
-  `$XDG_RUNTIME_DIR/wiz-ambilight/` (`/tmp` fallback, `0700`), the
-  `gui-daemon.json` PID file beside them, `lights.json` and `scenes.json` in
-  `~/.config/wiz-ambilight/` (`0600`), and the Lua copy in mpv's scripts
-  folder. Nothing else is created, renamed or deleted.
+- **Files written.** `state-<pid>.json`, `stats-<pid>.json` and
+  `control.json` under `$XDG_RUNTIME_DIR/wiz-ambilight/` (`/tmp` fallback,
+  `0700`), the `gui-daemon.json` PID file beside them, `lights.json` and
+  `scenes.json` in `~/.config/wiz-ambilight/` (`0600`), and the Lua copy in
+  mpv's scripts folder. Nothing else is created, renamed or deleted.
 
 ## Exposed interfaces
 
@@ -55,6 +55,7 @@ Every surface is listed here; if it is not in this table, it does not exist.
 | `127.0.0.1:8765` TCP | only with `--gui` | serve the local panel | loopback bind, Host/Origin checks, per-run token, strict CSP |
 | ephemeral UDP source port | during sync, discovery and direct control | send `setPilot`/`getPilot` and read replies | not a service, no `listen`/`accept`, short timeouts, no `bind` to a public interface |
 | `state-<pid>.json`, `control.json` | during sync | hand zone colors from mpv to Python | runtime dir `0700` |
+| `stats-<pid>.json` | during sync, once a second | let the panel graph capture rate and real UDP traffic | runtime dir `0700`, removed on exit, ignored when older than 6 s or owned by another PID |
 | `lights.json`, `scenes.json` | panel | names, zones and saved looks | files `0600`; values range-checked |
 
 There is no inbound TCP service other than the optional panel, no UDP listener

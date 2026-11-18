@@ -27,6 +27,10 @@
         wiz_ambilight-fps=10            captures per second (1-30)
         wiz_ambilight-edge=0.14         edge band size, fraction of the frame
         wiz_ambilight-bar-luma=16       luma below which letterbox bars are cropped
+        wiz_ambilight-sampling=auto     auto, lean, balanced, quality or manual
+        wiz_ambilight-grid=80           sample columns (24-240; 0 = auto)
+        wiz_ambilight-sample=1          average an NxN block per cell (1-4; 0 = auto)
+        wiz_ambilight-capture=scaled    scaled (window size) or video (source)
 
     JSON written on every capture:
         {"active":true,"t":12.345,"paused":false,"eof":false,
@@ -51,6 +55,15 @@ local S = {
     edge = 0.14,
     bar_luma = 16.0,
     grid_x = 80,
+    sample = 1,
+    capture = "video",
+    sampling = "manual",
+    fps_now = 10,
+    next_due = 0,
+    capture_w = 0,
+    capture_h = 0,
+    capture_fallback = false,
+    last_warned_fallback = false,
     timer = nil,
     control_timer = nil,
     last_write = 0,
@@ -143,6 +156,12 @@ local function emit(paused, eof, result, err)
             .. ',' .. color_json(z.thirds[2])
             .. ',' .. color_json(z.thirds[3]) .. "]"
             .. "}"
+        parts[#parts + 1] = string.format(
+            ',"capture":%q,"grid":%d,"fps":%.2f',
+            result.capture or "video",
+            result.grid or 0,
+            S.fps_now or S.fps
+        )
     end
     if err then
         parts[#parts + 1] = ',"error":' .. string.format("%q", err)
@@ -154,10 +173,40 @@ local function emit(paused, eof, result, err)
     end
 end
 
+-- Pick a grid, block size and fps cap from the size of the frame we actually
+-- captured. A 1080p window keeps the original 80x1 grid and the style's own
+-- rate, so `raw` stays at 24 fps; a 4K fullscreen capture uses more columns
+-- but far fewer frames, which is what keeps the copy cost flat on a 32" TV.
+local function auto_sampling(w, h)
+    if h <= 1200 then
+        return 80, 1, 30.0
+    elseif h <= 1600 then
+        return 96, 2, 12.0
+    end
+    return 112, 2, 8.0
+end
+
+-- `scaled` is the window size and can be 2-4x smaller than a 4K source. Older
+-- mpv builds or VO drivers may reject the flag, so fall back to the source
+-- frame once instead of failing every capture.
+local function grab()
+    local flag = S.capture
+    local res, err = mp.command_native({ "screenshot-raw", flag })
+    if (type(res) ~= "table" or type(res.data) ~= "string") and flag ~= "video" then
+        if not S.capture_fallback then
+            S.capture_fallback = true
+            msg.warn("scaled capture is unavailable; using the source frame instead")
+        end
+        S.capture = "video"
+        res, err = mp.command_native({ "screenshot-raw", "video" })
+    end
+    return res, err
+end
+
 -- Grab the current video frame and compute zone averages.
 -- Returns a table {w=,h=,rect=,zones=} or nil, error message.
 local function analyze()
-    local res, err = mp.command_native({ "screenshot-raw", "video" })
+    local res, err = grab()
     if type(res) ~= "table" then
         return nil, err or "screenshot-raw failed"
     end
@@ -184,9 +233,23 @@ local function analyze()
     end
     local is_rgb = (fmt == "rgb0" or fmt == "rgb24")
 
+    local grid, block
+    if S.sampling == "auto" or S.grid_x <= 0 then
+        local auto_grid, auto_block, auto_fps = auto_sampling(w, h)
+        grid = S.grid_x > 0 and S.grid_x or auto_grid
+        block = S.sample > 0 and S.sample or auto_block
+        S.fps_now = math.min(S.fps, auto_fps)
+    else
+        grid = S.grid_x
+        block = S.sample
+        S.fps_now = S.fps
+    end
+    block = math.max(1, math.min(4, block))
+    S.capture_w, S.capture_h = w, h
+
     -- Sample a fixed size grid so cost does not depend on the video resolution.
-    local gx = math.min(S.grid_x, w)
-    local gy = math.min(math.max(2, math.floor(S.grid_x * h / w + 0.5)), h)
+    local gx = math.min(grid, w)
+    local gy = math.min(math.max(2, math.floor(grid * h / w + 0.5)), h)
     local stepx = math.max(1, math.floor(w / gx))
     local stepy = math.max(1, math.floor(h / gy))
     local nx = math.floor((w - 1) / stepx) + 1
@@ -195,20 +258,48 @@ local function analyze()
     local R, G, B = {}, {}, {}
     local row_luma, col_luma = {}, {}
     local idx = 1
+    local half = math.floor((block - 1) / 2)
 
     for yy = 0, ny - 1 do
         local y = math.min(h - 1, yy * stepy + math.floor(stepy / 2))
-        local row_off = y * stride
+        local y0b = math.max(0, y - half)
+        local y1b = math.min(h - 1, y0b + block - 1)
+        if y1b - y0b + 1 < block then
+            y0b = math.max(0, y1b - block + 1)
+        end
         local sum = 0
         for xx = 0, nx - 1 do
             local x = math.min(w - 1, xx * stepx + math.floor(stepx / 2))
-            local off = row_off + x * bpp
-            local c1, c2, c3 = data:byte(off + 1, off + 3)
             local r0, g0, b0
-            if is_rgb then
-                r0, g0, b0 = c1, c2, c3
+            if block == 1 then
+                local off = y * stride + x * bpp
+                local c1, c2, c3 = data:byte(off + 1, off + 3)
+                if is_rgb then
+                    r0, g0, b0 = c1, c2, c3
+                else
+                    b0, g0, r0 = c1, c2, c3
+                end
             else
-                b0, g0, r0 = c1, c2, c3
+                local x0b = math.max(0, x - half)
+                local x1b = math.min(w - 1, x0b + block - 1)
+                if x1b - x0b + 1 < block then
+                    x0b = math.max(0, x1b - block + 1)
+                end
+                local sr, sg, sb, n = 0, 0, 0, 0
+                for sy = y0b, y1b do
+                    local base = sy * stride
+                    for sx = x0b, x1b do
+                        local off = base + sx * bpp
+                        local c1, c2, c3 = data:byte(off + 1, off + 3)
+                        if is_rgb then
+                            sr, sg, sb = sr + c1, sg + c2, sb + c3
+                        else
+                            sr, sg, sb = sr + c3, sg + c2, sb + c1
+                        end
+                        n = n + 1
+                    end
+                end
+                r0, g0, b0 = sr / n, sg / n, sb / n
             end
             R[idx], G[idx], B[idx] = r0, g0, b0
             local l = 0.2126 * r0 + 0.7152 * g0 + 0.0722 * b0
@@ -293,6 +384,8 @@ local function analyze()
         h = h,
         rect = { x0 * stepx, y0 * stepy, math.min(w, (x1 + 1) * stepx), math.min(h, (y1 + 1) * stepy) },
         zones = zones,
+        capture = S.capture == "video" and "source" or "scaled",
+        grid = nx,
     }
 end
 
@@ -322,6 +415,12 @@ local function tick()
         return
     end
 
+    -- The timer runs at the style's fps so a profile change takes effect
+    -- without recreating it; this gate enforces the resolution-aware cap.
+    if S.next_due > 0 and now < S.next_due then
+        return
+    end
+
     local result, err = analyze()
     if not result then
         S.failures = S.failures + 1
@@ -338,6 +437,7 @@ local function tick()
 
     S.failures = 0
     S.cooldown_until = 0
+    S.next_due = now + 1.0 / math.max(1.0, S.fps_now or S.fps)
     S.last_result = result
     emit(false, false, result)
 end
@@ -353,6 +453,28 @@ local function stop()
     S.active = false
     S.last_result = nil
     S.from_control = false
+end
+
+local function apply_sampling(cfg, reset)
+    if cfg.sampling ~= nil then
+        S.sampling = tostring(cfg.sampling)
+    end
+    if cfg.grid_x ~= nil then
+        S.grid_x = math.max(0, math.min(240, math.floor(tonumber(cfg.grid_x) or S.grid_x)))
+    end
+    if cfg.sample ~= nil then
+        S.sample = math.max(0, math.min(4, math.floor(tonumber(cfg.sample) or S.sample)))
+    end
+    if cfg.capture == "scaled" or cfg.capture == "video" then
+        if S.capture ~= cfg.capture then
+            S.capture_fallback = false
+        end
+        S.capture = cfg.capture
+    end
+    if reset then
+        S.fps_now = S.fps
+        S.next_due = 0
+    end
 end
 
 local function start(cfg, from_control)
@@ -372,6 +494,7 @@ local function start(cfg, from_control)
         S.fps = math.max(1, math.min(30, tonumber(cfg.fps) or S.fps))
         S.edge = math.max(0.02, math.min(0.45, tonumber(cfg.edge) or S.edge))
         S.bar_luma = tonumber(cfg.bar_luma) or S.bar_luma
+        apply_sampling(cfg, false)
         return
     end
 
@@ -381,6 +504,7 @@ local function start(cfg, from_control)
     S.fps = math.max(1, math.min(30, tonumber(cfg.fps) or 10))
     S.edge = math.max(0.02, math.min(0.45, tonumber(cfg.edge) or 0.14))
     S.bar_luma = tonumber(cfg.bar_luma) or 16
+    apply_sampling(cfg, true)
     S.from_control = from_control or false
     S.active = true
     S.failures = 0
@@ -388,7 +512,13 @@ local function start(cfg, from_control)
     S.last_write = 0
     S.last_result = nil
     S.timer = mp.add_periodic_timer(1.0 / S.fps, tick)
-    msg.info(string.format("active: %.1f fps -> %s", S.fps, path))
+    msg.info(string.format(
+        "active: %.1f fps, %s capture, %s sampling -> %s",
+        S.fps,
+        S.capture,
+        S.sampling,
+        path
+    ))
 end
 
 -- Activation from the command line -----------------------------------------
@@ -428,6 +558,10 @@ if not env_started then
             fps = opt("fps"),
             edge = opt("edge"),
             bar_luma = opt("bar-luma"),
+            sampling = opt("sampling"),
+            grid_x = opt("grid"),
+            sample = opt("sample"),
+            capture = opt("capture"),
         }, false)
     end
 end
@@ -454,7 +588,10 @@ if not launcher_instance then
         local target = type(cfg) == "table" and cfg.script or nil
         if type(cfg) == "table" and cfg.enabled and cfg.path
             and (not target or target == my_name) then
-            if not S.active or S.path ~= cfg.path then
+            -- Refresh every second while attached: the panel rewrites this
+            -- file when the sampling profile or style changes, and mpv stays
+            -- open across those restarts.
+            if not S.active or S.path ~= cfg.path or S.from_control then
                 start(cfg, true)
             end
         elseif S.active and S.from_control then

@@ -37,7 +37,19 @@ CRAZY_HZ = 20.0
 CRAZY_MAX_HZ = 20.0
 CRAZY_SECONDS = 5.0
 
-CONFIG_KEYS = ("layout", "style", "brightness", "mode", "media", "dry_run")
+CONFIG_KEYS = (
+    "layout",
+    "style",
+    "brightness",
+    "mode",
+    "media",
+    "dry_run",
+    "sampling",
+    "sampling_fps",
+    "sampling_grid",
+    "sampling_block",
+    "sampling_capture",
+)
 DEFAULT_CONFIG = {
     "layout": "auto",
     "style": "hue",
@@ -45,6 +57,11 @@ DEFAULT_CONFIG = {
     "mode": "attach",
     "media": "",
     "dry_run": False,
+    "sampling": "auto",
+    "sampling_fps": 15,
+    "sampling_grid": 80,
+    "sampling_block": 1,
+    "sampling_capture": "auto",
     "lights": {},
 }
 
@@ -160,6 +177,24 @@ def normalize_config(raw, core) -> dict:
         config["mode"] = "attach"
     config["media"] = str(config["media"] or "")[:4096]
     config["dry_run"] = bool(config["dry_run"])
+
+    sampling_choices = ("auto", "manual", *getattr(core, "SAMPLING_PROFILES", {}))
+    if config["sampling"] not in sampling_choices:
+        config["sampling"] = "auto"
+    try:
+        config["sampling_fps"] = max(1, min(30, int(config["sampling_fps"])))
+    except (TypeError, ValueError):
+        config["sampling_fps"] = 15
+    try:
+        config["sampling_grid"] = max(24, min(240, int(config["sampling_grid"])))
+    except (TypeError, ValueError):
+        config["sampling_grid"] = 80
+    try:
+        config["sampling_block"] = max(1, min(4, int(config["sampling_block"])))
+    except (TypeError, ValueError):
+        config["sampling_block"] = 1
+    if config["sampling_capture"] not in ("auto", "scaled", "source"):
+        config["sampling_capture"] = "auto"
 
     lights = {}
     raw_lights = raw.get("lights") if isinstance(raw.get("lights"), dict) else {}
@@ -318,6 +353,7 @@ def build_command(config: dict, core, demo: bool = False):
 
     ips = [ip for ip, _ in pairs]
     zones = effective_zones(config, core)
+    sampling = config.get("sampling", "auto")
     argv = [
         sys.executable,
         str(SCRIPT),
@@ -329,7 +365,22 @@ def build_command(config: dict, core, demo: bool = False):
         config["style"],
         "--brightness",
         str(config["brightness"]),
+        "--sampling",
+        sampling,
     ]
+    if sampling == "manual":
+        argv.extend(
+            [
+                "--fps",
+                str(config.get("sampling_fps", 15)),
+                "--sample-grid",
+                str(config.get("sampling_grid", 80)),
+                "--sample-block",
+                str(config.get("sampling_block", 1)),
+                "--capture",
+                config.get("sampling_capture", "auto"),
+            ]
+        )
     if demo or config["dry_run"]:
         argv.append("--dry-run")
     if config["mode"] == "attach":
@@ -624,6 +675,64 @@ def restore_params(info) -> dict:
     return params
 
 
+# --------------------------------------------------------------------------- #
+# Resource sampling (stdlib only; /proc on Linux, graceful elsewhere)
+# --------------------------------------------------------------------------- #
+
+
+def _sysconf(name: str, default: int) -> int:
+    try:
+        return int(os.sysconf(name))
+    except (AttributeError, ValueError, OSError):
+        return default
+
+
+def _proc_stat(pid: int):
+    """Return (ppid, cpu ticks, rss pages) for a Linux process, or None."""
+    try:
+        text = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    # The comm field can contain spaces and parentheses; everything we need
+    # starts after the last ')'.
+    end = text.rfind(")")
+    if end < 0:
+        return None
+    fields = text[end + 2 :].split()
+    if len(fields) < 22:
+        return None
+    try:
+        return int(fields[1]), int(fields[11]) + int(fields[12]), int(fields[21])
+    except ValueError:
+        return None
+
+
+def _process_family(roots):
+    """Every live pid in the panel/sync tree, or None when /proc is missing."""
+    if not Path("/proc").is_dir():
+        return None
+    stats = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        info = _proc_stat(pid)
+        if info is not None:
+            stats[pid] = info
+    children = {}
+    for pid, (ppid, _ticks, _rss) in stats.items():
+        children.setdefault(ppid, []).append(pid)
+    seen = set()
+    stack = [pid for pid in roots if isinstance(pid, int) and pid > 0]
+    while stack:
+        pid = stack.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        stack.extend(children.get(pid, ()))
+    return {pid: stats[pid] for pid in seen if pid in stats}
+
+
 class Panel:
     def __init__(self, core, port: int = DEFAULT_PORT, demo: bool = False):
         self.core = core
@@ -636,6 +745,10 @@ class Panel:
         self.live = {}
         self.reachable = set()
         self.scanned = 0.0
+        self._res_lock = threading.Lock()
+        self._res_prev = {}
+        self._res_prev_time = 0.0
+        self._res_cpu = None
         self._crazy_stop = threading.Event()
         self._crazy_thread = None
         self._crazy_target = "all"
@@ -762,6 +875,87 @@ class Panel:
             "path": str(destination),
         }
 
+    def _sync_stats(self, pid):
+        """Newest live stats-<pid>.json for the running sync process."""
+        if not isinstance(pid, int):
+            return None
+        try:
+            paths = list(runtime_dir().glob("stats-*.json"))
+        except OSError:
+            return None
+        now = time.time()
+        newest = None
+        for path in paths:
+            data = read_json(path, None)
+            if not isinstance(data, dict) or data.get("pid") != pid:
+                continue
+            at = data.get("at")
+            if not isinstance(at, (int, float)) or now - at > 6.0:
+                continue
+            if newest is None or at > newest.get("at", 0):
+                newest = data
+        return newest
+
+    def resources(self) -> dict:
+        """CPU, RSS and WiZ UDP traffic for the panel and the sync tree.
+
+        Linux exposes all of this through /proc; elsewhere the function still
+        returns a well-formed payload so the strip can say "unavailable".
+        """
+        session = self.session.snapshot()
+        roots = [os.getpid()]
+        if session.get("running") and isinstance(session.get("pid"), int):
+            roots.append(session["pid"])
+        family = _process_family(roots)
+        available = family is not None
+        now = time.monotonic()
+        cpu = None
+        ram_mb = None
+        if family is not None:
+            page_size = _sysconf("SC_PAGE_SIZE", 4096)
+            ram_mb = round(
+                sum(info[2] for info in family.values()) * page_size / (1024 * 1024), 1
+            )
+            ticks = {pid: info[1] for pid, info in family.items()}
+            with self._res_lock:
+                if self._res_prev and now - self._res_prev_time >= 0.4:
+                    elapsed = now - self._res_prev_time
+                    shared = ticks.keys() & self._res_prev.keys()
+                    delta = sum(max(0, ticks[pid] - self._res_prev[pid]) for pid in shared)
+                    cpu = round(delta / _sysconf("SC_CLK_TCK", 100) / elapsed * 100.0, 1)
+                    self._res_cpu = cpu
+                elif self._res_cpu is not None:
+                    cpu = self._res_cpu
+                if not self._res_prev or now - self._res_prev_time >= 0.4:
+                    self._res_prev = ticks
+                    self._res_prev_time = now
+
+        running = bool(session.get("running"))
+        stats = self._sync_stats(session.get("pid")) if running else None
+        network_bps = 0.0
+        if running:
+            network_bps = None
+            if stats is not None and isinstance(stats.get("tx_bps"), (int, float)):
+                network_bps = round(float(stats["tx_bps"]), 1)
+
+        def number(key):
+            value = stats.get(key) if stats else None
+            return value if isinstance(value, (int, float)) else None
+
+        return {
+            "at": time.time(),
+            "available": available,
+            "cpu": cpu,
+            "ram_mb": ram_mb,
+            "processes": len(family) if family else 0,
+            "network_bps": network_bps,
+            "network_ready": stats is not None,
+            "capture_fps": number("capture_fps"),
+            "capture_w": number("w"),
+            "capture_h": number("h"),
+            "capture": stats.get("capture") if stats else None,
+        }
+
     def snapshot(self) -> dict:
         with self.lock:
             config = json.loads(json.dumps(self.config))
@@ -793,6 +987,7 @@ class Panel:
                 for address, prefix in self.core.local_ipv4_networks()
             ],
             "crazy": self.crazy_status(),
+            "resources": self.resources(),
             "config_path": str(config_path()),
             "config_display": display_path(config_path()),
         }

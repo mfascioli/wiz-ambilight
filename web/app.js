@@ -65,6 +65,14 @@ const refs = {
   modeHint: document.getElementById("modeHint"),
   styleSelect: document.getElementById("styleSelect"),
   styleHint: document.getElementById("styleHint"),
+  samplingSelect: document.getElementById("samplingSelect"),
+  samplingHint: document.getElementById("samplingHint"),
+  samplingManual: document.getElementById("samplingManual"),
+  samplingFps: document.getElementById("samplingFps"),
+  samplingFpsOut: document.getElementById("samplingFpsOut"),
+  samplingGrid: document.getElementById("samplingGrid"),
+  samplingBlock: document.getElementById("samplingBlock"),
+  samplingCapture: document.getElementById("samplingCapture"),
   layoutSelect: document.getElementById("layoutSelect"),
   brightness: document.getElementById("brightness"),
   brightnessOut: document.getElementById("brightnessOut"),
@@ -73,6 +81,14 @@ const refs = {
   log: document.getElementById("log"),
   clearLog: document.getElementById("clearLog"),
   configPath: document.getElementById("configPath"),
+  resources: document.getElementById("resources"),
+  resCpu: document.getElementById("resCpu"),
+  resRam: document.getElementById("resRam"),
+  resNet: document.getElementById("resNet"),
+  resNote: document.getElementById("resNote"),
+  sparkCpu: document.getElementById("sparkCpu"),
+  sparkRam: document.getElementById("sparkRam"),
+  sparkNet: document.getElementById("sparkNet"),
   toast: document.getElementById("toast"),
 };
 
@@ -86,6 +102,8 @@ const state = {
   busy: false,
   closed: false,
   scenesSignature: "",
+  resourceAt: 0,
+  resourceHistory: { cpu: [], ram: [], net: [] },
 };
 
 // --------------------------------------------------------------------- utils
@@ -426,12 +444,40 @@ function fillSelect(select, values) {
   }
 }
 
+const SAMPLING_OPTIONS = [
+  ["auto", "Auto (by resolution)"],
+  ["lean", "Lean — 48 cols · 10 fps"],
+  ["balanced", "Balanced — 80 cols · 15 fps"],
+  ["quality", "Quality — 120 cols · source"],
+  ["manual", "Manual"],
+];
+
+const SAMPLING_HINTS = {
+  auto: "Scaled capture; grid and fps follow the capture size.",
+  lean: "Scaled capture, 48 columns, single-pixel samples, max 10 fps.",
+  balanced: "Scaled capture, 80 columns, 2×2 averages, max 15 fps.",
+  quality: "Source capture, 120 columns, 3×3 averages, no extra fps cap.",
+  manual: "Your grid, block size, capture and fps. Style still controls fade and color.",
+};
+
+function fillSamplingSelect() {
+  if (refs.samplingSelect.options.length === SAMPLING_OPTIONS.length) return;
+  refs.samplingSelect.replaceChildren();
+  for (const [value, label] of SAMPLING_OPTIONS) {
+    const option = el("option", "", label);
+    option.value = value;
+    refs.samplingSelect.append(option);
+  }
+}
+
 function renderSettings(snapshot) {
   const config = snapshot.config;
   fillSelect(refs.styleSelect, snapshot.styles);
   fillSelect(refs.layoutSelect, snapshot.layouts);
+  fillSamplingSelect();
   if (document.activeElement !== refs.styleSelect) refs.styleSelect.value = config.style;
   if (document.activeElement !== refs.layoutSelect) refs.layoutSelect.value = config.layout;
+  if (document.activeElement !== refs.samplingSelect) refs.samplingSelect.value = config.sampling;
   if (document.activeElement !== refs.brightness) {
     refs.brightness.value = String(config.brightness);
     refs.brightnessOut.value = String(config.brightness);
@@ -445,6 +491,24 @@ function renderSettings(snapshot) {
     ? `${details.fps} fps capture · ${details.smooth ? `${details.smooth} ms fade` : "no fade"} · ` +
       `${details.send_hz} Hz output · ${Math.round(details.edge * 100)}% edge`
     : "";
+
+  const manual = config.sampling === "manual";
+  refs.samplingManual.classList.toggle("hidden", !manual);
+  refs.samplingHint.textContent = SAMPLING_HINTS[config.sampling] || "";
+  if (document.activeElement !== refs.samplingFps) {
+    refs.samplingFps.value = String(config.sampling_fps);
+    refs.samplingFpsOut.value = String(config.sampling_fps);
+    paintRange(refs.samplingFps);
+  }
+  if (document.activeElement !== refs.samplingGrid) {
+    refs.samplingGrid.value = String(config.sampling_grid);
+  }
+  if (document.activeElement !== refs.samplingBlock) {
+    refs.samplingBlock.value = String(config.sampling_block);
+  }
+  if (document.activeElement !== refs.samplingCapture) {
+    refs.samplingCapture.value = config.sampling_capture;
+  }
 }
 
 function renderMapping(snapshot) {
@@ -655,6 +719,78 @@ function renderLog(snapshot) {
   }
 }
 
+const SPARK_W = 110;
+const SPARK_H = 20;
+const RESOURCE_HISTORY = 36;
+
+function pushResource(kind, value) {
+  const series = state.resourceHistory[kind];
+  series.push(typeof value === "number" && Number.isFinite(value) ? value : null);
+  if (series.length > RESOURCE_HISTORY) series.splice(0, series.length - RESOURCE_HISTORY);
+}
+
+function sparkPath(values, zeroBased) {
+  const numbers = values.filter((value) => typeof value === "number" && Number.isFinite(value));
+  if (numbers.length < 2) return "";
+  const max = Math.max(...numbers);
+  const min = zeroBased ? 0 : Math.min(...numbers);
+  const span = max - min;
+  const step = SPARK_W / Math.max(1, values.length - 1);
+  let path = "";
+  let pen = false;
+  values.forEach((value, index) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      pen = false;
+      return;
+    }
+    const x = index * step;
+    const y = span ? SPARK_H - 2 - ((value - min) / span) * (SPARK_H - 4) : (zeroBased ? SPARK_H - 2 : SPARK_H / 2);
+    path += `${pen ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)} `;
+    pen = true;
+  });
+  return path.trim();
+}
+
+function formatRate(bps) {
+  if (typeof bps !== "number" || !Number.isFinite(bps)) return "—";
+  if (bps < 1024) return `${Math.round(bps)} B/s`;
+  if (bps < 1024 * 1024) return `${(bps / 1024).toFixed(1)} KB/s`;
+  return `${(bps / (1024 * 1024)).toFixed(2)} MB/s`;
+}
+
+function renderResources(snapshot) {
+  const res = snapshot.resources || {};
+  if (res.at && res.at !== state.resourceAt) {
+    state.resourceAt = res.at;
+    pushResource("cpu", res.available ? res.cpu : null);
+    pushResource("ram", res.available ? res.ram_mb : null);
+    pushResource("net", res.network_bps);
+  }
+
+  refs.resCpu.textContent = res.available
+    ? (typeof res.cpu === "number" ? `${res.cpu >= 10 ? Math.round(res.cpu) : res.cpu.toFixed(1)}%` : "—")
+    : "n/a";
+  refs.resRam.textContent = res.available && typeof res.ram_mb === "number"
+    ? `${Math.round(res.ram_mb)} MB`
+    : (res.available ? "—" : "n/a");
+  refs.resNet.textContent = formatRate(res.network_bps);
+
+  refs.sparkCpu.setAttribute("d", sparkPath(state.resourceHistory.cpu, true));
+  refs.sparkRam.setAttribute("d", sparkPath(state.resourceHistory.ram, false));
+  refs.sparkNet.setAttribute("d", sparkPath(state.resourceHistory.net, true));
+
+  const bits = [snapshot.session.running ? "panel + sync" : "panel only"];
+  if (typeof res.capture_w === "number" && typeof res.capture_h === "number") {
+    bits.push(`${Math.round(res.capture_w)}×${Math.round(res.capture_h)}`);
+  }
+  if (typeof res.capture_fps === "number") bits.push(`${res.capture_fps.toFixed(1)} fps`);
+  refs.resNote.textContent = bits.join(" · ");
+  refs.resources.title = res.available
+    ? `Panel and sync tree · ${res.processes} process${res.processes === 1 ? "" : "es"} · ` +
+      `WiZ UDP ${formatRate(res.network_bps)}`
+    : "CPU and RAM need Linux /proc; the network counter still works";
+}
+
 function apply(snapshot) {
   state.snapshot = snapshot;
   refs.versionBadge.textContent = `v${snapshot.version}`;
@@ -671,6 +807,7 @@ function apply(snapshot) {
   renderMapping(snapshot);
   renderLua(snapshot);
   renderLog(snapshot);
+  renderResources(snapshot);
 }
 
 // --------------------------------------------------------------------- events
@@ -759,6 +896,28 @@ refs.mediaInput.addEventListener("change", () => {
   if (value !== (state.snapshot?.config.media || "")) saveConfig({ media: value });
 });
 refs.styleSelect.addEventListener("change", () => saveConfig({ style: refs.styleSelect.value }));
+refs.samplingSelect.addEventListener("change", () =>
+  saveConfig({ sampling: refs.samplingSelect.value }),
+);
+refs.samplingFps.addEventListener("input", () => {
+  refs.samplingFpsOut.value = refs.samplingFps.value;
+});
+refs.samplingFps.addEventListener("change", () => {
+  const value = Number(refs.samplingFps.value);
+  if (value !== state.snapshot?.config.sampling_fps) saveConfig({ sampling_fps: value });
+});
+refs.samplingGrid.addEventListener("change", () => {
+  const value = Math.max(24, Math.min(240, Number(refs.samplingGrid.value) || 80));
+  refs.samplingGrid.value = String(value);
+  if (value !== state.snapshot?.config.sampling_grid) saveConfig({ sampling_grid: value });
+});
+refs.samplingBlock.addEventListener("change", () => {
+  const value = Number(refs.samplingBlock.value);
+  if (value !== state.snapshot?.config.sampling_block) saveConfig({ sampling_block: value });
+});
+refs.samplingCapture.addEventListener("change", () =>
+  saveConfig({ sampling_capture: refs.samplingCapture.value }),
+);
 refs.layoutSelect.addEventListener("change", () => saveConfig({ layout: refs.layoutSelect.value }));
 refs.brightness.addEventListener("input", () => {
   refs.brightnessOut.value = refs.brightness.value;
@@ -921,7 +1080,13 @@ async function refresh() {
 }
 
 async function boot() {
-  const sliders = [refs.brightness, refs.controlBrightness, refs.controlTemp, refs.controlSpeed];
+  const sliders = [
+    refs.brightness,
+    refs.controlBrightness,
+    refs.controlTemp,
+    refs.controlSpeed,
+    refs.samplingFps,
+  ];
   for (const input of sliders) {
     paintRange(input);
     input.addEventListener("input", () => paintRange(input));

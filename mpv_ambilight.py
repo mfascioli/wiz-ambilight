@@ -141,6 +141,10 @@ class WizSender:
         self._last_time = {}
         self._warned = set()
         self._sock = None
+        # Cumulative counters for the panel's WiZ UDP graph. They only move
+        # for real datagrams: dry-run never touches the network.
+        self.bytes_sent = 0
+        self.packets_sent = 0
         if not dry_run:
             self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             try:
@@ -159,6 +163,8 @@ class WizSender:
             return True
         try:
             self._sock.sendto(payload, (ip, self.port))
+            self.bytes_sent += len(payload)
+            self.packets_sent += 1
             self._warned.discard(ip)
             return True
         except OSError as exc:
@@ -580,6 +586,54 @@ DEFAULT_STYLE = {
     "send_hz": 18.0,
 }
 
+# Sampling is deliberately separate from the style: the style chooses the
+# look (fade, saturation, edge band, send rate), while these profiles choose
+# how much of the frame is copied and averaged. Every profile is still
+# resolution-aware: `auto` asks the Lua script to pick its grid, block size
+# and fps cap from the size of the frame it actually captured.
+SAMPLING_PROFILES = {
+    "lean": {"grid": 48, "block": 1, "capture": "scaled", "fps_cap": 10.0},
+    "balanced": {"grid": 80, "block": 2, "capture": "scaled", "fps_cap": 15.0},
+    "quality": {"grid": 120, "block": 3, "capture": "video", "fps_cap": 30.0},
+}
+SAMPLING_CHOICES = ("auto", "lean", "balanced", "quality", "manual")
+
+
+def resolve_sampling(args, explicit=None):
+    """Fill the capture knobs from --sampling without touching the style.
+
+    `explicit` marks flags the user typed by hand. An explicit --fps or
+    --capture always wins over the profile, because it is the only way to
+    escape the preset from the command line.
+    """
+    explicit = explicit or {}
+    if args.sampling not in SAMPLING_CHOICES:
+        args.sampling = "auto"
+    profile = SAMPLING_PROFILES.get(args.sampling)
+    if args.sampling == "manual":
+        grid = args.sample_grid if args.sample_grid is not None else 80
+        block = args.sample_block if args.sample_block is not None else 1
+        capture = args.capture or "scaled"
+    elif profile:
+        grid = profile["grid"]
+        block = profile["block"]
+        capture = args.capture if explicit.get("capture") and args.capture else profile["capture"]
+    else:
+        # `auto` leaves zero sentinels: the Lua script resolves them from the
+        # real capture size on every mpv instance.
+        grid = 0
+        block = 0
+        capture = args.capture or "scaled"
+
+    args.sample_grid = 0 if int(grid) <= 0 else max(24, min(240, int(grid)))
+    args.sample_block = 0 if int(block) <= 0 else max(1, min(4, int(block)))
+    args.capture = "video" if capture == "source" else capture
+    if args.capture not in ("scaled", "video"):
+        args.capture = "scaled"
+    if profile and not explicit.get("fps"):
+        args.fps = min(args.fps, profile["fps_cap"])
+    return args
+
 
 def zones_for_layout(layout: str, count: int):
     if layout == "auto":
@@ -663,6 +717,8 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
     smoother = Smoother(args.smooth / 1000.0)
     dimming = max(10, min(100, args.brightness))
     send_interval = 1.0 / max(1.0, args.send_hz)
+    pid = os.getpid()
+    stats_path = runtime_dir() / f"stats-{pid}.json"
 
     print(
         "lights: "
@@ -675,6 +731,19 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
         f"dimming {dimming} | send {args.send_hz:g} Hz",
         file=sys.stderr,
     )
+    if getattr(args, "sampling", "auto") == "auto":
+        sampling = "auto (scaled, resolution-aware grid and fps)"
+    elif getattr(args, "sampling", "auto") == "manual":
+        sampling = (
+            f"manual ({args.capture} capture, {args.sample_grid} columns, "
+            f"{args.sample_block}x{args.sample_block} blocks, {args.fps:g} fps)"
+        )
+    else:
+        sampling = (
+            f"{args.sampling} ({args.capture} capture, {args.sample_grid} columns, "
+            f"{args.sample_block}x{args.sample_block} blocks, {args.fps:g} fps)"
+        )
+    print(f"sampling: {sampling}", file=sys.stderr)
     print(f"state: {state_path}", file=sys.stderr)
 
     targets = {}
@@ -683,6 +752,38 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
     last_tick = time.monotonic()
     last_send = 0.0
     last_error = None
+    last_stats = time.monotonic()
+    stats_bytes = sender.bytes_sent
+    stats_packets = sender.packets_sent
+    stats_frames = 0
+    capture_size = (None, None)
+    capture_source = None
+    capture_grid = None
+
+    def write_stats(now: float) -> None:
+        nonlocal last_stats, stats_bytes, stats_packets, stats_frames
+        elapsed = max(1e-6, now - last_stats)
+        payload = {
+            "pid": pid,
+            "at": time.time(),
+            "tx_bytes": sender.bytes_sent,
+            "tx_packets": sender.packets_sent,
+            "tx_bps": max(0.0, sender.bytes_sent - stats_bytes) / elapsed,
+            "capture_fps": stats_frames / elapsed,
+            "w": capture_size[0],
+            "h": capture_size[1],
+            "capture": capture_source,
+            "grid": capture_grid,
+            "sampling": getattr(args, "sampling", "auto"),
+        }
+        try:
+            write_json_atomic(stats_path, payload)
+        except OSError:
+            pass
+        last_stats = now
+        stats_bytes = sender.bytes_sent
+        stats_packets = sender.packets_sent
+        stats_frames = 0
 
     try:
         while True:
@@ -705,6 +806,12 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
                 last_key = key
                 state = read_state(state_path)
                 if isinstance(state, dict) and state.get("active"):
+                    if isinstance(state.get("w"), int) and isinstance(state.get("h"), int):
+                        capture_size = (state["w"], state["h"])
+                    if isinstance(state.get("capture"), str):
+                        capture_source = state["capture"]
+                    if isinstance(state.get("grid"), int):
+                        capture_grid = state["grid"]
                     error = state.get("error")
                     if error:
                         if error != last_error:
@@ -725,6 +832,7 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
                         zones = state.get("zones")
                         if isinstance(zones, dict):
                             last_error = None
+                            stats_frames += 1
                             for ip, zone in zip(lights, zone_names):
                                 rgb = zone_color(zones, zone)
                                 targets[ip] = adjust_color(
@@ -754,6 +862,9 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
                         dimming,
                     )
 
+            if now - last_stats >= 1.0:
+                write_stats(now)
+
             # Fast polling while a fade is in progress; idle polling otherwise.
             time.sleep(0.003 if moving else 0.006)
     finally:
@@ -761,6 +872,10 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
             for ip in lights:
                 sender.set_power(ip, False)
         sender.close()
+        try:
+            stats_path.unlink()
+        except OSError:
+            pass
 
 
 # --------------------------------------------------------------------------- #
@@ -792,6 +907,10 @@ def run_launcher(args, lights, zone_names, mpv_extra):
             "fps": args.fps,
             "edge": args.edge,
             "bar_luma": 0 if args.no_bars else 16,
+            "sampling": args.sampling,
+            "grid_x": args.sample_grid,
+            "sample": args.sample_block,
+            "capture": args.capture,
             # Only the instance we launch should autostart. If the Lua script
             # is also installed globally, that copy stays asleep.
             "script": link.stem,
@@ -916,6 +1035,10 @@ def run_attach(args, lights, zone_names):
         "fps": args.fps,
         "edge": args.edge,
         "bar_luma": 0 if args.no_bars else 16,
+        "sampling": args.sampling,
+        "grid_x": args.sample_grid,
+        "sample": args.sample_block,
+        "capture": args.capture,
         "script": SCRIPT_NAME,
     }
 
@@ -1167,6 +1290,37 @@ def main(argv=None) -> int:
         help="starting point for the tuning knobs (default: hue)",
     )
     parser.add_argument(
+        "--sampling",
+        default="auto",
+        choices=SAMPLING_CHOICES,
+        help=(
+            "capture budget: auto adapts to the frame size; lean, balanced "
+            "and quality trade detail for CPU; manual uses the flags below "
+            "(default: auto)"
+        ),
+    )
+    parser.add_argument(
+        "--sample-grid",
+        type=int,
+        default=None,
+        help="with --sampling manual: sample columns across the frame (24-240)",
+    )
+    parser.add_argument(
+        "--sample-block",
+        type=int,
+        default=None,
+        help="with --sampling manual: average an NxN block per cell (1-4)",
+    )
+    parser.add_argument(
+        "--capture",
+        choices=["auto", "scaled", "source"],
+        default=None,
+        help=(
+            "with --sampling manual: scaled copies the window, source copies "
+            "the decoded frame (default: scaled)"
+        ),
+    )
+    parser.add_argument(
         "--fps", type=float, default=None, help="captures per second (1-30)"
     )
     parser.add_argument(
@@ -1329,6 +1483,10 @@ def main(argv=None) -> int:
         zone_names = zones_for_layout(args.layout, len(lights))
 
     # Fill every knob the user did not set explicitly from the chosen style.
+    explicit = {
+        "fps": args.fps is not None,
+        "capture": args.capture is not None,
+    }
     preset = DEFAULT_STYLE if args.style == "custom" else STYLES[args.style]
     for name, value in preset.items():
         if getattr(args, name) is None:
@@ -1341,6 +1499,7 @@ def main(argv=None) -> int:
     args.gamma = max(0.2, min(3.0, args.gamma))
     args.smooth = max(0.0, min(2000.0, args.smooth))
     args.brightness = max(10, min(100, args.brightness))
+    resolve_sampling(args, explicit)
 
     if args.attach:
         run_attach(args, lights, zone_names)

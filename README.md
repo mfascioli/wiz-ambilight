@@ -20,7 +20,8 @@ no re-encoding, no cloud, no extra Python packages.
 
 - **Uses mpv, not a second player.** Hardware decoding, subtitles, uosc, your
   config, 4K, HEVC, network streams — all of it keeps working.
-- **Hue-style motion.** The capture side runs at 15 fps by default, but the
+- **Hue-style motion, at a sane cost.** The default sampling profile copies
+  the window-size frame at 8–15 fps depending on how tall it is, while the
   bulbs are driven at 18 Hz with continuous interpolation, so colors glide
   instead of stepping.
 - **Actually local.** Plain UDP on port `38899`; nothing leaves your LAN.
@@ -113,6 +114,11 @@ lists every bulb it finds, and lets you:
 - choose which bulbs take part and name them (`Sofa`, `TV wall`, …);
 - see each bulb's model, firmware, IP, online state and **effective zone**;
 - assign a zone per bulb or pick a layout, style and brightness;
+- choose a **sampling profile** — auto adapts the grid and capture rate to the
+  resolution; lean, balanced and quality trade CPU for detail; manual exposes
+  every knob — while the style keeps controlling the look;
+- watch **CPU, RAM and WiZ UDP** traffic for the panel and its sync process in
+  the strip under the cards;
 - see a **miniature of the video frame** that highlights the region each bulb
   samples, instead of guessing what “left edge” or “thirds” means;
 - preview the **zone map** (`Sofa glow → left edge`) before starting;
@@ -131,8 +137,8 @@ lists every bulb it finds, and lets you:
 - collapse any section: **Direct control** and **Activity** start closed, so
   the first screen is just lights, session and look.
 
-![The panel in demo mode: three bulbs assigned to thirds, each row with a miniature zone preview, and Direct control and Activity collapsed](docs/gui.png)
-<sub>Demo mode with three bulbs on thirds: the zone preview shows what each bulb samples, and the heavier controls stay collapsed.</sub>
+![The panel in demo mode: three bulbs assigned to thirds, the auto sampling profile and the resource strip](docs/gui.png)
+<sub>Demo mode with three bulbs on thirds and auto sampling: the zone preview shows what each bulb samples, and the strip under the cards tracks CPU, RAM and WiZ UDP traffic for the panel and its sync child.</sub>
 
 Useful flags:
 
@@ -260,6 +266,10 @@ so scene cuts land immediately while gentle camera moves still fade. Use
 `--style reactive` when you want the snappiest response, or lower `--smooth`
 manually.
 
+Styles and sampling are independent: `--sampling` (or the panel's **Sampling**
+menu) changes how much of the frame is copied without touching fade, edge,
+saturation or send rate. See [Performance](#-performance).
+
 ```bash
 ./mpv_ambilight.py --style cinema movie.mkv
 ./mpv_ambilight.py --style fast --brightness 70 movie.mkv
@@ -333,11 +343,13 @@ systemctl --user enable --now wiz-ambilight.service
 <sub>Everything inside the dashed computer boundary runs as your user. The bulbs are the only untrusted peer; no component talks to the internet.</sub>
 
 **Components and data.** mpv decodes the video and a Lua script samples it,
-writing zone colors to `state-<pid>.json` at 15 writes/s. The sync process
-reads that file, fades the colors and sends `setPilot` datagrams to the bulbs.
-The optional panel serves its own HTML/CSS/JS from `127.0.0.1:8765`, writes
-`lights.json` and `scenes.json`, and starts or stops the sync with an argument
-list. The [Mermaid source](docs/architecture.mmd) is next to the SVG.
+writing zone colors to `state-<pid>.json` at the capture rate (8–15 fps by
+default). The sync process reads that file, fades the colors and sends
+`setPilot` datagrams to the bulbs. It also rewrites `stats-<pid>.json` once a
+second so the panel can graph CPU, RAM and WiZ UDP traffic. The optional panel
+serves its own HTML/CSS/JS from `127.0.0.1:8765`, writes `lights.json` and
+`scenes.json`, and starts or stops the sync with an argument list. The
+[Mermaid source](docs/architecture.mmd) is next to the SVG.
 
 **Exposure.** The panel is the only listening socket in the project, and only
 while `--gui` runs. The sync process opens no socket for inbound traffic: its
@@ -352,12 +364,13 @@ The same flow, step by step:
  mpv ──────────────────────────────────────────────┐
                                                     ▼
                                    lua/wiz_ambilight.lua
-                                   • samples an 80-column grid
+                                   • samples a resolution-aware grid
+                                     (48-120 columns)
                                    • crops letterbox/pillarbox bars
                                    • averages edge / third zones
                                                     │
                                                     │ tiny JSON state file
-                                                    │ (~15 writes/s)
+                                                    │ (8-15 writes/s)
                                                     ▼
                             $XDG_RUNTIME_DIR/wiz-ambilight/state*.json
                                                     │
@@ -389,16 +402,61 @@ leave a bulb stuck on an old frame.
 
 ![Performance banner: fps is the cost — use --fps 8 for 4K](assets/performance.png)
 
-The expensive part is `screenshot-raw`, which copies a full video frame into
-Lua. At 1080p and 15 fps that is fine on a normal desktop. For 4K, try:
+The expensive part is still `screenshot-raw`: mpv copies a frame into Lua for
+every capture. Two settings control that cost, and they stay independent:
+
+- the **style** picks the look — fade, edge band, saturation and send rate.
+  Its fps is the capture rate the rest of the pipeline starts from.
+- the **sampling profile** picks how much of each frame is copied: window or
+  source, columns, block averaging and an fps cap.
+
+`scaled` capture asks mpv for the frame as it appears in the window instead of
+the decoded source. A 4K movie in a 1280×720 window copies one ninth of the
+pixels, and the bulbs cannot resolve the difference. mpv 0.42 returns the
+window size (1280×721 in testing); if a video output refuses, the script falls
+back to the source frame once and keeps going.
+
+| profile | capture | columns | block | fps cap | feel |
+|---|---|---|---|---|---|
+| `auto` (default) | `scaled` | 80 / 96 / 112 | 1×1 / 2×2 | style / 12 / 8 | picks the row from the captured height (≤1200 / ≤1600 / above) |
+| `lean` | `scaled` | 48 | 1×1 | 10 | slow laptops and big 4K windows |
+| `balanced` | `scaled` | 80 | 2×2 | 15 | slightly softer, less sensor noise |
+| `quality` | `source` | 120 | 3×3 | 30 | big TV and a strong GPU; copies the full frame |
+| `manual` | any | 24–240 | 1–4 | 1–30 | your call |
+
+`auto` reads the size of the frame it actually got and picks the row above. On
+a 1080p window it keeps the original 80-column, 1×1 sampling and the style's
+own rate, so nothing gets softer on a normal desktop and `--style raw` still
+runs at 24 fps. A 4K capture drops to 8 fps instead of melting the CPU.
 
 ```bash
-./mpv_ambilight.py --fps 8 movie.mkv
+# the default: adapt to the captured resolution
+./mpv_ambilight.py movie.mkv
+
+# explicit presets
+./mpv_ambilight.py --sampling lean movie.mkv
+./mpv_ambilight.py --sampling quality --style cinema movie.mkv
+
+# every knob by hand
+./mpv_ambilight.py --sampling manual --fps 12 --sample-grid 96 \
+  --sample-block 2 --capture source movie.mkv
 ```
 
-Everything else — the grid sampling, color math and UDP sends — is cheap. If
-mpv stutters, lower `--fps` first; `--send-hz` only affects network traffic,
-not decode.
+An explicit `--fps` or `--capture` wins over the profile, so
+`--sampling lean --fps 15` keeps lean's 48 columns and raises its cap. In the
+panel, **Sampling** sits next to **Style preset**; both are saved in
+`lights.json` and apply on the next start.
+
+Everything else — grid sampling, color math and UDP sends — is cheap. If mpv
+stutters, pick `lean` (or lower `--fps`); `--send-hz` only affects network
+traffic, not decode.
+
+The strip under the cards reports what the service costs. CPU and RSS cover
+the panel and its sync child, read from `/proc` (`n/a` elsewhere); WiZ UDP
+counts real `setPilot` datagrams per second from `stats-<pid>.json`, so dry
+runs and demo mode stay at zero. Attach mode cannot attribute an mpv you
+started yourself, so the graph covers the panel, the sync and a player it
+launched.
 
 ## 🩺 Troubleshooting
 
@@ -411,7 +469,7 @@ not decode.
 | **Buttons do nothing / “No reply from …”** | The panel names the bulbs that did not answer. Compare **Panel network** in the panel with the bulb IPs: if it says `192.168.1.5 outside this subnet`, the computer is on a different network (hotspot, VPN, Ethernet bridge down). Join the bulbs' Wi-Fi, or check `ip -brief addr` and the router's client list. |
 | **`mpv could not grab frames`** | Your VO does not support raw screenshots. Try `-- --vo=gpu` or `-- --screenshot-sw=yes`. Do not use `--vo=null` or `--no-video`. |
 | **Colors look wrong / sides swapped** | Reinstall the Lua script (`./mpv_ambilight.py --install-script --force`), restart mpv, and check the order of `--lights` / `--zones`. |
-| **Stutter on 4K** | Lower `--fps` (e.g. `--fps 6`) or use `--style cinema`. |
+| **Stutter on 4K** | Use `--sampling lean`, or lower `--fps` (e.g. `--fps 6`). |
 | **Bulbs lag behind the picture** | Use `--style reactive` (or `--style fast`) and `--smooth 40 --send-hz 24`. If your bulbs still lag, try `--send-hz 15`; some firmware coalesces very fast updates. |
 | **Cuts feel soft** | Use `--style reactive`; large jumps snap automatically, but a lower `--smooth` makes small transitions faster too. |
 | **Bulbs keep the last color after quitting** | Expected. Use `--on-exit off` if you want them off. |
