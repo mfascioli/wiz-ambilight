@@ -208,8 +208,11 @@ class DemoPanelTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.old = os.environ.get("WIZ_AMBILIGHT_GUI_CONFIG")
         self.old_scenes = os.environ.get("WIZ_AMBILIGHT_SCENES_CONFIG")
+        self.old_runtime = os.environ.get("XDG_RUNTIME_DIR")
         os.environ["WIZ_AMBILIGHT_GUI_CONFIG"] = str(Path(self.tmp.name) / "lights.json")
         os.environ["WIZ_AMBILIGHT_SCENES_CONFIG"] = str(Path(self.tmp.name) / "scenes.json")
+        # Keep Session.adopt() away from the panel the developer may be running.
+        os.environ["XDG_RUNTIME_DIR"] = self.tmp.name
 
     def tearDown(self):
         if self.old is None:
@@ -220,6 +223,10 @@ class DemoPanelTests(unittest.TestCase):
             os.environ.pop("WIZ_AMBILIGHT_SCENES_CONFIG", None)
         else:
             os.environ["WIZ_AMBILIGHT_SCENES_CONFIG"] = self.old_scenes
+        if self.old_runtime is None:
+            os.environ.pop("XDG_RUNTIME_DIR", None)
+        else:
+            os.environ["XDG_RUNTIME_DIR"] = self.old_runtime
         self.tmp.cleanup()
 
     def test_snapshot_shape(self):
@@ -579,6 +586,19 @@ class HttpTests(unittest.TestCase):
         self.assertNotIn(b"__WIZ_TOKEN__", body)
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertIn("default-src 'none'", response.headers["Content-Security-Policy"])
+        self.assertIn("font-src 'self'", response.headers["Content-Security-Policy"])
+
+    def test_serves_the_bundled_font(self):
+        with self.request("/fonts/Merriweather-Bold.ttf") as response:
+            body = response.read()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.headers["Content-Type"], "font/ttf")
+        self.assertGreater(len(body), 50_000)
+
+    def test_stylesheet_uses_the_mpv_config_palette(self):
+        with self.request("/style.css") as response:
+            css = response.read().decode()
+        self.assertIn("--amber: #fcbe11", css)
 
     def test_config_post(self):
         with self.request(

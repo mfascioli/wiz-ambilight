@@ -1090,6 +1090,7 @@ STATIC_FILES = {
     "/index.html": ("index.html", "text/html; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/fonts/Merriweather-Bold.ttf": ("fonts/Merriweather-Bold.ttf", "font/ttf"),
 }
 
 
@@ -1141,8 +1142,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'none'; script-src 'self'; style-src 'self'; "
-            "img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
-            "form-action 'none'; frame-ancestors 'none'",
+            "font-src 'self'; img-src 'self' data:; connect-src 'self'; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
         )
         self.end_headers()
         self.wfile.write(body)

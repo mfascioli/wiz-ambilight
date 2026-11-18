@@ -28,11 +28,29 @@
 </div>
 
 <main>
+  <section class="quickstart" aria-label="Quick start">
+    <div class="quick-step">
+      <i>Step 01</i>
+      <b>Scan the LAN</b>
+      <span>Press <strong>Scan network</strong>. Every bulb that answers appears with its model and IP.</span>
+    </div>
+    <div class="quick-step">
+      <i>Step 02</i>
+      <b>Choose your lights</b>
+      <span>Give each bulb a name and a zone, then include only the ones you want.</span>
+    </div>
+    <div class="quick-step">
+      <i>Step 03</i>
+      <b>Sync or control</b>
+      <span>Start Ambilight with mpv, or use <strong>Direct control</strong> for power, color and scenes.</span>
+    </div>
+  </section>
+
   <section class="card lights-card">
     <div class="card-head">
-      <div>
+      <div class="card-title">
+        <span class="step">01</span>
         <h2>Lights</h2>
-        <p class="hint">Pick which bulbs take part. Names are stored locally.</p>
       </div>
       <div class="head-actions">
         <button class="ghost small" id="enableAllBtn" title="Include every known light">All</button>
@@ -40,6 +58,7 @@
         <button class="ghost" id="scanBtn" title="Probe broadcast and every address on the local /24">Scan network</button>
       </div>
     </div>
+    <p class="hint tight">Grey bulbs did not answer the last probe. Names are stored only on this computer.</p>
     <div class="lua-banner hidden" id="luaBanner">
       <span id="luaText"></span>
       <button class="ghost small" id="installBtn">Install script</button>
@@ -51,9 +70,39 @@
     </p>
   </section>
 
+  <section class="card session-card">
+    <div class="card-head">
+      <div class="card-title">
+        <span class="step">02</span>
+        <h2>Session</h2>
+      </div>
+      <span class="pill" id="sessionPill">stopped</span>
+    </div>
+    <p class="meta-line" id="sessionDetail">No sync running.</p>
+    <div class="modes" role="group" aria-label="Sync mode">
+      <button class="mode" data-mode="attach">Attach to mpv</button>
+      <button class="mode" data-mode="launch">Launch a video</button>
+    </div>
+    <div class="field hidden" id="mediaField">
+      <label for="mediaInput">Video file</label>
+      <div class="row">
+        <input id="mediaInput" type="text" placeholder="/path/to/movie.mkv" spellcheck="false">
+        <button class="ghost" id="browseBtn" title="Choose a file">Browse…</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="primary" id="startBtn">Start ambilight</button>
+      <button class="ghost" id="stopBtn" disabled>Stop</button>
+    </div>
+    <p class="hint" id="modeHint"></p>
+  </section>
+
   <section class="card control-card">
     <div class="card-head">
-      <h2>Direct control</h2>
+      <div class="card-title">
+        <span class="step">03</span>
+        <h2>Direct control</h2>
+      </div>
       <span class="pill" id="targetPill">all lights</span>
     </div>
     <p class="hint tight" id="controlNote">Control bulbs without starting Ambilight.</p>
@@ -84,8 +133,8 @@
     <div class="field">
       <label for="controlHex">Color</label>
       <div class="color-row">
-        <input type="color" id="controlColor" value="#ffb44d" aria-label="Pick a color">
-        <input type="text" id="controlHex" class="hex-input" value="#ffb44d" maxlength="7" spellcheck="false" aria-label="Hex color">
+        <input type="color" id="controlColor" value="#fcbe11" aria-label="Pick a color">
+        <input type="text" id="controlHex" class="hex-input" value="#fcbe11" maxlength="7" spellcheck="false" aria-label="Hex color">
         <button class="ghost small" id="applyColorBtn">Apply</button>
       </div>
     </div>
@@ -102,42 +151,13 @@
     </div>
   </section>
 
-  <section class="card log-card">
-    <div class="card-head">
-      <h2>Activity</h2>
-      <button class="ghost small" id="clearLog">Clear</button>
-    </div>
-    <pre class="log" id="log" aria-live="polite"></pre>
-  </section>
-
   <aside class="side">
     <section class="card">
       <div class="card-head">
-        <h2>Session</h2>
-        <span class="pill" id="sessionPill">stopped</span>
-      </div>
-      <p class="meta-line" id="sessionDetail">No sync running.</p>
-      <div class="modes" role="group" aria-label="Sync mode">
-        <button class="mode" data-mode="attach">Attach to mpv</button>
-        <button class="mode" data-mode="launch">Launch a video</button>
-      </div>
-      <div class="field hidden" id="mediaField">
-        <label for="mediaInput">Video file</label>
-        <div class="row">
-          <input id="mediaInput" type="text" placeholder="/path/to/movie.mkv" spellcheck="false">
-          <button class="ghost" id="browseBtn" title="Choose a file">Browse…</button>
+        <div class="card-title">
+          <span class="step">04</span>
+          <h2>Look</h2>
         </div>
-      </div>
-      <div class="actions">
-        <button class="primary" id="startBtn">Start ambilight</button>
-        <button class="ghost" id="stopBtn" disabled>Stop</button>
-      </div>
-      <p class="hint" id="modeHint"></p>
-    </section>
-
-    <section class="card">
-      <div class="card-head">
-        <h2>Look</h2>
       </div>
       <div class="field">
         <label for="styleSelect">Style preset</label>
@@ -164,7 +184,10 @@
 
     <section class="card scenes-card">
       <div class="card-head">
-        <h2>My scenes</h2>
+        <div class="card-title">
+          <span class="step">05</span>
+          <h2>My scenes</h2>
+        </div>
         <span class="pill" id="scenePill">0</span>
       </div>
       <div class="field">
@@ -178,6 +201,17 @@
       <p class="hint">Plain JSON in <code>~/.config/wiz-ambilight/scenes.json</code>, so scripts can generate scenes too.</p>
     </section>
   </aside>
+
+  <section class="card log-card">
+    <div class="card-head">
+      <div class="card-title">
+        <span class="step">06</span>
+        <h2>Activity</h2>
+      </div>
+      <button class="ghost small" id="clearLog">Clear</button>
+    </div>
+    <pre class="log" id="log" aria-live="polite"></pre>
+  </section>
 </main>
 
 <footer class="footer">

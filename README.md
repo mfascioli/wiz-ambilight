@@ -138,6 +138,23 @@ lists every bulb it finds, and lets you:
   <em>Direct control: target one bulb or all, send hex colors, and reuse saved scenes.</em>
 </p>
 
+## Design
+
+The panel borrows its visual language from
+[mpv-config](https://github.com/mfascioli/mpv-config): **amber `#FCBE11`**,
+`#1F1F1F` hairlines, a charcoal HUD grid, bracket corners and Merriweather
+Bold for headings. Merriweather ships in `web/fonts/` under the SIL OFL, so
+the panel needs no network and no installed fonts.
+
+The flow is numbered on screen — **01 Lights → 02 Session → 03 Direct
+control → 04 Look → 05 Scenes → 06 Activity** — with a three-step quick
+start at the top, so the first run does not require reading this README.
+
+[`tests/test_design.py`](tests/test_design.py) pins the design: the exact
+amber and outline tokens, square HUD corners, the bundled font and licence,
+and the numbered reading order. A restyle that drifts back to a generic
+dashboard fails CI.
+
 Useful flags:
 
 | flag | meaning |
@@ -411,6 +428,7 @@ Repository layout:
 ├── mpv_ambilight.py        # CLI, discovery, fade loop, UDP sender
 ├── webui.py                # local web panel server and config
 ├── web/                    # panel HTML/CSS/JS (no build step)
+│   └── fonts/              # bundled Merriweather Bold + SIL OFL licence
 ├── lua/wiz_ambilight.lua   # runs inside mpv, writes zone colors as JSON
 ├── tests/                  # dependency-free unit tests
 ├── docs/gui.png            # panel screenshot used by this README
@@ -428,6 +446,12 @@ Repository layout:
   first video/Ambilight experiments.
 - This fork focuses on the mpv Ambilight path: frame sampling in Lua, a fade
   loop in Python, layouts, styles, attach mode and tests.
+- Panel design language borrowed from
+  [mpv-config](https://github.com/mfascioli/mpv-config): amber `#FCBE11`,
+  charcoal HUD grid and bracket corners.
+- [Merriweather](https://github.com/EbenSorkin/Merriweather) by Eben Sorkin,
+  bundled in `web/fonts/` under the
+  [SIL Open Font License](web/fonts/Merriweather-OFL.txt).
 - Built on [mpv](https://mpv.io/) and the WiZ local API.
 
 Both the original work and these changes are released under the
