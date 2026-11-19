@@ -65,8 +65,9 @@ DEFAULT_CONFIG = {
     "lights": {},
 }
 
+# RFC 5737 TEST-NET-1: documentation addresses, never routed on a LAN.
 DEMO_LIGHTS = {
-    "10.0.0.11": {
+    "192.0.2.11": {
         "model": "ESP24_SHRGBC_01",
         "mac": "d8a01154f818",
         "state": True,
@@ -76,7 +77,7 @@ DEMO_LIGHTS = {
         "g": 190,
         "b": 120,
     },
-    "10.0.0.12": {
+    "192.0.2.12": {
         "model": "ESP24_SHRGBC_01",
         "mac": "d8a01154fba8",
         "state": True,
@@ -86,7 +87,7 @@ DEMO_LIGHTS = {
         "g": 200,
         "b": 255,
     },
-    "10.0.0.13": {
+    "192.0.2.13": {
         "model": "ESP15_SHTW_01",
         "mac": "d8a01154a1c2",
         "state": False,
@@ -953,6 +954,8 @@ class Panel:
             "capture_fps": number("capture_fps"),
             "capture_w": number("w"),
             "capture_h": number("h"),
+            "video_w": number("vw"),
+            "video_h": number("vh"),
             "capture": stats.get("capture") if stats else None,
         }
 

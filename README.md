@@ -112,11 +112,15 @@ It opens `http://127.0.0.1:8765/` in your browser. The panel scans the LAN,
 lists every bulb it finds, and lets you:
 
 - choose which bulbs take part and name them (`Sofa`, `TV wall`, …);
-- see each bulb's model, firmware, IP, online state and **effective zone**;
+- see each bulb's IP, online state and **effective zone** — the model and
+  firmware stay in a tooltip on the IP, out of the way;
 - assign a zone per bulb or pick a layout, style and brightness;
 - choose a **sampling profile** — auto adapts the grid and capture rate to the
   resolution; lean, balanced and quality trade CPU for detail; manual exposes
   every knob — while the style keeps controlling the look;
+- read **Look** as a three-stage signal path — **sample → color → send** —
+  with every value labelled, so the read rate is never confused with the grid
+  size;
 - watch **CPU, RAM and WiZ UDP** traffic for the panel and its sync process in
   the strip under the cards;
 - see a **miniature of the video frame** that highlights the region each bulb
@@ -138,7 +142,7 @@ lists every bulb it finds, and lets you:
   the first screen is just lights, session and look.
 
 ![The panel in demo mode: three bulbs assigned to thirds, the auto sampling profile and the resource strip](docs/gui.png)
-<sub>Demo mode with three bulbs on thirds and auto sampling: the zone preview shows what each bulb samples, and the strip under the cards tracks CPU, RAM and WiZ UDP traffic for the panel and its sync child.</sub>
+<sub>Demo mode with three bulbs on thirds: Lights keeps its own Zone map column, Session and Look stack on the left while Direct control and My scenes stack on the right, and the strip tracks CPU, RAM and WiZ UDP traffic for the panel and its sync child.</sub>
 
 Useful flags:
 
@@ -237,9 +241,9 @@ Bold for headings. Merriweather ships in `web/fonts/` under the SIL OFL, so
 the panel needs no network and no installed fonts.
 
 The flow is numbered on screen — **01 Lights → 02 Session → 03 Direct
-control → 04 Look → 05 Scenes → 06 Activity**. There is no intro strip: the
-first card is the lights list, the header is short, and the heavier controls
-stay collapsed.
+control → 04 Look → 05 My scenes → 06 Activity**. There is no intro strip:
+the first card is the lights list and keeps its own **Zone map** column, the
+header is short, and the heavier controls stay collapsed.
 
 [`tests/test_design.py`](tests/test_design.py) pins the design: the exact
 amber and outline tokens, square HUD corners, the bundled font and licence,
@@ -465,7 +469,7 @@ launched.
 | symptom | fix |
 |---|---|
 | **No lights found** | `./mpv_ambilight.py --discover`; check that the bulbs and computer are on the same VLAN and that client isolation / guest Wi-Fi is off. Pin them with `--lights ip1,ip2` or `WIZ_LIGHTS`. |
-| **Only some bulbs are found** | Press **Scan network** again: a manual scan probes the broadcast three times and then every address on the local `/24`, which finds bulbs that ignore broadcast. If one is still missing, it is probably on another VLAN/guest network or outside that subnet; pin it with `--lights ip1,ip2`. |
+| **Only some bulbs are found** | Press **Scan network** again: a manual scan probes every address on the local `/24` and the broadcast three times, which finds bulbs that ignore broadcast. If one is still missing, it is probably on another VLAN/guest network or outside that subnet; pin it with `--lights ip1,ip2`. |
 | **Buttons do nothing / “No reply from …”** | The panel names the bulbs that did not answer. Compare **Panel network** in the panel with the bulb IPs: if it says `192.168.1.5 outside this subnet`, the computer is on a different network (hotspot, VPN, Ethernet bridge down). Join the bulbs' Wi-Fi, or check `ip -brief addr` and the router's client list. |
 | **`mpv could not grab frames`** | Your VO does not support raw screenshots. Try `-- --vo=gpu` or `-- --screenshot-sw=yes`. Do not use `--vo=null` or `--no-video`. |
 | **Colors look wrong / sides swapped** | Reinstall the Lua script (`./mpv_ambilight.py --install-script --force`), restart mpv, and check the order of `--lights` / `--zones`. |

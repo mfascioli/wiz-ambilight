@@ -331,12 +331,21 @@ def discover_lights(timeout: float = 2.2, deep: bool = False) -> dict:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     found = {}
-    deadline = time.monotonic() + timeout
-    next_probe = 0.0
-    probes_left = 3
-    quiet_deadline = None
-    swept = not hosts
     try:
+        # Deep mode probes every host in the local /24. Resolving ARP for 250+
+        # addresses can take seconds, so the sweep runs before the listen
+        # window starts; otherwise the timeout expires while we are still
+        # sending and only the first queued reply is read.
+        for host in hosts:
+            try:
+                sock.sendto(payload, (host, DEFAULT_PORT))
+            except OSError:
+                pass
+
+        deadline = time.monotonic() + timeout
+        next_probe = 0.0
+        probes_left = 3
+        quiet_deadline = None
         while True:
             now = time.monotonic()
             if now >= deadline:
@@ -350,14 +359,6 @@ def discover_lights(timeout: float = 2.2, deep: bool = False) -> dict:
                         pass
                 probes_left -= 1
                 next_probe = now + 0.35
-
-            if not swept:
-                for host in hosts:
-                    try:
-                        sock.sendto(payload, (host, DEFAULT_PORT))
-                    except OSError:
-                        pass
-                swept = True
 
             wait_until = deadline
             if quiet_deadline is not None:
@@ -757,12 +758,18 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
     stats_packets = sender.packets_sent
     stats_frames = 0
     capture_size = (None, None)
+    capture_video = (None, None)
     capture_source = None
     capture_grid = None
+    last_state_at = None
 
     def write_stats(now: float) -> None:
         nonlocal last_stats, stats_bytes, stats_packets, stats_frames
         elapsed = max(1e-6, now - last_stats)
+        # mpv writes a frame or a 0.5 s heartbeat while it is alive. Once it
+        # closes, the state file goes quiet; drop the size instead of showing
+        # the resolution of a movie that is no longer loaded.
+        fresh = last_state_at is not None and (now - last_state_at) < 3.0
         payload = {
             "pid": pid,
             "at": time.time(),
@@ -770,9 +777,11 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
             "tx_packets": sender.packets_sent,
             "tx_bps": max(0.0, sender.bytes_sent - stats_bytes) / elapsed,
             "capture_fps": stats_frames / elapsed,
-            "w": capture_size[0],
-            "h": capture_size[1],
-            "capture": capture_source,
+            "w": capture_size[0] if fresh else None,
+            "h": capture_size[1] if fresh else None,
+            "vw": capture_video[0] if fresh else None,
+            "vh": capture_video[1] if fresh else None,
+            "capture": capture_source if fresh else None,
             "grid": capture_grid,
             "sampling": getattr(args, "sampling", "auto"),
         }
@@ -807,7 +816,12 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
                 state = read_state(state_path)
                 if isinstance(state, dict) and state.get("active"):
                     if isinstance(state.get("w"), int) and isinstance(state.get("h"), int):
-                        capture_size = (state["w"], state["h"])
+                        if state["w"] > 0 and state["h"] > 0:
+                            capture_size = (state["w"], state["h"])
+                    if isinstance(state.get("vw"), int) and isinstance(state.get("vh"), int):
+                        if state["vw"] > 0 and state["vh"] > 0:
+                            capture_video = (state["vw"], state["vh"])
+                    last_state_at = now
                     if isinstance(state.get("capture"), str):
                         capture_source = state["capture"]
                     if isinstance(state.get("grid"), int):

@@ -27,6 +27,7 @@ const refs = {
   enableAllBtn: document.getElementById("enableAllBtn"),
   enableNoneBtn: document.getElementById("enableNoneBtn"),
   lights: document.getElementById("lights"),
+  lightFilter: document.getElementById("lightFilter"),
   lightsEmpty: document.getElementById("lightsEmpty"),
   targetSelect: document.getElementById("targetSelect"),
   targetPill: document.getElementById("targetPill"),
@@ -64,9 +65,10 @@ const refs = {
   browseBtn: document.getElementById("browseBtn"),
   modeHint: document.getElementById("modeHint"),
   styleSelect: document.getElementById("styleSelect"),
-  styleHint: document.getElementById("styleHint"),
   samplingSelect: document.getElementById("samplingSelect"),
-  samplingHint: document.getElementById("samplingHint"),
+  sampleStage: document.getElementById("sampleStage"),
+  colorStage: document.getElementById("colorStage"),
+  sendStage: document.getElementById("sendStage"),
   samplingManual: document.getElementById("samplingManual"),
   samplingFps: document.getElementById("samplingFps"),
   samplingFpsOut: document.getElementById("samplingFpsOut"),
@@ -74,6 +76,7 @@ const refs = {
   samplingBlock: document.getElementById("samplingBlock"),
   samplingCapture: document.getElementById("samplingCapture"),
   layoutSelect: document.getElementById("layoutSelect"),
+  layoutHint: document.getElementById("layoutHint"),
   brightness: document.getElementById("brightness"),
   brightnessOut: document.getElementById("brightnessOut"),
   dryRun: document.getElementById("dryRun"),
@@ -208,6 +211,7 @@ function buildCard(light) {
   const meta = el("div", "meta");
   const online = el("span", "online-dot");
   const ipLabel = el("span", "ip");
+  ipLabel.tabIndex = 0;
   const modelLabel = el("span", "model");
   const hexChip = el("button", "hex-chip");
   hexChip.type = "button";
@@ -323,11 +327,14 @@ function updateCard(card, light) {
   card.online.className = `online-dot ${light.online ? "up" : "down"}`;
   card.online.title = light.online ? "Online" : "Offline";
   card.ipLabel.textContent = light.ip;
+  card.ipLabel.dataset.hw = [light.model || "unknown model", light.firmware && `fw ${light.firmware}`]
+    .filter(Boolean)
+    .join(" · ");
+  card.ipLabel.setAttribute("aria-label", `${light.ip} · ${card.ipLabel.dataset.hw}`);
   card.modelLabel.textContent = light.model || "unknown model";
+  card.root.dataset.search = [light.name, light.ip, light.model].filter(Boolean).join(" ").toLowerCase();
   card.extraLabel.textContent = light.online
-    ? [light.firmware && `fw ${light.firmware}`, light.state ? `on · ${light.dimming ?? "?"}%` : "off"]
-        .filter(Boolean)
-        .join(" · ")
+    ? (light.state ? `on · ${light.dimming ?? "?"}%` : "off")
     : "offline";
   card.zonePreview.dataset.zone = light.effective_zone;
   card.zonePreview.title = `Samples the ${zoneLabel(light.effective_zone)} of the video`;
@@ -386,6 +393,26 @@ function renderLights(lights, zones) {
   const online = lights.filter((light) => light.online).length;
   refs.lightsPill.textContent = lights.length ? `${online}/${lights.length}` : "0";
   refs.lightsPill.classList.toggle("warn", lights.length > 0 && online < lights.length);
+  applyLightFilter();
+}
+
+/* Client-side only: the panel already knows every bulb it may talk to. */
+function applyLightFilter() {
+  const needle = (refs.lightFilter?.value || "").trim().toLowerCase();
+  let shown = 0;
+  for (const card of state.cards.values()) {
+    const match = !needle || (card.root.dataset.search || "").includes(needle);
+    card.root.classList.toggle("hidden", !match);
+    if (match) shown += 1;
+  }
+  if (!refs.lightsEmpty) return;
+  const empty = state.cards.size === 0;
+  if (needle && !empty && shown === 0) {
+    refs.lightsEmpty.textContent = `No light matches “${refs.lightFilter.value.trim()}”.`;
+    refs.lightsEmpty.classList.remove("hidden");
+  } else {
+    refs.lightsEmpty.classList.toggle("hidden", !empty);
+  }
 }
 
 // --------------------------------------------------------------------- panels
@@ -445,20 +472,51 @@ function fillSelect(select, values) {
 }
 
 const SAMPLING_OPTIONS = [
-  ["auto", "Auto (by resolution)"],
-  ["lean", "Lean — 48 cols · 10 fps"],
-  ["balanced", "Balanced — 80 cols · 15 fps"],
-  ["quality", "Quality — 120 cols · source"],
-  ["manual", "Manual"],
+  ["auto", "Auto — follows the video size"],
+  ["lean", "Lean — lightest read"],
+  ["balanced", "Balanced — middle ground"],
+  ["quality", "Quality — most detail"],
+  ["manual", "Manual — pick every knob"],
 ];
 
-const SAMPLING_HINTS = {
-  auto: "Scaled capture; grid and fps follow the capture size.",
-  lean: "Scaled capture, 48 columns, single-pixel samples, max 10 fps.",
-  balanced: "Scaled capture, 80 columns, 2×2 averages, max 15 fps.",
-  quality: "Source capture, 120 columns, 3×3 averages, no extra fps cap.",
-  manual: "Your grid, block size, capture and fps. Style still controls fade and color.",
+/* Mirrors SAMPLING_PROFILES in mpv_ambilight.py, minus the numbers the panel
+   shows in the spec strip: the strip explains what each preset actually reads. */
+const SAMPLING_PROFILES = {
+  lean: { grid: 48, block: 1, capture: "scaled", cap: 10 },
+  balanced: { grid: 80, block: 2, capture: "scaled", cap: 15 },
+  quality: { grid: 120, block: 3, capture: "source", cap: 30 },
 };
+
+/* Mirrors auto_sampling() in lua/wiz_ambilight.lua: the cap follows the
+   height of the frame that was actually captured, not the video's height. */
+function autoSampling(height) {
+  if (!height) return null;
+  if (height <= 1200) return { grid: 80, block: 1, capture: "scaled", cap: 30 };
+  if (height <= 1600) return { grid: 96, block: 2, capture: "scaled", cap: 12 };
+  return { grid: 112, block: 2, capture: "scaled", cap: 8 };
+}
+
+function renderStage(list, rows) {
+  if (!list) return;
+  while (list.children.length < rows.length) {
+    const row = el("div", "stage-row");
+    row.append(el("dt", "", ""), el("dd", "", ""));
+    list.append(row);
+  }
+  while (list.children.length > rows.length) list.lastElementChild.remove();
+  rows.forEach(([label, value, title], index) => {
+    const row = list.children[index];
+    const [term, detail] = row.children;
+    if (term.textContent !== label) term.textContent = label;
+    if (detail.textContent !== value) detail.textContent = value;
+    row.title = title || "";
+  });
+}
+
+function formatFps(value) {
+  const rounded = Math.round(value * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)} fps`;
+}
 
 function fillSamplingSelect() {
   if (refs.samplingSelect.options.length === SAMPLING_OPTIONS.length) return;
@@ -486,15 +544,64 @@ function renderSettings(snapshot) {
   refs.dryRun.checked = Boolean(config.dry_run);
   refs.lookPill.textContent = config.style;
 
-  const details = snapshot.style_details?.[config.style];
-  refs.styleHint.textContent = details
-    ? `${details.fps} fps capture · ${details.smooth ? `${details.smooth} ms fade` : "no fade"} · ` +
-      `${details.send_hz} Hz output · ${Math.round(details.edge * 100)}% edge`
-    : "";
+  const details = snapshot.style_details?.[config.style] || {};
+  const styleFps = Number(details.fps) || 0;
+  const smooth = Number(details.smooth);
+  const saturation = Number(details.saturation);
+  const sendHz = Number(details.send_hz);
+  const edge = Number(details.edge);
 
   const manual = config.sampling === "manual";
+  const captureHeight = Number(snapshot.resources?.capture_h) || 0;
+  const profile = manual
+    ? {
+        grid: Number(config.sampling_grid) || 0,
+        block: Number(config.sampling_block) || 0,
+        capture: config.sampling_capture === "source" ? "source" : "scaled",
+        cap: styleFps,
+      }
+    : SAMPLING_PROFILES[config.sampling]
+      || autoSampling(captureHeight)
+      || { grid: 0, block: 0, capture: "scaled", cap: styleFps };
+  const readFps = manual
+    ? Number(config.sampling_fps) || styleFps
+    : styleFps
+      ? Math.min(styleFps, profile.cap || styleFps)
+      : profile.cap;
+  const autoSize = config.sampling === "auto" && !captureHeight;
+
+  renderStage(refs.sampleStage, [
+    ["Frame", profile.capture === "source" ? "Full" : "Scaled",
+      "Scaled reads the mpv window; full reads the decoded source frame"],
+    ["Columns", profile.grid ? String(profile.grid) : "auto",
+      "Vertical slices read from each frame; auto picks 80, 96 or 112 from the captured height"],
+    ["Avg pixels", profile.block ? `${profile.block}×${profile.block} px` : "auto",
+      "Pixels averaged per sample; larger blocks are softer and cheaper"],
+    ["Rate", !readFps ? "—" : autoSize ? `≤ ${formatFps(readFps)}` : formatFps(readFps),
+      "Frames read per second; presets cap the style target, manual sets it directly"],
+  ]);
+
+  renderStage(refs.colorStage, [
+    ["Fade", Number.isFinite(smooth) ? (smooth > 0 ? `${Math.round(smooth)} ms` : "off") : "—",
+      "Time to blend from the previous color to the new one; off means instant jumps"],
+    ["Saturation", Number.isFinite(saturation) ? `${saturation.toFixed(2)}×` : "—",
+      "Color boost applied to each sample; 1× leaves it unchanged"],
+  ]);
+
+  renderStage(refs.sendStage, [
+    ["Rate", Number.isFinite(sendHz) ? `${Number(sendHz.toFixed(1))}/s` : "—",
+      "UDP datagrams sent to the bulbs per second"],
+    ["Brightness", `${config.brightness}%`,
+      "Cap applied to every bulb while the sync runs"],
+  ]);
+
+  refs.layoutHint.textContent = Number.isFinite(edge) && edge > 0
+    ? `Edge band ${Math.round(edge * 100)}% for edge zones.`
+    : "";
+  refs.layoutHint.title =
+    "Fraction of the frame read by left, right, top and bottom zones when the layout uses them";
+
   refs.samplingManual.classList.toggle("hidden", !manual);
-  refs.samplingHint.textContent = SAMPLING_HINTS[config.sampling] || "";
   if (document.activeElement !== refs.samplingFps) {
     refs.samplingFps.value = String(config.sampling_fps);
     refs.samplingFpsOut.value = String(config.sampling_fps);
@@ -780,10 +887,19 @@ function renderResources(snapshot) {
   refs.sparkNet.setAttribute("d", sparkPath(state.resourceHistory.net, true));
 
   const bits = [snapshot.session.running ? "panel + sync" : "panel only"];
-  if (typeof res.capture_w === "number" && typeof res.capture_h === "number") {
-    bits.push(`${Math.round(res.capture_w)}×${Math.round(res.capture_h)}`);
+  const capW = typeof res.capture_w === "number" ? Math.round(res.capture_w) : null;
+  const capH = typeof res.capture_h === "number" ? Math.round(res.capture_h) : null;
+  const srcW = typeof res.video_w === "number" ? Math.round(res.video_w) : null;
+  const srcH = typeof res.video_h === "number" ? Math.round(res.video_h) : null;
+  if (srcW && srcH) {
+    bits.push(`${srcW}×${srcH}`);
+    if (capW && capH && (capW !== srcW || capH !== srcH)) bits.push(`cap ${capW}×${capH}`);
+  } else if (capW && capH) {
+    bits.push(`${capW}×${capH}`);
   }
-  if (typeof res.capture_fps === "number") bits.push(`${res.capture_fps.toFixed(1)} fps`);
+  if (typeof res.capture_fps === "number" && res.capture_fps > 0) {
+    bits.push(`${res.capture_fps.toFixed(1)} fps`);
+  }
   refs.resNote.textContent = bits.join(" · ");
   refs.resources.title = res.available
     ? `Panel and sync tree · ${res.processes} process${res.processes === 1 ? "" : "es"} · ` +
@@ -875,6 +991,7 @@ refs.scanBtn.addEventListener("click", async () => {
 
 refs.enableAllBtn.addEventListener("click", () => setAllEnabled(true));
 refs.enableNoneBtn.addEventListener("click", () => setAllEnabled(false));
+refs.lightFilter?.addEventListener("input", applyLightFilter);
 refs.startBtn.addEventListener("click", () => action("/api/start", {}, "Ambilight started", refs.startBtn));
 refs.stopBtn.addEventListener("click", () => action("/api/stop", {}, "Ambilight stopped", refs.stopBtn));
 refs.installBtn.addEventListener("click", () =>

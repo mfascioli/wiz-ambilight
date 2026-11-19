@@ -115,13 +115,33 @@ class HudTests(unittest.TestCase):
 
 class StructureTests(unittest.TestCase):
     def test_sections_are_numbered_in_reading_order(self):
-        steps = re.findall(r'<span class="step">(\d\d)</span>', HTML)
-        self.assertEqual(steps, ["01", "02", "03", "04", "05", "06"])
-        headings = re.findall(r"<h2>([^<]+)</h2>", HTML)
-        self.assertEqual(
-            headings,
-            ["Lights", "Session", "Direct control", "Look", "My scenes", "Activity"],
+        # The cards live in two independent columns (02/04 left, 03/05 right)
+        # so opening Direct control cannot push Look down. The numbers still
+        # match their headings, and each column holds its own stack.
+        pairs = re.findall(
+            r'<span class="step">(\d\d)</span>\s*<h2>([^<]+)</h2>', HTML
         )
+        self.assertEqual(
+            pairs,
+            [
+                ("01", "Lights"),
+                ("02", "Session"),
+                ("04", "Look"),
+                ("03", "Direct control"),
+                ("05", "My scenes"),
+                ("06", "Activity"),
+            ],
+        )
+        columns = HTML.split('<div class="pair-col">')[1:]
+        self.assertEqual(len(columns), 2)
+        self.assertIn("session-card", columns[0])
+        self.assertIn("look-card", columns[0])
+        self.assertNotIn("control-card", columns[0])
+        self.assertIn("control-card", columns[1])
+        self.assertIn("scenes-card", columns[1])
+        self.assertNotIn("look-card", columns[1])
+        self.assertIn(".pair-col", CSS)
+        self.assertIn("align-content: start", CSS)
 
     def test_the_panel_opens_without_a_quick_start_strip(self):
         self.assertNotIn("quickstart", HTML)
@@ -168,11 +188,38 @@ class StructureTests(unittest.TestCase):
             with self.subTest(control=control):
                 self.assertIn(f'id="{control}"', HTML)
         js = (WEB / "app.js").read_text(encoding="utf-8")
-        for label in ("Auto (by resolution)", "Lean", "Balanced", "Quality", "Manual"):
+        for label in ("Auto — follows the video size", "Lean", "Balanced", "Quality", "Manual"):
             with self.subTest(label=label):
                 self.assertIn(label, js)
         self.assertIn("SAMPLING_PROFILES", CORE)
         self.assertIn("--sampling", CORE)
+
+    def test_look_reads_as_a_signal_path(self):
+        # Sample -> color -> send, with the preset that owns each stage named.
+        # The numbers stay, but every one sits under a plain-language label.
+        self.assertIn('class="signal span-2"', HTML)
+        for stage in ("sampleStage", "colorStage", "sendStage"):
+            with self.subTest(stage=stage):
+                self.assertIn(f'id="{stage}"', HTML)
+        self.assertIn("A sampling preset can only lower the read rate", HTML)
+        self.assertIn('id="layoutHint"', HTML)
+        js = (WEB / "app.js").read_text(encoding="utf-8")
+        self.assertIn("Edge band", js)
+        self.assertIn("function renderStage", js)
+        for label in ("Frame", "Columns", "Avg pixels", "Saturation", "Brightness"):
+            with self.subTest(label=label):
+                self.assertIn(f'["{label}"', js)
+        for gone in (
+            "styleHint",
+            "samplingHint",
+            "SAMPLING_HINTS",
+            "styleSpec",
+            "samplingSpec",
+            "renderSpec",
+        ):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, js)
+                self.assertNotIn(gone, HTML)
 
     def test_resources_strip_has_cpu_ram_and_network(self):
         self.assertEqual(HTML.count('class="spark"'), 3)
@@ -187,6 +234,17 @@ class StructureTests(unittest.TestCase):
     def test_panel_stays_local_only(self):
         self.assertIn("127.0.0.1", WEBUI)
         self.assertIn("default-src 'none'", WEBUI)
+
+
+class HardwareIdTests(unittest.TestCase):
+    def test_hardware_ids_are_hover_only(self):
+        # The model string is data, not chrome: it lives in a tooltip on the IP.
+        self.assertNotIn('<span class="model">', HTML)
+        self.assertIn(".meta .model { display: none; }", CSS)
+        self.assertIn("Hover an IP for its hardware id", HTML)
+        js = (WEB / "app.js").read_text(encoding="utf-8")
+        self.assertIn("dataset.hw", js)
+        self.assertIn('content: attr(data-hw);', CSS)
 
 
 if __name__ == "__main__":

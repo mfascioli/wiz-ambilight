@@ -125,14 +125,23 @@ local function emit(paused, eof, result, err)
     local now = mp.get_time()
     S.last_write = now
 
+    -- The capture size is the window (scaled) or the decoded frame (source),
+    -- so it can stay the same across files. The video size is the property
+    -- people read as "resolution" and does change when a new file loads.
+    local video = mp.get_property_native("video-params") or {}
+    local vw = tonumber(video.w) or 0
+    local vh = tonumber(video.h) or 0
+
     local parts = {
         string.format(
-            '{"active":true,"t":%.3f,"paused":%s,"eof":%s,"w":%d,"h":%d',
+            '{"active":true,"t":%.3f,"paused":%s,"eof":%s,"w":%d,"h":%d,"vw":%d,"vh":%d',
             now,
             tostring(paused),
             tostring(eof),
             result and result.w or 0,
-            result and result.h or 0
+            result and result.h or 0,
+            vw,
+            vh
         ),
     }
     if result and result.rect then

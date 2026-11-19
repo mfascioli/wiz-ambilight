@@ -294,10 +294,22 @@ class DemoPanelTests(unittest.TestCase):
     def test_resources_payload_is_well_formed(self):
         panel = webui.Panel(m, demo=True)
         resources = panel.resources()
-        for key in ("at", "available", "cpu", "ram_mb", "network_bps", "capture_fps"):
+        for key in (
+            "at",
+            "available",
+            "cpu",
+            "ram_mb",
+            "network_bps",
+            "capture_fps",
+            "capture_w",
+            "capture_h",
+            "video_w",
+            "video_h",
+        ):
             self.assertIn(key, resources)
         self.assertEqual(resources["network_bps"], 0.0)
         self.assertIsNone(resources["capture_fps"])
+        self.assertIsNone(resources["video_w"])
         if Path("/proc").is_dir():
             self.assertTrue(resources["available"])
             self.assertGreater(resources["ram_mb"], 0)
@@ -305,9 +317,9 @@ class DemoPanelTests(unittest.TestCase):
 
     def test_light_update_is_in_memory_only(self):
         panel = webui.Panel(m, demo=True)
-        panel.set_light("10.0.0.11", {"name": "Desk", "zone": "left"})
-        self.assertEqual(panel.config["lights"]["10.0.0.11"]["name"], "Desk")
-        self.assertEqual(panel.config["lights"]["10.0.0.11"]["zone"], "left")
+        panel.set_light("192.0.2.11", {"name": "Desk", "zone": "left"})
+        self.assertEqual(panel.config["lights"]["192.0.2.11"]["name"], "Desk")
+        self.assertEqual(panel.config["lights"]["192.0.2.11"]["zone"], "left")
         self.assertFalse(Path(os.environ["WIZ_AMBILIGHT_GUI_CONFIG"]).exists())
 
     def test_demo_is_dry_run(self):

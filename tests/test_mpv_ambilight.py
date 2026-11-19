@@ -282,6 +282,69 @@ class DiscoveryTargetTests(unittest.TestCase):
         self.assertNotIn("10.1.3.1", hosts)
 
 
+class _Clock:
+    def __init__(self):
+        self.now = 100.0
+
+    def monotonic(self):
+        return self.now
+
+
+class _ScanSocket:
+    """Socket that charges 12 ms per swept host and queues both bulb replies.
+
+    A real /24 sweep takes ~3 s to resolve ARP, which used to consume the
+    whole listen timeout and leave only the first queued reply in `found`.
+    """
+
+    def __init__(self, clock):
+        self.clock = clock
+        self.replies = []
+        self.timeout = 0.02
+        self.bulbs = ("10.0.0.5", "10.0.0.7")
+        self.broadcasts = {"255.255.255.255", "10.0.0.255"}
+
+    def setsockopt(self, *args):
+        pass
+
+    def sendto(self, payload, addr):
+        reply = json.dumps(
+            {"id": 1, "method": "getPilot", "result": {"state": True}}
+        ).encode()
+        if addr[0] in self.broadcasts:
+            for ip in self.bulbs:
+                self.replies.append((reply, (ip, 38899)))
+        else:
+            self.clock.now += 0.012
+
+    def settimeout(self, value):
+        self.timeout = max(0.02, value)
+
+    def recvfrom(self, size):
+        if self.replies:
+            return self.replies.pop(0)
+        self.clock.now += self.timeout
+        raise socket.timeout
+
+    def close(self):
+        pass
+
+
+class DiscoveryTests(unittest.TestCase):
+    def test_deep_scan_survives_the_sweep_and_keeps_both_replies(self):
+        clock = _Clock()
+        fake = _ScanSocket(clock)
+        with mock.patch.object(
+            m, "local_ipv4_networks", return_value=[("10.0.0.2", 24)]
+        ), mock.patch.object(
+            m.socket, "socket", return_value=fake
+        ), mock.patch.object(
+            m, "time", SimpleNamespace(monotonic=clock.monotonic)
+        ):
+            found = m.discover_lights(timeout=2.5, deep=True)
+        self.assertEqual(sorted(found), ["10.0.0.5", "10.0.0.7"])
+
+
 class SmootherTests(unittest.TestCase):
     def test_zero_tau_snaps(self):
         smoother = m.Smoother(0)

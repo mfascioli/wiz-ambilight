@@ -2,6 +2,25 @@
 
 Releases before 1.4.0 were never tagged; their history is in `git log`.
 
+## Unreleased
+
+- **Panel:** Session and Look stack in the left column, Direct control and My
+  scenes in the right one. Opening Direct control no longer pushes Look down;
+  below 1000 px the columns flatten back to the 02 → 03 → 04 → 05 order.
+- **Panel:** Look reads as a three-stage signal path — **sample → color →
+  send** — with every value labelled (frame, columns, average, rate, fade,
+  saturation, send rate, brightness) and the edge band next to Layout.
+- **Panel:** hardware ids stay in an IP tooltip, a name/IP/model filter trims
+  long lists, and the dry-run checkbox now says it applies to the sync.
+- **Discovery:** a deep scan sweeps the local /24 before starting its listen
+  window, so the ARP delay no longer expires the timeout and drops one of two
+  live bulbs.
+- **Panel:** capture size and video resolution are reported separately, and a
+  stale mpv state file no longer leaves the last movie's size on screen.
+- **Tests:** pin the two-column design, the Look signal path and the deep-scan
+  listen window.
+- **Docs:** refresh `docs/gui.png` and the README panel notes.
+
 ## 1.7.0 — 2026-11-18
 
 - **Panel:** crazy mode now pauses an attach-mode sync, restores every bulb's
