@@ -4,12 +4,21 @@ Releases before 1.4.0 were never tagged; their history is in `git log`.
 
 ## Unreleased
 
-- **Panel:** Session and Look stack in the left column, Direct control and My
-  scenes in the right one. Opening Direct control no longer pushes Look down;
-  below 1000 px the columns flatten back to the 02 → 03 → 04 → 05 order.
-- **Panel:** Look reads as a three-stage signal path — **sample → color →
-  send** — with every value labelled (frame, columns, average, rate, fade,
-  saturation, send rate, brightness) and the edge band next to Layout.
+- **Panel:** 02–05 share one 2×2 grid with two equal rows, so all four keep the
+  same width and the same height; a collapsed card stays at its header height
+  inside its cell. Below 1000 px the cards fall back to the 02 → 03 → 04 → 05
+  order.
+- **Panel:** Look is flat and modular — Preset, Sample and Send in three equal
+  hairline columns with key/value rows instead of nested boxes.
+- **Panel:** one performance chart in Activity replaces the strip under the
+  cards, with three unit lanes (CPU %, RAM MB, UDP KB/s) and a line each for
+  mpv and for the panel; CPU is a share of the whole processor, stated in the
+  legend tooltip.
+- **Panel:** rooms group bulbs and switch them together, Direct control uses a
+  power switch, and a saved-colors row reapplies or deletes a color in one
+  click. Rooms and colors live in `lights.json` and never restart the sync.
+- **Lua:** the state file carries mpv's pid, so the panel can sample a player
+  it did not launch in attach mode.
 - **Panel:** hardware ids stay in an IP tooltip, a name/IP/model filter trims
   long lists, and the dry-run checkbox now says it applies to the sync.
 - **Discovery:** a deep scan sweeps the local /24 before starting its listen
@@ -17,9 +26,19 @@ Releases before 1.4.0 were never tagged; their history is in `git log`.
   live bulbs.
 - **Panel:** capture size and video resolution are reported separately, and a
   stale mpv state file no longer leaves the last movie's size on screen.
-- **Tests:** pin the two-column design, the Look signal path and the deep-scan
-  listen window.
-- **Docs:** refresh `docs/gui.png` and the README panel notes.
+- **Tests:** pin the 2×2 grid, the three Look columns, the chart payload, the
+  room and saved-color endpoints and the deep-scan listen window.
+- **Docs:** the README now follows the user's path — overview, features,
+  requirements, installation, quick start, panel, operating modes,
+  configuration, direct control, architecture, performance, security,
+  troubleshooting, development, roadmap, credits and related projects.
+  Aesthetic and layout detail moved to `docs/design.md`; repository layout,
+  runtime files, config schemas and scripted recipes moved to
+  `docs/development.md`. Capture fps, fade ms and send Hz are explained
+  separately, and the duplicated passages between Features, Performance,
+  Architecture and Security are gone.
+- **Docs:** refresh `docs/gui.png`, add the new section strips and update the
+  banner generator.
 
 ## 1.7.0 — 2026-11-18
 

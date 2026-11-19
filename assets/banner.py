@@ -184,8 +184,10 @@ def strip(path, kicker, title, detail):
 
 
 STRIPS = (
-    ("overview.png", "OVERVIEW", "WHAT YOU GET",
+    ("overview.png", "OVERVIEW", "FRAME TO WALL",
      "mpv \u00b7 Lua \u00b7 Python \u00b7 UDP"),
+    ("features.png", "FEATURES", "WHAT YOU GET",
+     "local \u00b7 multi-bulb \u00b7 panel"),
     ("requirements.png", "REQUIREMENTS", "WHAT YOU NEED",
      "mpv \u00b7 Python 3.9+ \u00b7 WiZ bulbs"),
     ("install.png", "INSTALL", "ONE CLONE",
@@ -194,6 +196,10 @@ STRIPS = (
      "6 styles \u00b7 6 layouts"),
     ("panel.png", "WEB PANEL", "LOCAL ONLY",
      "127.0.0.1 \u00b7 token \u00b7 CSP"),
+    ("modes.png", "OPERATING MODES", "THREE WAYS",
+     "launch \u00b7 attach \u00b7 panel"),
+    ("configuration.png", "CONFIGURATION", "LOOK AND COST",
+     "layouts \u00b7 styles \u00b7 sampling"),
     ("design.png", "DESIGN", "AMBER, NOT WHITE",
      "#FCBE11 \u00b7 Merriweather \u00b7 HUD"),
     ("styles.png", "STYLES", "CAPTURE, FADE, SEND",
@@ -202,6 +208,8 @@ STRIPS = (
      "sides \u00b7 thirds \u00b7 whole frame"),
     ("attach.png", "ATTACH", "YOUR OWN MPV",
      "install once \u00b7 idles until live"),
+    ("control.png", "DIRECT CONTROL", "NO BROWSER NEEDED",
+     "--set \u00b7 --hex \u00b7 --scene"),
     ("how.png", "HOW IT WORKS", "FRAME TO BULB",
      "sample \u00b7 fade \u00b7 setPilot"),
     ("performance.png", "PERFORMANCE", "FPS IS THE COST",
@@ -210,10 +218,14 @@ STRIPS = (
      "discovery \u00b7 VLAN \u00b7 video output"),
     ("development.png", "DEVELOPMENT", "NO DEPENDENCIES",
      "unittest \u00b7 py_compile \u00b7 lua"),
+    ("roadmap.png", "ROADMAP", "WHAT IS MISSING",
+     "Windows \u00b7 transport \u00b7 scans"),
     ("privacy.png", "PRIVACY & SECURITY", "LAN ONLY, BY DESIGN",
      "no cloud \u00b7 no account \u00b7 token"),
     ("credits.png", "CREDITS", "BUILT ON",
      "mpv \u00b7 wiz-hack \u00b7 Merriweather"),
+    ("related.png", "RELATED PROJECTS", "ALSO IN MPV",
+     "mpv-config"),
 )
 
 

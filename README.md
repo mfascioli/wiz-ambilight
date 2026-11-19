@@ -10,33 +10,51 @@
 edges of the picture onto WiZ bulbs over your local network. No capture card,
 no re-encoding, no cloud, no extra Python packages.
 
+It is two small pieces: a Lua script inside mpv that samples the frame, and a
+Python process that fades the colors and sends `setPilot` datagrams over UDP.
+An optional local panel drives the same pipeline by hand.
+
 <p align="center">
   <em>mpv → Lua frame sampler → Python fade loop → WiZ UDP bulbs</em>
 </p>
 
-## 🎬 What you get
+## 🎬 Overview
 
-![Overview banner: what you get — mpv, Lua, Python and UDP](assets/overview.png)
+![Overview banner: frame to wall — mpv, Lua, Python and UDP](assets/overview.png)
 
-- **Uses mpv, not a second player.** Hardware decoding, subtitles, uosc, your
-  config, 4K, HEVC, network streams — all of it keeps working.
-- **Hue-style motion, at a sane cost.** The default sampling profile copies
-  the window-size frame at 8–15 fps depending on how tall it is, while the
-  bulbs are driven at 18 Hz with continuous interpolation, so colors glide
-  instead of stepping.
+The video player keeps doing all the heavy work. Hardware decoding, subtitles,
+uosc, your own mpv config, 4K, HEVC and network streams keep working because
+the picture is never copied out of mpv through a capture device: the Lua script
+asks mpv for the frame it has already rendered, averages the edge zones and
+writes a few colors to a small JSON file. The Python side reads that file,
+interpolates the colors and sends them to the bulbs.
+
+Nothing else is involved. The bulbs are local UDP devices on port `38899`, the
+Python side is standard library only, and the web panel is served from your own
+machine.
+
+## ✨ Features
+
+- **Uses mpv, not a second player.** The player, its config and its performance
+  stay exactly as they are.
+- **Hue-style motion at a sane cost.** Capture, fade and send are three
+  independent rates; the default samples a window-size frame at 8–15 fps and
+  drives the bulbs at 18 Hz with interpolation, so colors glide. See
+  [Performance](#-performance).
 - **Actually local.** Plain UDP on port `38899`; nothing leaves your LAN.
-- **No dependencies.** The Python side is standard library only. The other
-  half is one small mpv Lua script.
-- **Three ways to run it.** Let it launch mpv, attach to an mpv you started
-  normally (desktop launcher, file manager, whatever), or use the local web
-  panel to choose lights and tune the look.
-- **The bulbs are yours.** The panel also works as a small local WiZ remote:
-  power, brightness, white temperature, RGB/hex colors, WiZ scenes and saved
-  looks, without starting Ambilight.
+- **No dependencies.** Standard library Python plus one Lua script.
+- **Three ways to run it.** Launch mpv from the tool, attach to an mpv you
+  started normally, or use the local panel. See
+  [Operating Modes](#-operating-modes).
+- **The bulbs are yours.** The panel is also a small WiZ remote: power,
+  brightness, white temperature, RGB/hex colors, WiZ scenes, rooms and saved
+  colors, without starting Ambilight.
 - **Multi-bulb layouts.** Left/right, top/bottom, thirds, whole-frame, or
   explicitly chosen zones per bulb.
+- **Panel telemetry.** One chart in **Activity** shows mpv and the panel in
+  three unit lanes: CPU %, RAM MB and WiZ UDP KB/s.
 
-## 🧰 Requirements
+## 🧰 Requirements & Compatibility
 
 ![Requirements banner: what you need — mpv, Python 3.9+ and WiZ bulbs](assets/requirements.png)
 
@@ -44,12 +62,14 @@ no re-encoding, no cloud, no extra Python packages.
   (the normal GPU outputs do).
 - Python **3.9+**. No `pip install` needed.
 - One or more WiZ bulbs on the **same LAN/VLAN** as the computer.
-- Linux or macOS today. Windows still needs a handful of changes — the
-  runtime directory, the Lua install path, a file picker and a CI runner —
-  listed in [Roadmap](#roadmap). Process control and PID verification are
-  already platform-safe.
 
-## 📦 Install
+| Platform | Status | Notes |
+| --- | --- | --- |
+| Linux | Supported | All features, including the CPU/RAM lanes of the chart. |
+| macOS | Supported | Process checks use `ps`; the CPU/RAM lanes need `/proc`, so the chart shows the UDP lane only. |
+| Windows | Not yet | Runtime directory, Lua install path, file picker and a CI runner are missing; process control and PID verification are already platform-safe. See [Roadmap](#-roadmap). |
+
+## 📦 Installation
 
 ![Install banner: one clone, --discover names every bulb](assets/install.png)
 
@@ -77,7 +97,7 @@ mkdir -p ~/.local/bin
 ln -s "$PWD/mpv_ambilight.py" ~/.local/bin/mpv-ambilight
 ```
 
-## ⚡ Quick start
+## ⚡ Quick Start
 
 ![Quick start banner: one command, six styles and six layouts](assets/quickstart.png)
 
@@ -98,7 +118,7 @@ ln -s "$PWD/mpv_ambilight.py" ~/.local/bin/mpv-ambilight
 When mpv exits, the bulbs keep their last color. Use `--on-exit off` if you
 want them to turn off instead.
 
-## 🖥️ Web panel
+## 🖥️ Web Panel
 
 ![Panel banner: local only — 127.0.0.1, a per-run token and a strict CSP](assets/panel.png)
 
@@ -111,38 +131,30 @@ If you would rather click than type:
 It opens `http://127.0.0.1:8765/` in your browser. The panel scans the LAN,
 lists every bulb it finds, and lets you:
 
-- choose which bulbs take part and name them (`Sofa`, `TV wall`, …);
-- see each bulb's IP, online state and **effective zone** — the model and
-  firmware stay in a tooltip on the IP, out of the way;
-- assign a zone per bulb or pick a layout, style and brightness;
-- choose a **sampling profile** — auto adapts the grid and capture rate to the
+- choose and name bulbs (`Sofa`, `TV wall`, …), see their IP and online state,
+  and assign a zone per bulb or pick a layout, style and brightness;
+- pick a **sampling profile** — auto adapts the grid and capture rate to the
   resolution; lean, balanced and quality trade CPU for detail; manual exposes
-  every knob — while the style keeps controlling the look;
-- read **Look** as a three-stage signal path — **sample → color → send** —
-  with every value labelled, so the read rate is never confused with the grid
-  size;
-- watch **CPU, RAM and WiZ UDP** traffic for the panel and its sync process in
-  the strip under the cards;
-- see a **miniature of the video frame** that highlights the region each bulb
-  samples, instead of guessing what “left edge” or “thirds” means;
-- preview the **zone map** (`Sofa glow → left edge`) before starting;
-- include or exclude every light at once, with one **All / None** click;
-- use **Direct control** on all bulbs or a single one: power, brightness,
-  white temperature, a color picker/**hex** field, WiZ scenes and scene speed
-  (it starts collapsed — it is a remote, not the normal path);
-- see **which bulbs answer**: every manual command waits for a reply, and a
-  silent bulb is greyed out with a warning instead of failing quietly;
-- click the **hex chip** under a bulb to send that exact color to the target;
-- save the current look as a **scene** and apply or delete it later;
-- flash a bulb to identify it, or toggle its power;
-- start/stop the sync in **attach** mode or launch a **video file**;
-- follow the sync log, with connection-loss recovery and a confirm-to-quit step;
-- install the mpv Lua script with one click;
+  every knob. See [Sampling](#-sampling);
+- group bulbs into **rooms**, switch a room with one click, and reapply a
+  **saved color** without opening the picker;
+- watch **CPU, RAM and WiZ UDP** in **Activity** — one chart with a line each
+  for mpv and for the panel;
+- see a **miniature of the video frame** and the **zone map** before starting,
+  instead of guessing what “left edge” or “thirds” means;
+- use **Direct control** on all bulbs, a room or a single one: a power switch,
+  brightness, white temperature, a color picker/**hex** field, WiZ scenes and
+  scene speed. It starts collapsed; it is a remote, not the normal path;
+- start and stop the sync in **attach** mode or launch a **video file**, save
+  or reapply a **scene**, follow the log, and install the Lua script;
 - collapse any section: **Direct control** and **Activity** start closed, so
   the first screen is just lights, session and look.
 
-![The panel in demo mode: three bulbs assigned to thirds, the auto sampling profile and the resource strip](docs/gui.png)
-<sub>Demo mode with three bulbs on thirds: Lights keeps its own Zone map column, Session and Look stack on the left while Direct control and My scenes stack on the right, and the strip tracks CPU, RAM and WiZ UDP traffic for the panel and its sync child.</sub>
+![The panel in demo mode: three bulbs assigned to thirds, the auto sampling profile and the performance chart](docs/gui.png)
+<sub>Demo mode with three bulbs on thirds: Lights keeps its own Zone map column, Session / Direct control / Look / My scenes share a 2×2 grid, and Activity holds the performance chart.</sub>
+
+The visual language and the layout rules are documented in
+[`docs/design.md`](docs/design.md).
 
 Useful flags:
 
@@ -152,154 +164,32 @@ Useful flags:
 | `--no-browser` | do not open a browser automatically |
 | `--demo` | fake lights, never send UDP — good for trying the UI |
 
-The panel is a standard-library `ThreadingHTTPServer` bound to `127.0.0.1`. The
-sync runs as a child process, so closing the tab or the panel does not leave a
-stray daemon behind. After a restart it adopts a sync it started before only
-when the PID file and the process command line agree; otherwise it refuses to
-touch that PID. On platforms without `/proc`, it asks `ps`; when neither is
-available (Windows), it does not adopt.
+The panel is a standard-library `ThreadingHTTPServer` bound to `127.0.0.1`, and
+the sync runs as its child, so closing the tab leaves no daemon behind. PID
+adoption is checked against the process command line; the platform fallbacks
+are in [`SECURITY.md`](SECURITY.md).
 
-Settings and names live in
-`~/.config/wiz-ambilight/lights.json` (override with
-`WIZ_AMBILIGHT_GUI_CONFIG`). WiZ does not expose app-assigned names over UDP,
-so names are stored locally. If DHCP moves a bulb, the panel matches it by MAC
-and keeps its name and zone.
+Settings and names live in `~/.config/wiz-ambilight/lights.json` (override with
+`WIZ_AMBILIGHT_GUI_CONFIG`); saved looks live in `scenes.json`
+(`WIZ_AMBILIGHT_SCENES_CONFIG`). WiZ does not expose app-assigned names over
+UDP, so names are stored locally and a bulb that moves is matched by MAC. Both
+files are plain JSON and validated on load; the schemas are in
+[`docs/development.md`](docs/development.md).
 
-Saved looks live in `~/.config/wiz-ambilight/scenes.json` (override with
-`WIZ_AMBILIGHT_SCENES_CONFIG`). It is plain JSON, so a script can generate or
-edit scenes without going through the panel:
+## 🔀 Operating Modes
 
-```json
-{
-  "Movie night": {
-    "192.168.1.5": {"state": true, "r": 255, "g": 80, "b": 20, "dimming": 40},
-    "192.168.1.7": {"state": true, "sceneId": 4, "speed": 80}
-  }
-}
-```
+![Operating modes banner: launch, attach or drive from the panel](assets/modes.png)
 
-Only bulbs the panel already knows about are applied, and every value is
-range-checked.
+| Mode | Command | What runs |
+| --- | --- | --- |
+| **Launch** | `./mpv_ambilight.py movie.mkv` | The sync starts mpv with the file and stops when mpv exits. |
+| **Attach** | `./mpv_ambilight.py --attach` | The sync waits for an mpv you start yourself and follows it. |
+| **Panel** | `./mpv_ambilight.py --gui` | The browser starts, stops or inspects either mode. |
 
-### 🎛️ Direct control from the CLI
+Direct control (`--set`) is separate: it sends one command and exits without
+starting a sync. See [Direct WiZ Control](#-direct-wiz-control).
 
-The same controls are available without the browser, which makes them easy to
-use from shell scripts, cron jobs or desktop shortcuts:
-
-```bash
-# turn everything on/off (or one bulb with --lights)
-./mpv_ambilight.py --set --power on
-./mpv_ambilight.py --set --lights 192.168.1.5 --power off
-
-# RGB as hex (3- or 6-digit), with optional brightness
-./mpv_ambilight.py --set --lights 192.168.1.5,192.168.1.7 --hex '#ff8800' --brightness 60
-
-# white temperature instead of color
-./mpv_ambilight.py --set --temp 3000
-
-# a WiZ scene, with optional speed
-./mpv_ambilight.py --set --scene 4 --speed 120
-
-# preview the UDP payloads without sending anything
-./mpv_ambilight.py --set --hex '#00ff7f' --dry-run
-```
-
-`--set` uses `--lights`, then `WIZ_LIGHTS` / `WIZ_LIGHT_IPS`, then discovery.
-`--hex` and `--temp` are mutually exclusive, `--speed` requires `--scene`, and
-`--power off` cannot be combined with a color or brightness. Invalid input
-exits with status `2`; a network/discovery failure exits with `1`.
-
-The panel lists every scene it knows about. Common ids are `1` Ocean, `3`
-Sunset, `4` Party, `5` Fireplace, `10` Bedtime, `12` Daylight, `16` Relax and
-`18` TV time; firmware may expose more.
-
-Because this is just a normal command, a script can sequence several looks:
-
-```bash
-#!/bin/sh
-# sunset.sh — warm the room, then settle into a scene
-LIGHTS=192.168.1.5,192.168.1.7
-cd /path/to/wiz-ambilight
-./mpv_ambilight.py --set --lights "$LIGHTS" --hex '#ff8a3d' --brightness 70
-sleep 3
-./mpv_ambilight.py --set --lights "$LIGHTS" --scene 3 --speed 60
-```
-
-Schedule it with cron or a systemd timer exactly like any other command. The
-same primitive (and the JSON scenes file) is enough to wire the bulbs into
-desktop shortcuts, media servers or home-automation scripts without adding a
-dependency or a cloud account.
-
-## 🎨 Design
-
-![Design banner: amber, not white — #FCBE11, Merriweather and a HUD grid](assets/design.png)
-
-The panel borrows its visual language from
-[mpv-config](https://github.com/mfascioli/mpv-config): **amber `#FCBE11`**,
-`#1F1F1F` hairlines, a charcoal HUD grid, bracket corners and Merriweather
-Bold for headings. Merriweather ships in `web/fonts/` under the SIL OFL, so
-the panel needs no network and no installed fonts.
-
-The flow is numbered on screen — **01 Lights → 02 Session → 03 Direct
-control → 04 Look → 05 My scenes → 06 Activity**. There is no intro strip:
-the first card is the lights list and keeps its own **Zone map** column, the
-header is short, and the heavier controls stay collapsed.
-
-[`tests/test_design.py`](tests/test_design.py) pins the design: the exact
-amber and outline tokens, square HUD corners, the bundled font and licence,
-and the numbered reading order. A restyle that drifts back to a generic
-dashboard fails CI.
-
-## 🎚️ Styles
-
-![Styles banner: capture, fade and send — 12 to 24 fps, 0 to 220 ms, 15 to 30 Hz](assets/styles.png)
-
-A style is a coherent starting point; any individual flag overrides it.
-
-| style    | capture | fade   | send   | edge band | saturation | dimming | feel                          |
-|----------|---------|--------|--------|-----------|------------|---------|-------------------------------|
-| `hue`    | 15 fps  | 90 ms  | 18 Hz  | 16%       | 1.35×      | 100     | balanced, Hue-like (default)  |
-| `cinema` | 12 fps  | 220 ms | 15 Hz  | 20%       | 1.15×      | 80      | slower, calmer, dimmer        |
-| `fast`   | 20 fps  | 45 ms  | 24 Hz  | 12%       | 1.45×      | 100     | snappy, action-friendly       |
-| `reactive` | 20 fps | 55 ms | 26 Hz  | 13%       | 1.40×      | 100     | fastest feel; hard cuts snap  |
-| `raw`    | 24 fps  | 0 ms   | 30 Hz  | 12%       | 1.30×      | 100     | no interpolation, twitchy     |
-| `custom` | —       | —      | —      | —         | —          | —       | start from the built-in values |
-
-Every style also snaps a large color jump (≥128 per channel) on the next frame,
-so scene cuts land immediately while gentle camera moves still fade. Use
-`--style reactive` when you want the snappiest response, or lower `--smooth`
-manually.
-
-Styles and sampling are independent: `--sampling` (or the panel's **Sampling**
-menu) changes how much of the frame is copied without touching fade, edge,
-saturation or send rate. See [Performance](#-performance).
-
-```bash
-./mpv_ambilight.py --style cinema movie.mkv
-./mpv_ambilight.py --style fast --brightness 70 movie.mkv
-./mpv_ambilight.py --style reactive movie.mkv
-./mpv_ambilight.py --smooth 150 --saturation 1.5 --send-hz 15 movie.mkv
-```
-
-## 🧩 Layouts and zones
-
-![Layouts banner: edge to edge — sides, thirds and the whole frame](assets/layouts.png)
-
-The order of `--lights` is the order of the zones.
-
-| layout       | what each bulb shows                              |
-|--------------|---------------------------------------------------|
-| `auto`       | 1 bulb → `all`; 2 → `left-right`; 3 → `thirds`; 4+ → `cycle` |
-| `left-right` | left edge / right edge                            |
-| `top-bottom` | top edge / bottom edge                            |
-| `thirds`     | left third / middle third / right third           |
-| `all`        | average of the whole frame                        |
-| `cycle`      | left, right, top, bottom, then repeat             |
-
-> Auto-discovery sorts bulbs by IP. If the sides come out swapped, list the
-> IPs in the order you want (`--lights right-ip,left-ip`) or use `--zones`.
-
-## 🔗 Attach to a running mpv
+### 🔗 Attach to a running mpv
 
 ![Attach banner: your own mpv — install once, idles until live](assets/attach.png)
 
@@ -324,9 +214,9 @@ a daemon, updating the checkout requires
 
 ### 🔌 Run it as a user service (optional)
 
-This needs the `~/.local/bin/mpv-ambilight` symlink from the install section.
-The service starts with your session and waits for mpv on its own — no window
-or terminal is needed.
+This needs the `~/.local/bin/mpv-ambilight` symlink from the installation
+section. The service starts with your session and waits for mpv on its own —
+no window or terminal is needed.
 
 ```bash
 mkdir -p ~/.config/wiz-ambilight
@@ -339,80 +229,77 @@ systemctl --user daemon-reload
 systemctl --user enable --now wiz-ambilight.service
 ```
 
-## 🔍 How it works
+## ⚙️ Configuration
 
-![How it works banner: frame to bulb — sample, fade, setPilot](assets/how.png)
+![Configuration banner: layouts, styles and sampling](assets/configuration.png)
 
-![Architecture: browser, panel, mpv and the sync process inside the computer; WiZ bulbs on the LAN; the internet unused](docs/architecture.svg)
-<sub>Everything inside the dashed computer boundary runs as your user. The bulbs are the only untrusted peer; no component talks to the internet.</sub>
+A **style** is a coherent starting point, a **layout** assigns zones, and a
+**sampling profile** decides how much of each frame is copied. Individual flags
+override the style, and the panel stores your choice in `lights.json` so it
+applies on the next start.
 
-**Components and data.** mpv decodes the video and a Lua script samples it,
-writing zone colors to `state-<pid>.json` at the capture rate (8–15 fps by
-default). The sync process reads that file, fades the colors and sends
-`setPilot` datagrams to the bulbs. It also rewrites `stats-<pid>.json` once a
-second so the panel can graph CPU, RAM and WiZ UDP traffic. The optional panel
-serves its own HTML/CSS/JS from `127.0.0.1:8765`, writes `lights.json` and
-`scenes.json`, and starts or stops the sync with an argument list. The
-[Mermaid source](docs/architecture.mmd) is next to the SVG.
+### 🎚️ Capture, fade and send
 
-**Exposure.** The panel is the only listening socket in the project, and only
-while `--gui` runs. The sync process opens no socket for inbound traffic: its
-UDP sockets are ephemeral senders to port `38899`. There is no HTTP client, DNS
-lookup, account, telemetry or update check. [`SECURITY.md`](SECURITY.md) lists
-each file, process and network surface.
+These are three different rates, and mixing them up is the usual source of
+surprises:
 
-The same flow, step by step:
+| Stage | Knob | Unit | What it controls |
+| --- | --- | --- | --- |
+| **Capture** | `--fps`, or the style / sampling profile | frames per second | How often mpv hands a frame to Lua. Sets CPU cost and how fresh the targets are. |
+| **Fade** | `--smooth` | milliseconds | The time constant used to interpolate between targets. `0` disables interpolation. |
+| **Send** | `--send-hz` | hertz | How often the fade loop pushes `setPilot` to the bulbs. Sets packet rate, not picture latency. |
 
-```text
-              screenshot-raw (video only, no OSD)
- mpv ──────────────────────────────────────────────┐
-                                                    ▼
-                                   lua/wiz_ambilight.lua
-                                   • samples a resolution-aware grid
-                                     (48-120 columns)
-                                   • crops letterbox/pillarbox bars
-                                   • averages edge / third zones
-                                                    │
-                                                    │ tiny JSON state file
-                                                    │ (8-15 writes/s)
-                                                    ▼
-                            $XDG_RUNTIME_DIR/wiz-ambilight/state*.json
-                                                    │
-                                                    │ polled every few ms
-                                                    ▼
-                                   mpv_ambilight.py
-                                   • saturation + gamma
-                                   • continuous fade toward target
-                                   • setPilot UDP @ 18 Hz
-                                                    │
-                                                    ▼
-                                          WiZ bulbs (:38899)
+Raising capture does not raise the send rate; lowering send does not soften a
+cut. The fade loop runs between them, so a target captured at 12 fps still
+reaches the bulb smoothly at 18 Hz. Large color jumps (≥128 per channel) snap
+on the next frame, so scene cuts land immediately while camera moves fade.
+
+### 🎨 Styles
+
+![Styles banner: capture, fade and send — 12 to 24 fps, 0 to 220 ms, 15 to 30 Hz](assets/styles.png)
+
+| style    | capture | fade   | send   | edge band | saturation | dimming | feel                          |
+|----------|---------|--------|--------|-----------|------------|---------|-------------------------------|
+| `hue`    | 15 fps  | 90 ms  | 18 Hz  | 16%       | 1.35×      | 100     | balanced, Hue-like (default)  |
+| `cinema` | 12 fps  | 220 ms | 15 Hz  | 20%       | 1.15×      | 80      | slower, calmer, dimmer        |
+| `fast`   | 20 fps  | 45 ms  | 24 Hz  | 12%       | 1.45×      | 100     | snappy, action-friendly       |
+| `reactive` | 20 fps | 55 ms | 26 Hz  | 13%       | 1.40×      | 100     | fastest feel; hard cuts snap  |
+| `raw`    | 24 fps  | 0 ms   | 30 Hz  | 12%       | 1.30×      | 100     | no interpolation, twitchy     |
+| `custom` | —       | —      | —      | —         | —          | —       | start from the built-in values |
+
+```bash
+./mpv_ambilight.py --style cinema movie.mkv
+./mpv_ambilight.py --style fast --brightness 70 movie.mkv
+./mpv_ambilight.py --smooth 150 --saturation 1.5 --send-hz 15 movie.mkv
 ```
 
-Two details make it feel like Ambilight instead of a color slideshow:
+Use `--style reactive` when you want the snappiest response, or lower
+`--smooth` manually. Styles are independent of sampling: changing the profile
+never changes fade, edge, saturation or send rate.
 
-1. **Capture and output run at different rates.** New targets arrive at
-   `--fps`; the fade loop interpolates them every few milliseconds and sends
-   at `--send-hz`.
-2. **Colors settle, they do not jump.** Exponential smoothing with a
-   wall-clock time constant means a seek or a cut fades over ~90 ms instead of
-   flashing.
+### 🧩 Layouts and zones
 
-The bulbs are fire-and-forget UDP devices. The sender de-duplicates unchanged
-colors and refreshes them every 2 seconds, so a single lost packet cannot
-leave a bulb stuck on an old frame.
+![Layouts banner: edge to edge — sides, thirds and the whole frame](assets/layouts.png)
 
-## 📈 Performance
+The order of `--lights` is the order of the zones.
 
-![Performance banner: fps is the cost — use --fps 8 for 4K](assets/performance.png)
+| layout       | what each bulb shows                              |
+|--------------|---------------------------------------------------|
+| `auto`       | 1 bulb → `all`; 2 → `left-right`; 3 → `thirds`; 4+ → `cycle` |
+| `left-right` | left edge / right edge                            |
+| `top-bottom` | top edge / bottom edge                            |
+| `thirds`     | left third / middle third / right third           |
+| `all`        | average of the whole frame                        |
+| `cycle`      | left, right, top, bottom, then repeat             |
 
-The expensive part is still `screenshot-raw`: mpv copies a frame into Lua for
-every capture. Two settings control that cost, and they stay independent:
+> Auto-discovery sorts bulbs by IP. If the sides come out swapped, list the
+> IPs in the order you want (`--lights right-ip,left-ip`) or use `--zones`.
 
-- the **style** picks the look — fade, edge band, saturation and send rate.
-  Its fps is the capture rate the rest of the pipeline starts from.
-- the **sampling profile** picks how much of each frame is copied: window or
-  source, columns, block averaging and an fps cap.
+### 🔬 Sampling
+
+Samples are a resolution-aware grid: the Lua script crops letterbox and
+pillarbox bars, averages vertical slices and block averages them. The profile
+decides how much work that is.
 
 `scaled` capture asks mpv for the frame as it appears in the window instead of
 the decoded source. A 4K movie in a 1280×720 window copies one ninth of the
@@ -451,16 +338,167 @@ An explicit `--fps` or `--capture` wins over the profile, so
 panel, **Sampling** sits next to **Style preset**; both are saved in
 `lights.json` and apply on the next start.
 
-Everything else — grid sampling, color math and UDP sends — is cheap. If mpv
-stutters, pick `lean` (or lower `--fps`); `--send-hz` only affects network
-traffic, not decode.
+### 🌱 Environment
 
-The strip under the cards reports what the service costs. CPU and RSS cover
-the panel and its sync child, read from `/proc` (`n/a` elsewhere); WiZ UDP
-counts real `setPilot` datagrams per second from `stats-<pid>.json`, so dry
-runs and demo mode stay at zero. Attach mode cannot attribute an mpv you
-started yourself, so the graph covers the panel, the sync and a player it
-launched.
+| Variable | Effect |
+| --- | --- |
+| `WIZ_LIGHTS` / `WIZ_LIGHT_IPS` | Default bulb list when `--lights` is absent. |
+| `XDG_RUNTIME_DIR` | Where `state-*.json`, `stats-*.json` and `control.json` live (default `/tmp/wiz-ambilight`). |
+| `WIZ_AMBILIGHT_GUI_CONFIG` | Path to `lights.json`. |
+| `WIZ_AMBILIGHT_SCENES_CONFIG` | Path to `scenes.json`. |
+
+## 🔆 Direct WiZ Control
+
+![Direct control banner: no browser needed — --set, --hex and --scene](assets/control.png)
+
+The same controls are available without the browser, which makes them easy to
+use from shell scripts, cron jobs or desktop shortcuts:
+
+```bash
+# turn everything on/off (or one bulb with --lights)
+./mpv_ambilight.py --set --power on
+./mpv_ambilight.py --set --lights 192.168.1.5 --power off
+
+# RGB as hex (3- or 6-digit), with optional brightness
+./mpv_ambilight.py --set --lights 192.168.1.5,192.168.1.7 --hex '#ff8800' --brightness 60
+
+# white temperature instead of color
+./mpv_ambilight.py --set --temp 3000
+
+# a WiZ scene, with optional speed
+./mpv_ambilight.py --set --scene 4 --speed 120
+
+# preview the UDP payloads without sending anything
+./mpv_ambilight.py --set --hex '#00ff7f' --dry-run
+```
+
+`--set` uses `--lights`, then `WIZ_LIGHTS` / `WIZ_LIGHT_IPS`, then discovery.
+`--hex` and `--temp` are mutually exclusive, `--speed` requires `--scene`, and
+`--power off` cannot be combined with a color or brightness. Invalid input
+exits with status `2`; a network/discovery failure exits with `1`.
+
+The panel lists every scene it knows about. Common ids are `1` Ocean, `3`
+Sunset, `4` Party, `5` Fireplace, `10` Bedtime, `12` Daylight, `16` Relax and
+`18` TV time; firmware may expose more.
+
+Because each command exits, `--set` composes with cron, systemd timers and
+media-server hooks without a daemon. Recipes for sequencing several looks are
+in [`docs/development.md`](docs/development.md#scripted-control-recipes).
+
+## 🔍 Architecture & How It Works
+
+![How it works banner: frame to bulb — sample, fade, setPilot](assets/how.png)
+
+![Architecture: browser, panel, mpv and the sync process inside the computer; WiZ bulbs on the LAN; the internet unused](docs/architecture.svg)
+<sub>Everything inside the dashed computer boundary runs as your user. The bulbs are the only untrusted peer; no component talks to the internet.</sub>
+
+**Components and data.** mpv decodes the video and a Lua script samples it,
+writing zone colors to `state-<pid>.json` at the capture rate. The sync process
+reads that file, fades the colors and sends `setPilot` datagrams to the bulbs.
+It also rewrites `stats-<pid>.json` once a second with the capture rate and the
+UDP throughput. The optional panel serves its own HTML/CSS/JS from
+`127.0.0.1:8765`, writes `lights.json` and `scenes.json`, and starts or stops
+the sync with an argument list. The [Mermaid source](docs/architecture.mmd) is
+next to the SVG.
+
+```text
+              screenshot-raw (video only, no OSD)
+ mpv ──────────────────────────────────────────────┐
+                                                    ▼
+                                   lua/wiz_ambilight.lua
+                                   • samples a resolution-aware grid
+                                     (48-120 columns)
+                                   • crops letterbox/pillarbox bars
+                                   • averages edge / third zones
+                                                    │
+                                                    │ tiny JSON state file
+                                                    │ (8-15 writes/s)
+                                                    ▼
+                            $XDG_RUNTIME_DIR/wiz-ambilight/state*.json
+                                                    │
+                                                    │ polled every few ms
+                                                    ▼
+                                   mpv_ambilight.py
+                                   • saturation + gamma
+                                   • continuous fade toward target
+                                   • setPilot UDP @ 18 Hz
+                                                    │
+                                                    ▼
+                                          WiZ bulbs (:38899)
+```
+
+The bulbs are fire-and-forget UDP devices. The sender de-duplicates unchanged
+colors and refreshes them every 2 seconds, so a single lost packet cannot
+leave a bulb stuck on an old frame.
+
+**Exposure.** The panel is the only listening socket, and only while `--gui`
+runs; the sync only sends UDP. There is no HTTP client, DNS lookup, account,
+telemetry or update check. [`SECURITY.md`](SECURITY.md) lists every file,
+process and network surface.
+
+## 📈 Performance
+
+![Performance banner: fps is the cost — use --fps 8 for 4K](assets/performance.png)
+
+The expensive part is `screenshot-raw`: mpv copies a frame into Lua for every
+capture. That is why capture rate, not `--send-hz`, is the knob that matters.
+The sampling profile decides how much is copied and the style sets the starting
+rate; see [Sampling](#-sampling) for the table and the resolution rules.
+
+`scaled` capture is the main saving: asking for the window-size frame instead
+of the decoded source means a 4K movie in a 1280×720 window copies one ninth of
+the pixels. The bulbs cannot resolve the difference, and the fallback to the
+source frame costs one capture if a video output refuses.
+
+Everything else — grid sampling, color math and UDP sends — is cheap. If mpv
+stutters, pick `lean` or lower `--fps`. `--send-hz` only affects network
+traffic, not decode. A hard cut still lands on the next frame because large
+jumps bypass the fade.
+
+**Activity** holds what the service costs: one chart, three unit lanes. CPU is
+a share of the whole processor — two saturated cores on an eight-core machine
+read 25 % — RAM is resident memory in MB, and UDP is the WiZ rate in KB/s. mpv
+and the panel each get their own line, so a heavy filter in the panel is
+visible next to the player. CPU and RSS come from `/proc` and are unavailable
+elsewhere; the UDP rate comes from `stats-<pid>.json`, so dry runs and demo
+mode stay at zero. The Lua script writes mpv's pid into its state file, which
+is how attach mode attributes a player it did not launch.
+
+## 🔒 Privacy & Security
+
+![Privacy banner: LAN only, by design — no cloud, no account, a per-run token](assets/privacy.png)
+
+- **Local only.** The bulbs are reached with UDP on port `38899`; discovery
+  broadcasts on the LAN and **Scan network** also probes every address on the
+  local `/24`. Nothing is sent to the internet, and the Python side never
+  makes an HTTP request.
+- **No account, no telemetry, no cloud.** No sign-in, no analytics, no update
+  check. The panel is served from `127.0.0.1` and the page loads only its own
+  files.
+- **One exposed interface, justified.** The panel is the only listener:
+  `127.0.0.1:8765`, only while `--gui`. The sync opens no inbound socket; it
+  sends UDP from an ephemeral port to `38899`. The
+  [architecture diagram](docs/architecture.svg) draws both the data flow and
+  the trust boundaries.
+- **Panel hardened.** Loopback bind, `Host`/`Origin` checks, a per-run
+  `X-Wiz-Token` on every POST and a strict CSP; argument lists instead of a
+  shell; paths starting with `-` rejected; only known bulbs; every value
+  range-checked; config `0600` inside `0700`. The full list is in
+  [`SECURITY.md`](SECURITY.md).
+- **PID adoption checks the process.** A stale PID file alone can never make
+  the panel adopt, and later stop, a foreign process: it verifies the command
+  line through `/proc` or `ps` and refuses when neither exists. Stopping a sync
+  uses `killpg` when available and the portable `terminate`/`kill` path
+  otherwise.
+- **What the bulbs see.** Plain UDP `setPilot` datagrams from your machine,
+  unauthenticated by design of the WiZ local API. Anyone on the same LAN can
+  do the same — treat the bulbs as LAN devices, not as trusted ones. See
+  [`SECURITY.md`](SECURITY.md) for the full model.
+- **How it was written.** The code was generated with **DeepSeek V4.1 Flash
+  Free** in OpenCode. No other model or tool is claimed for this repository.
+  There is no independent audit or published release scan yet; the roadmap
+  tracks that gap, and [`SECURITY.md`](SECURITY.md) states what was reviewed
+  and what was not.
 
 ## 🩺 Troubleshooting
 
@@ -493,31 +531,18 @@ lua5.4 -e 'assert(loadfile("lua/wiz_ambilight.lua"))'
 ```
 
 The CI workflow runs the unit tests on Python 3.9, 3.11 and 3.13 and checks
-that the Lua script compiles.
+that the Lua script compiles. Tests never touch a real bulb: the panel, the
+fade loop and discovery are exercised in-process, and `--demo` keeps the sender
+off the network.
 
-Repository layout:
+Repository layout, the runtime files and config schemas, the scripted control
+recipes and the banner generator are documented in
+[`docs/development.md`](docs/development.md). The panel design contract is in
+[`docs/design.md`](docs/design.md).
 
-```text
-.
-├── mpv_ambilight.py        # CLI, discovery, fade loop, UDP sender
-├── webui.py                # local web panel server and config
-├── web/                    # panel HTML/CSS/JS (no build step)
-│   └── fonts/              # bundled Merriweather Bold + SIL OFL licence
-├── lua/wiz_ambilight.lua   # runs inside mpv, writes zone colors as JSON
-├── tests/                  # dependency-free unit tests
-│   ├── test_design.py      # the mpv-config design contract
-│   └── test_security.py    # loopback, process and docs invariants
-├── assets/                 # README banners + their generator
-│   └── banner-fonts/       # Fira Sans Condensed for banner.py only
-├── docs/
-│   ├── architecture.mmd    # architecture source (Mermaid)
-│   ├── architecture.svg    # rendered architecture diagram
-│   └── gui.png             # the one panel screenshot in this README
-├── contrib/                # optional systemd user service
-└── upstream/               # original wiz-hack toolkit, kept for reference
-```
+## 🗺️ Roadmap
 
-### Roadmap
+![Roadmap banner: what is missing — Windows, measured transport and release scans](assets/roadmap.png)
 
 Three pieces are known to be missing, in the order they matter:
 
@@ -532,47 +557,7 @@ Three pieces are known to be missing, in the order they matter:
 3. **Release hygiene.** A `SECURITY.md` refresh and an antivirus scan of each
    release archive, recorded with its date.
 
-## 🔒 Privacy and security
-
-![Privacy banner: LAN only, by design — no cloud, no account, a per-run token](assets/privacy.png)
-
-- **Local only.** The bulbs are reached with UDP on port `38899`; discovery
-  broadcasts on the LAN and **Scan network** also probes every address on the
-  local `/24`. Nothing is sent to the internet, and the Python side never
-  makes an HTTP request.
-- **No account, no telemetry, no cloud.** No sign-in, no analytics, no update
-  check. The panel is served from `127.0.0.1` and the page loads only its own
-  files.
-- **One exposed interface, justified.** The panel is the only listener:
-  `127.0.0.1:8765`, only while `--gui`. The sync opens no inbound socket; it
-  sends UDP from an ephemeral port to `38899`. The
-  [architecture diagram](docs/architecture.svg) draws both the data flow and
-  the trust boundaries.
-- **Panel hardened.** It binds to `127.0.0.1` and rejects requests whose `Host`
-  or `Origin` is not the panel itself, which also blocks DNS-rebinding tricks;
-  every POST needs a random per-run `X-Wiz-Token`; the CSP is
-  `default-src 'none'` with only its own JS/CSS/fonts; child processes and the
-  file picker use argument lists, never a shell; a video path starting with
-  `-` is rejected so it cannot become an mpv option; identify, power and direct
-  control only accept bulbs the panel already knows; colors, temperatures,
-  scene ids and speeds are range-checked; `lights.json` and `scenes.json` are
-  written `0600` inside a `0700` directory.
-- **PID adoption checks the process.** A stale PID file alone can never make
-  the panel adopt (and later stop) a foreign process: it verifies the command
-  line through `/proc` or `ps`, and refuses to adopt when neither exists.
-  Stopping a sync uses `killpg` when the platform has it and the portable
-  `terminate`/`kill` path otherwise.
-- **What the bulbs see.** Plain UDP `setPilot` datagrams from your machine,
-  unauthenticated by design of the WiZ local API. Anyone on the same LAN can
-  do the same — treat the bulbs as LAN devices, not as trusted ones. See
-  [`SECURITY.md`](SECURITY.md) for the full model.
-- **How it was written.** The code was generated with **DeepSeek V4.1 Flash
-  Free** in OpenCode. No other model or tool is claimed for this repository.
-  There is no independent audit or published release scan yet; the roadmap
-  tracks that gap, and [`SECURITY.md`](SECURITY.md) states what was reviewed
-  and what was not.
-
-## 🙏 Credits and license
+## 🙏 Credits & License
 
 ![Credits banner: built on mpv, wiz-hack and Merriweather](assets/credits.png)
 
@@ -595,9 +580,9 @@ Three pieces are known to be missing, in the order they matter:
 Both the original work and these changes are released under the
 [MIT license](LICENSE).
 
-## 💡 Also check out
+## 💡 Related Projects
 
-![A crop of the mpv-config keyboard map: amber keys on a charcoal HUD grid](assets/mpv-config.png)
+![Related projects banner: also in mpv — mpv-config](assets/related.png)
 
 [**mpv-config**](https://github.com/mfascioli/mpv-config) — the mpv setup this
 panel takes its look from, and the other half of the picture: EWA Lanczos

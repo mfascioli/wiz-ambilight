@@ -51,6 +51,19 @@ headings, and leave interface names, option values and file paths untranslated.
   the miniature frame preview, never only with the raw name. The status dot is
   the hidden five-second crazy trigger; do not turn it back into a visible
   button or document the gesture.
+- **Panel layout.** 02–05 sit in one 2×2 grid with two equal rows, so the four
+  modules keep the same width and height; a collapsed card stays at its header
+  height inside its cell. **Look** is three equal hairline columns — Preset /
+  Sample / Send — with flat key/value rows, never nested boxes.
+- **Performance chart.** Activity holds one frame with three unit lanes —
+  CPU %, RAM MB, UDP KB/s — and a series each for mpv and the panel. CPU is a
+  share of the whole processor, said so in the legend tooltip; never merge the
+  lanes onto one axis. mpv is sampled by the pid the Lua script writes into
+  its state file, so attach mode works without a parent link.
+- **Rooms and saved colors.** A room is a named set of known bulbs and steers
+  direct control only. `groups` and `colors` live in `lights.json`; changing
+  either never restarts the sync. Direct control powers a target with a
+  switch, not On/Off buttons.
 
 ## Terminology
 
@@ -60,7 +73,8 @@ headings, and leave interface names, option values and file paths untranslated.
   web UI. **daemon** only for the background sync started with `--attach`.
 - **zone** — what one bulb shows; **layout** — the rule that assigns zones;
   **style** — a preset for capture/fade/send; **scene** — a saved look, or a
-  WiZ scene id (say which).
+  WiZ scene id (say which); **room** — a named set of bulbs used as a direct
+  control target. Never call a room a group in the UI.
 - **Ambilight** is the effect, capitalised as a proper-style name; `wiz-hack`
   is the upstream project, `mpv-config` the design source.
 
@@ -68,30 +82,44 @@ headings, and leave interface names, option values and file paths untranslated.
 
 1. `# wiz-ambilight`, badges, hero banner, one-paragraph summary, the
    `mpv → Lua → Python → WiZ` line.
-2. **What you get** → **Requirements** → **Install** → **Quick start** →
-   **Web panel** (with `Direct control from the CLI` under it) → **Design** →
-   **Styles** → **Layouts and zones** → **Attach to a running mpv** (with the
-   optional user service under it) → **How it works** → **Performance** →
-   **Troubleshooting** → **Development** (with **Roadmap** under it) →
-   **Privacy and security** → **Credits and license** → **Also check out**.
+2. **Overview** → **Features** → **Requirements & Compatibility** →
+   **Installation** → **Quick Start** → **Web Panel** → **Operating Modes**
+   (with **Attach** and the optional user service under it) →
+   **Configuration** (with **Capture, fade and send**, **Styles**, **Layouts
+   and zones**, **Sampling** and **Environment** under it) → **Direct WiZ
+   Control** → **Architecture & How It Works** → **Performance** → **Privacy &
+   Security** → **Troubleshooting** → **Development** → **Roadmap** →
+   **Credits & License** → **Related Projects**.
 
-- One strip per `##` heading, directly under it. The overview comes first so
-  the page answers "what do I get" before the detail.
-- Exactly **one** UI screenshot: `docs/gui.png`, under **Web panel**. Do not
+- The page follows the user's path: what it is, what it needs, how to install
+  it, how to use it, how to configure it, then how it works inside, what it
+  costs, and what it guarantees. Development notes and the roadmap close the
+  technical part.
+- One strip per `##` heading, directly under it; Styles, Layouts and Attach
+  keep their own strips under Configuration / Operating Modes. The overview
+  answers "what is this" before Features.
+- Exactly **one** UI screenshot: `docs/gui.png`, under **Web Panel**. Do not
   add more screenshots; a strip per heading replaces them.
 - Tables over prose, bold lead-ins, no marketing tone, no repetition between
-  the summary and the sections that follow it.
+  the summary, Features, Performance, Architecture and Security.
+- Keep capture fps, fade ms and send Hz distinct: they are explained once in
+  **Capture, fade and send** and only referenced elsewhere.
+- Aesthetic and layout detail lives in `docs/design.md`; repository structure,
+  runtime files, config schemas and scripted recipes live in
+  `docs/development.md`. The README links both and summarises only what a user
+  needs.
 - Emojis only as section markers, one per `##` heading, never in body text.
 - The fork note lives in **Credits**, not in the intro: the summary says what
   the tool does, the credits say what came from where.
-- **Also check out** closes the page with one short pointer to `mpv-config`
+- **Related Projects** closes the page with one short pointer to `mpv-config`
   and its cropped keyboard map.
 
 ## Images
 
 - `assets/banner.py` (Pillow + numpy) draws the 1600×470 hero
   (`banner.png`) and one 1200×158 strip per section. The only other images are
-  the crop described below and the architecture diagram.
+  the crop described below and the architecture diagram. `design.png` is used
+  by `docs/design.md`, not by the README.
 - Type is Fira Sans Condensed from `assets/banner-fonts/` (SIL OFL). Those
   files belong to the generator; the panel serves `web/fonts/` and nothing
   else.
@@ -101,7 +129,7 @@ headings, and leave interface names, option values and file paths untranslated.
   `assets/banner.png?v=<version>` and bump the query when `VERSION` changes so
   GitHub's image proxy refetches. `--version` defaults to the current release.
 - `assets/mpv-config.png` is a 1200×340 crop of `assets/keys.png` from
-  `mfascioli/mpv-config`, used only by **Also check out**. Re-crop that file;
+  `mfascioli/mpv-config`, used only by **Related Projects**. Re-crop that file;
   do not draw a look-alike.
 - `docs/gui.png` is a real screenshot of the panel. If the panel's layout
   changes, retake it — do not mock one up.
@@ -162,8 +190,8 @@ Before calling a change done:
 | `webui.py` | panel server, session control, bulb control, scenes, config, file picker |
 | `web/index.html` `web/style.css` `web/app.js` | panel UI, no build step |
 | `web/fonts/` | Merriweather Bold + SIL OFL licence, served to the panel |
-| `lua/wiz_ambilight.lua` | runs inside mpv, samples the frame and writes the state file |
-| `tests/test_design.py` | pins the design tokens and the numbered order |
+| `lua/wiz_ambilight.lua` | runs inside mpv, samples the frame and writes the state file, including mpv's pid |
+| `tests/test_design.py` | pins the design tokens, the numbered order, the 2×2 grid, the chart and the room controls |
 | `tests/test_security.py` | pins loopback, process and architecture-doc invariants |
 | `tests/test_mpv_ambilight.py` | CLI, parsing, colors, discovery helpers |
 | `tests/test_webui.py` | config shape, panel handlers, ranges, token |
@@ -172,6 +200,8 @@ Before calling a change done:
 | `assets/*.png` | hero, one strip per section, `mpv-config.png` crop |
 | `docs/architecture.mmd` | architecture source, kept next to the render |
 | `docs/architecture.svg` | architecture diagram linked from README and SECURITY |
+| `docs/design.md` | panel design language, layout and chart contract |
+| `docs/development.md` | repository layout, runtime/config files, scripted recipes |
 | `docs/gui.png` | the one panel screenshot in the README |
 | `contrib/` | optional systemd user service and its env example |
 | `upstream/` | original wiz-hack toolkit, reference only, never imported |
