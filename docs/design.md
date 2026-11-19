@@ -29,23 +29,31 @@ product.
 
 ## Reading order
 
-The flow is numbered on screen: **01 Lights → 02 Session → 03 Direct control →
-04 Look → 05 My scenes → 06 Activity**. The numbers are part of the design, not
+The flow is numbered on screen: **01 Lights → 02 Session → 03 Look →
+04 Direct control → 05 Activity**. The numbers are part of the design, not
 decoration: they explain the path from choosing bulbs to watching the effect.
 
 ## Layout
 
-- **01 Lights** spans the full width and keeps its own **Zone map** column, so
-  the miniature frame and the zone legend sit beside the bulb list.
-- **02–05** share one 2×2 grid with two equal rows. The four modules keep the
-  same width and height, in reading order: 02 Session and 04 Look on the left,
-  03 Direct control and 05 My scenes on the right. A collapsed card keeps only
-  its header inside its cell.
-- **06 Activity** is a full-width card below the grid and holds the performance
-  chart.
+- **01 Lights** spans the full width. Rooms sit directly above the bulb list;
+  the separate Zone map column and its legend are gone, and each row keeps the
+  small zone preview where its zone is chosen.
+- **02–04** use two independent stacks: **02 Session** and **03 Look** on the
+  left, **04 Direct control** on the right. Each column grows at its own pace,
+  so a short Session never stretches to match a tall Direct control. A
+  collapsed card keeps only its header.
+- **Session** is one compact row — mode, start, stop — and only adds its start
+  time while a sync is running.
+- **Direct control** owns power: one switch for the selected bulb, room or all
+  bulbs. **Saved colors** reapply a hex and its brightness, and **Saved
+  scenes** live in a small `<details>` submenu inside the card, not as a card of
+  their own.
+- **05 Activity** is a full-width card below the stacks and holds the
+  performance chart, with video and capture resolution, read fps and process
+  count visible above it.
 - **Look** is three equal hairline columns — **Preset / Sample / Send** — with
   flat key/value rows, never nested boxes.
-- Below `1000px` the grid falls back to a single column in 01 → 06 order.
+- Below `1000px` both stacks flatten to a single column in 01 → 05 order.
   `prefers-reduced-motion` disables transitions.
 
 The content is capped at 1080px, so the desktop layout is what the screenshot
@@ -69,14 +77,17 @@ chalk-style and deliberately muted:
 
 The lanes are never merged onto one axis: percent, megabytes and kilobytes per
 second cannot share a scale honestly. The time axis is relative and re-renders
-when the card opens or the window resizes.
+when the card opens or the window resizes. Above the chart, one line shows the
+video size, the capture size, the read rate and the process count, so the
+resolution is readable without hovering a tooltip.
 
 ## Contract
 
 [`tests/test_design.py`](../tests/test_design.py) pins the tokens, the square
-corners, the bundled font and licence, the numbered order, the 2×2 grid, the
-three Look columns and the chart IDs. A restyle that drifts back to a generic
-dashboard fails CI; change the test only when the design decision changes.
+corners, the bundled font and licence, the numbered order, the two independent
+stacks, the integrated scenes submenu, the three Look columns and the chart
+IDs. A restyle that drifts back to a generic dashboard fails CI; change the
+test only when the design decision changes.
 
 `docs/gui.png` is a real screenshot of the panel in `--demo` mode. Retake it
 when the layout changes instead of mocking one up.

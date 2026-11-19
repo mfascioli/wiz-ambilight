@@ -99,12 +99,28 @@ class NormalizeTests(unittest.TestCase):
                     "  ": ["10.0.0.2"],
                     7: [],
                 },
-                "colors": ["#ABCDEF", "red", "#abcdef", "#123456", "#12345"],
+                "colors": [
+                    "#ABCDEF",
+                    "red",
+                    "#abcdef",
+                    {"hex": "#123456", "brightness": 35},
+                    {"hex": "#12345", "brightness": 70},
+                    {"hex": "#654321", "brightness": 900},
+                    {"hex": "#abcdef", "brightness": 55},
+                    {"brightness": 20},
+                ],
             },
             m,
         )
         self.assertEqual(config["groups"], {"Desk": ["10.0.0.1"]})
-        self.assertEqual(config["colors"], ["#abcdef", "#123456"])
+        self.assertEqual(
+            config["colors"],
+            [
+                {"hex": "#abcdef", "brightness": 55},
+                {"hex": "#123456", "brightness": 35},
+                {"hex": "#654321", "brightness": 100},
+            ],
+        )
 
     def test_light_fields(self):
         config = webui.normalize_config(
@@ -387,6 +403,19 @@ class DemoPanelTests(unittest.TestCase):
         self.assertEqual(row["dimming"], 40)
         self.assertTrue(row["state"])
 
+    def test_white_temperature_and_color_are_exclusive(self):
+        panel = webui.Panel(m, demo=True)
+        ip = sorted(panel.config["lights"])[0]
+        panel.control(ip, {"hex": "#123456"})
+        snapshot = panel.control(ip, {"temp": 2700})
+        row = next(row for row in snapshot["lights"] if row["ip"] == ip)
+        self.assertEqual(row["temp"], 2700)
+        self.assertIsNone(row["hex"])
+        snapshot = panel.control(ip, {"hex": "#00ff00"})
+        row = next(row for row in snapshot["lights"] if row["ip"] == ip)
+        self.assertEqual(row["hex"], "#00ff00")
+        self.assertIsNone(row["temp"])
+
     def test_control_power_off_is_per_light(self):
         panel = webui.Panel(m, demo=True)
         first, second = sorted(panel.config["lights"])[:2]
@@ -418,17 +447,25 @@ class DemoPanelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             panel.set_group({"name": "Empty", "ips": []})
 
-    def test_saved_colors_add_dedupe_and_remove(self):
+    def test_saved_colors_store_hex_and_brightness(self):
         panel = webui.Panel(m, demo=True)
         panel.save_color({"hex": "#ABCDEF"})
-        panel.save_color({"hex": "#abcdef"})
-        self.assertEqual(panel.config["colors"], ["#abcdef"])
-        panel.save_color({"hex": "#123456"})
-        self.assertEqual(panel.config["colors"], ["#abcdef", "#123456"])
+        panel.save_color({"hex": "#abcdef", "brightness": 35})
+        self.assertEqual(panel.config["colors"], [{"hex": "#abcdef", "brightness": 35}])
+        panel.save_color({"hex": "#123456", "brightness": 70})
+        self.assertEqual(
+            panel.config["colors"],
+            [
+                {"hex": "#abcdef", "brightness": 35},
+                {"hex": "#123456", "brightness": 70},
+            ],
+        )
         panel.save_color({"hex": "#abcdef", "remove": True})
-        self.assertEqual(panel.config["colors"], ["#123456"])
+        self.assertEqual(panel.config["colors"], [{"hex": "#123456", "brightness": 70}])
         with self.assertRaises(ValueError):
             panel.save_color({"hex": "red"})
+        with self.assertRaises(ValueError):
+            panel.save_color({"hex": "#ffffff", "brightness": "bright"})
 
     def test_control_scene_and_speed(self):
         panel = webui.Panel(m, demo=True)
@@ -820,10 +857,12 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(snapshot["config"]["groups"], {"Desk": ips})
 
         with self.request(
-            "/api/color", {"hex": "#ABCDEF"}, self.auth_headers()
+            "/api/color", {"hex": "#ABCDEF", "brightness": 45}, self.auth_headers()
         ) as response:
             snapshot = json.loads(response.read())
-        self.assertEqual(snapshot["config"]["colors"], ["#abcdef"])
+        self.assertEqual(
+            snapshot["config"]["colors"], [{"hex": "#abcdef", "brightness": 45}]
+        )
 
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.request("/api/color", {"hex": "nope"}, self.auth_headers())

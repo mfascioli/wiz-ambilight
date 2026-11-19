@@ -79,243 +79,230 @@
           No lights yet. Press <strong>Scan</strong> or add bulbs with the CLI.
         </p>
       </div>
-      <aside class="zone-panel" aria-label="Zone map">
-        <div class="zone-panel-title">Zone map</div>
-        <div class="mapping" id="mapping"></div>
-        <div class="zone-help">
-          <span class="zone-help-title">What a zone samples</span>
-          <div class="zone-legend">
-            <span class="zone-legend-item"><span class="zone-preview" data-zone="all"></span>Whole frame</span>
-            <span class="zone-legend-item"><span class="zone-preview" data-zone="left"></span>Left edge</span>
-            <span class="zone-legend-item"><span class="zone-preview" data-zone="t1"></span>Left third</span>
-          </div>
-        </div>
-      </aside>
     </div>
   </details>
 
   <div class="pair">
-    <details class="card session-card" open>
-      <summary class="card-head">
-        <div class="card-title">
-          <span class="step">02</span>
-          <h2>Session</h2>
-        </div>
-        <div class="head-right">
-          <span class="pill" id="sessionPill">stopped</span>
-          <span class="chev" aria-hidden="true"></span>
-        </div>
-      </summary>
-      <div class="card-body">
-        <p class="meta-line" id="sessionDetail">No sync running.</p>
-        <div class="session-row">
-          <div class="modes" role="group" aria-label="Sync mode">
-            <button class="mode" data-mode="attach">Attach to mpv</button>
-            <button class="mode" data-mode="launch">Launch a video</button>
+    <div class="pair-col">
+      <details class="card session-card" open>
+        <summary class="card-head">
+          <div class="card-title">
+            <span class="step">02</span>
+            <h2>Session</h2>
           </div>
-          <div class="actions">
-            <button class="primary" id="startBtn">Start Ambilight</button>
-            <button class="ghost" id="stopBtn" disabled>Stop</button>
+          <div class="head-right">
+            <span class="pill" id="sessionPill">stopped</span>
+            <span class="chev" aria-hidden="true"></span>
           </div>
-        </div>
-        <div class="field hidden" id="mediaField">
-          <label for="mediaInput">Video file</label>
-          <div class="row">
-            <input id="mediaInput" type="text" placeholder="/path/to/movie.mkv" spellcheck="false">
-            <button class="ghost small" id="browseBtn" title="Choose a file">Browse…</button>
-          </div>
-        </div>
-        <p class="hint tight" id="modeHint"></p>
-      </div>
-    </details>
-
-    <details class="card control-card" id="controlCard">
-      <summary class="card-head">
-        <div class="card-title">
-          <span class="step">03</span>
-          <h2>Direct control</h2>
-        </div>
-        <div class="head-right">
-          <span class="pill" id="targetPill">all lights</span>
-          <span class="chev" aria-hidden="true"></span>
-        </div>
-      </summary>
-      <div class="card-body">
-        <div class="control-grid">
-          <div class="field">
-            <label for="targetSelect">Target</label>
-            <select id="targetSelect">
-              <option value="all">All lights</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Power</label>
-            <div class="power-row">
-              <label class="switch" title="Turn the target on or off">
-                <input type="checkbox" id="powerToggle" aria-label="Power">
-                <span></span>
-              </label>
-              <span class="power-state" id="powerState">Off</span>
+        </summary>
+        <div class="card-body">
+          <p class="meta-line hidden" id="sessionDetail"></p>
+          <div class="session-row">
+            <div class="modes" role="group" aria-label="Sync mode">
+              <button class="mode" data-mode="attach" title="Follow an mpv window that loaded the Lua script">Attach to mpv</button>
+              <button class="mode" data-mode="launch" title="Open mpv with a video file">Launch a video</button>
+            </div>
+            <div class="actions">
+              <button class="primary" id="startBtn">Start Ambilight</button>
+              <button class="ghost" id="stopBtn" disabled>Stop</button>
             </div>
           </div>
-          <div class="field">
-            <label for="controlBrightness">Brightness <output id="controlBrightnessOut">100</output></label>
-            <input id="controlBrightness" type="range" min="10" max="100" step="1" value="100">
-          </div>
-          <div class="field">
-            <label for="controlTemp">White <output id="controlTempOut">3000 K</output></label>
-            <input id="controlTemp" type="range" min="2200" max="6500" step="100" value="3000">
-          </div>
-        </div>
-        <div class="control-grid second">
-          <div class="field">
-            <label for="controlHex">Color</label>
-            <div class="color-row">
-              <input type="color" id="controlColor" value="#fcbe11" aria-label="Pick a color">
-              <input type="text" id="controlHex" class="hex-input" value="#fcbe11" maxlength="7" spellcheck="false" aria-label="Hex color">
-              <button class="ghost small" id="applyColorBtn">Apply</button>
-            </div>
-          </div>
-          <div class="field">
-            <label for="sceneSelect">WiZ scene</label>
+          <div class="field hidden" id="mediaField">
+            <label for="mediaInput">Video file</label>
             <div class="row">
-              <select id="sceneSelect"></select>
-              <button class="ghost small" id="applySceneBtn" title="Apply the selected WiZ scene">Apply</button>
+              <input id="mediaInput" type="text" placeholder="/path/to/movie.mkv" spellcheck="false">
+              <button class="ghost small" id="browseBtn" title="Choose a file">Browse…</button>
             </div>
           </div>
-          <div class="field">
-            <label for="controlSpeed">Speed <output id="controlSpeedOut">100</output></label>
-            <input id="controlSpeed" type="range" min="20" max="200" step="5" value="100">
-          </div>
         </div>
-        <div class="saved-colors">
-          <div class="saved-head">
-            <span>Saved colors</span>
-            <button class="ghost small" id="saveColorBtn" type="button"
-                    title="Save the current color for one click">+ Save current</button>
-          </div>
-          <div class="swatch-row" id="colorChips"></div>
-        </div>
-        <p class="hint tight" id="controlNote">Control bulbs without starting Ambilight.</p>
-      </div>
-    </details>
+      </details>
 
-    <details class="card look-card" open>
-      <summary class="card-head">
-        <div class="card-title">
-          <span class="step">04</span>
-          <h2>Look</h2>
-        </div>
-        <div class="head-right">
-          <span class="pill" id="lookPill">hue</span>
-          <span class="chev" aria-hidden="true"></span>
-        </div>
-      </summary>
-      <div class="card-body look-body">
-        <div class="look-cols">
-          <section class="look-col">
-            <header class="look-col-head">
-              <span class="look-col-title">Preset</span>
-              <span class="look-col-src">style</span>
-            </header>
+      <details class="card look-card" open>
+        <summary class="card-head">
+          <div class="card-title">
+            <span class="step">03</span>
+            <h2>Look</h2>
+          </div>
+          <div class="head-right">
+            <span class="pill" id="lookPill">hue</span>
+            <span class="chev" aria-hidden="true"></span>
+          </div>
+        </summary>
+        <div class="card-body look-body">
+          <div class="look-cols">
+            <section class="look-col">
+              <header class="look-col-head">
+                <span class="look-col-title">Preset</span>
+                <span class="look-col-src">style</span>
+              </header>
+              <div class="field">
+                <label for="styleSelect">Style preset</label>
+                <select id="styleSelect"></select>
+              </div>
+              <div class="field">
+                <label for="brightness">Brightness <output id="brightnessOut">100</output></label>
+                <input id="brightness" type="range" min="10" max="100" step="1" value="100">
+              </div>
+              <dl class="kv" id="colorStage"></dl>
+            </section>
+            <section class="look-col">
+              <header class="look-col-head">
+                <span class="look-col-title">Sample</span>
+                <span class="look-col-src">sampling</span>
+              </header>
+              <div class="field">
+                <label for="samplingSelect">Sampling</label>
+                <select id="samplingSelect"></select>
+              </div>
+              <div class="field">
+                <label for="layoutSelect">Layout</label>
+                <select id="layoutSelect"></select>
+                <p class="hint tight layout-hint" id="layoutHint"></p>
+              </div>
+              <dl class="kv" id="sampleStage"></dl>
+            </section>
+            <section class="look-col">
+              <header class="look-col-head">
+                <span class="look-col-title">Send</span>
+                <span class="look-col-src">style + panel</span>
+              </header>
+              <dl class="kv" id="sendStage"></dl>
+              <label class="check look-check">
+                <input type="checkbox" id="dryRun">
+                <span title="Applies to the sync process; Direct control always sends">Dry run sync (log colors, no UDP)</span>
+              </label>
+            </section>
+          </div>
+          <div class="control-grid sampling-manual hidden" id="samplingManual">
             <div class="field">
-              <label for="styleSelect">Style preset</label>
-              <select id="styleSelect"></select>
+              <label for="samplingFps">Read fps <output id="samplingFpsOut">15</output></label>
+              <input id="samplingFps" type="range" min="1" max="30" step="1" value="15">
             </div>
             <div class="field">
-              <label for="brightness">Brightness <output id="brightnessOut">100</output></label>
-              <input id="brightness" type="range" min="10" max="100" step="1" value="100">
-            </div>
-            <dl class="kv" id="colorStage"></dl>
-          </section>
-          <section class="look-col">
-            <header class="look-col-head">
-              <span class="look-col-title">Sample</span>
-              <span class="look-col-src">sampling</span>
-            </header>
-            <div class="field">
-              <label for="samplingSelect">Sampling</label>
-              <select id="samplingSelect"></select>
+              <label for="samplingGrid" title="How many vertical slices the frame is split into. More columns means finer color and more CPU.">Sample columns</label>
+              <input id="samplingGrid" type="number" min="24" max="240" step="8" value="80">
             </div>
             <div class="field">
-              <label for="layoutSelect">Layout</label>
-              <select id="layoutSelect"></select>
-              <p class="hint tight layout-hint" id="layoutHint"></p>
+              <label for="samplingBlock">Block average</label>
+              <select id="samplingBlock">
+                <option value="1">1×1 — single pixel</option>
+                <option value="2">2×2 — softer</option>
+                <option value="3">3×3 — softest</option>
+                <option value="4">4×4 — max smoothing</option>
+              </select>
             </div>
-            <dl class="kv" id="sampleStage"></dl>
-          </section>
-          <section class="look-col">
-            <header class="look-col-head">
-              <span class="look-col-title">Send</span>
-              <span class="look-col-src">style + panel</span>
-            </header>
-            <dl class="kv" id="sendStage"></dl>
-            <label class="check look-check">
-              <input type="checkbox" id="dryRun">
-              <span title="Applies to the sync process; Direct control always sends">Dry run sync (log colors, no UDP)</span>
-            </label>
-          </section>
+            <div class="field">
+              <label for="samplingCapture">Frame</label>
+              <select id="samplingCapture">
+                <option value="auto">Auto (scaled, with fallback)</option>
+                <option value="scaled">Scaled (mpv window)</option>
+                <option value="source">Full (decoded frame)</option>
+              </select>
+            </div>
+          </div>
+          <p class="hint tight look-note">
+            A sampling preset can only lower the read rate; manual sets it
+            directly. Fade, saturation and the send rate come from the style.
+          </p>
         </div>
-        <div class="control-grid sampling-manual hidden" id="samplingManual">
-          <div class="field">
-            <label for="samplingFps">Read fps <output id="samplingFpsOut">15</output></label>
-            <input id="samplingFps" type="range" min="1" max="30" step="1" value="15">
-          </div>
-          <div class="field">
-            <label for="samplingGrid" title="How many vertical slices the frame is split into. More columns means finer color and more CPU.">Sample columns</label>
-            <input id="samplingGrid" type="number" min="24" max="240" step="8" value="80">
-          </div>
-          <div class="field">
-            <label for="samplingBlock">Block average</label>
-            <select id="samplingBlock">
-              <option value="1">1×1 — single pixel</option>
-              <option value="2">2×2 — softer</option>
-              <option value="3">3×3 — softest</option>
-              <option value="4">4×4 — max smoothing</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="samplingCapture">Frame</label>
-            <select id="samplingCapture">
-              <option value="auto">Auto (scaled, with fallback)</option>
-              <option value="scaled">Scaled (mpv window)</option>
-              <option value="source">Full (decoded frame)</option>
-            </select>
-          </div>
-        </div>
-        <p class="hint tight look-note">
-          A sampling preset can only lower the read rate; manual sets it
-          directly. Fade, saturation and the send rate come from the style.
-        </p>
-      </div>
-    </details>
+      </details>
+    </div>
 
-    <details class="card scenes-card" open>
-      <summary class="card-head">
-        <div class="card-title">
-          <span class="step">05</span>
-          <h2>My scenes</h2>
+    <div class="pair-col">
+      <details class="card control-card" id="controlCard">
+        <summary class="card-head">
+          <div class="card-title">
+            <span class="step">04</span>
+            <h2>Direct control</h2>
+          </div>
+          <div class="head-right">
+            <span class="pill" id="targetPill">all lights</span>
+            <span class="chev" aria-hidden="true"></span>
+          </div>
+        </summary>
+        <div class="card-body">
+          <div class="control-grid">
+            <div class="field">
+              <label for="targetSelect">Target</label>
+              <select id="targetSelect">
+                <option value="all">All lights</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Power</label>
+              <div class="power-row">
+                <label class="switch" title="Turn the target on or off">
+                  <input type="checkbox" id="powerToggle" aria-label="Power">
+                  <span></span>
+                </label>
+                <span class="power-state" id="powerState">Off</span>
+              </div>
+            </div>
+            <div class="field">
+              <label for="controlBrightness">Brightness <output id="controlBrightnessOut">100</output></label>
+              <input id="controlBrightness" type="range" min="10" max="100" step="1" value="100">
+            </div>
+            <div class="field">
+              <label for="controlTemp">White <output id="controlTempOut">3000 K</output></label>
+              <input id="controlTemp" type="range" min="2200" max="6500" step="100" value="3000">
+            </div>
+          </div>
+          <div class="control-grid second">
+            <div class="field">
+              <label for="controlHex">Color</label>
+              <div class="color-row">
+                <input type="color" id="controlColor" value="#fcbe11" aria-label="Pick a color">
+                <input type="text" id="controlHex" class="hex-input" value="#fcbe11" maxlength="7" spellcheck="false" aria-label="Hex color">
+                <button class="ghost small" id="applyColorBtn">Apply</button>
+              </div>
+            </div>
+            <div class="field">
+              <label for="sceneSelect">WiZ scene</label>
+              <div class="row">
+                <select id="sceneSelect"></select>
+                <button class="ghost small" id="applySceneBtn" title="Apply the selected WiZ scene">Apply</button>
+              </div>
+            </div>
+            <div class="field">
+              <label for="controlSpeed">Speed <output id="controlSpeedOut">100</output></label>
+              <input id="controlSpeed" type="range" min="20" max="200" step="5" value="100">
+            </div>
+          </div>
+          <div class="saved-colors">
+            <div class="saved-head">
+              <span>Saved colors</span>
+              <button class="ghost small" id="saveColorBtn" type="button"
+                      title="Save this color and brightness for one click">+ Save current</button>
+            </div>
+            <div class="swatch-row" id="colorChips"></div>
+          </div>
+          <details class="submenu" id="scenesMenu">
+            <summary class="submenu-head">
+              <span class="submenu-title">Saved scenes</span>
+              <span class="submenu-right">
+                <span class="pill" id="scenePill">0</span>
+                <span class="chev" aria-hidden="true"></span>
+              </span>
+            </summary>
+            <div class="submenu-body">
+              <div class="scene-save">
+                <input id="sceneName" type="text" placeholder="Name this look" maxlength="40" aria-label="Scene name">
+                <button class="ghost small" id="saveSceneBtn">Save look</button>
+              </div>
+              <div id="sceneList" class="scene-list"></div>
+              <p class="hint">Stored in <code>~/.config/wiz-ambilight/scenes.json</code>.</p>
+            </div>
+          </details>
+          <p class="hint tight" id="controlNote">Control bulbs without starting Ambilight.</p>
         </div>
-        <div class="head-right">
-          <span class="pill" id="scenePill">0</span>
-          <span class="chev" aria-hidden="true"></span>
-        </div>
-      </summary>
-      <div class="card-body">
-        <div class="scene-save">
-          <input id="sceneName" type="text" placeholder="Name this look" maxlength="40" aria-label="Scene name">
-          <button class="ghost small" id="saveSceneBtn">Save look</button>
-        </div>
-        <div id="sceneList" class="scene-list"></div>
-        <p class="hint">Stored in <code>~/.config/wiz-ambilight/scenes.json</code>.</p>
-      </div>
-    </details>
+      </details>
+    </div>
   </div>
 
   <details class="card log-card" id="logCard">
     <summary class="card-head">
       <div class="card-title">
-        <span class="step">06</span>
+        <span class="step">05</span>
         <h2>Activity</h2>
       </div>
       <div class="head-right">
@@ -329,6 +316,7 @@
           <span class="perf-title">Performance</span>
           <span class="perf-window">last 60 samples</span>
         </figcaption>
+        <div class="perf-meta hidden" id="perfMeta"></div>
         <div class="perf-legend" id="perfLegend"></div>
         <div class="perf-plot">
           <svg id="perfSvg" viewBox="0 0 720 206" role="img"

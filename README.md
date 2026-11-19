@@ -52,7 +52,8 @@ machine.
 - **Multi-bulb layouts.** Left/right, top/bottom, thirds, whole-frame, or
   explicitly chosen zones per bulb.
 - **Panel telemetry.** One chart in **Activity** shows mpv and the panel in
-  three unit lanes: CPU %, RAM MB and WiZ UDP KB/s.
+  three unit lanes: CPU %, RAM MB and WiZ UDP KB/s, above the video and
+  capture resolution.
 
 ## 🧰 Requirements & Compatibility
 
@@ -136,22 +137,25 @@ lists every bulb it finds, and lets you:
 - pick a **sampling profile** — auto adapts the grid and capture rate to the
   resolution; lean, balanced and quality trade CPU for detail; manual exposes
   every knob. See [Sampling](#-sampling);
-- group bulbs into **rooms**, switch a room with one click, and reapply a
-  **saved color** without opening the picker;
+- group bulbs into **rooms**, click a room to target it in **Direct control**,
+  and reapply a **saved color** with its brightness instead of opening the
+  picker;
 - watch **CPU, RAM and WiZ UDP** in **Activity** — one chart with a line each
-  for mpv and for the panel;
-- see a **miniature of the video frame** and the **zone map** before starting,
-  instead of guessing what “left edge” or “thirds” means;
+  for mpv and for the panel, plus the video and capture resolution, read fps
+  and process count;
+- see the **zone preview** on each bulb row, so “left edge” or “thirds” is not
+  just a name;
 - use **Direct control** on all bulbs, a room or a single one: a power switch,
   brightness, white temperature, a color picker/**hex** field, WiZ scenes and
   scene speed. It starts collapsed; it is a remote, not the normal path;
 - start and stop the sync in **attach** mode or launch a **video file**, save
-  or reapply a **scene**, follow the log, and install the Lua script;
+  or reapply a **scene** from the small menu inside Direct control, follow the
+  log, and install the Lua script;
 - collapse any section: **Direct control** and **Activity** start closed, so
   the first screen is just lights, session and look.
 
 ![The panel in demo mode: three bulbs assigned to thirds, the auto sampling profile and the performance chart](docs/gui.png)
-<sub>Demo mode with three bulbs on thirds: Lights keeps its own Zone map column, Session / Direct control / Look / My scenes share a 2×2 grid, and Activity holds the performance chart.</sub>
+<sub>Demo mode with three bulbs on thirds: Session and Look share the left stack, Direct control sits on the right with rooms and saved colors, and Activity holds the performance chart.</sub>
 
 The visual language and the layout rules are documented in
 [`docs/design.md`](docs/design.md).

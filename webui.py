@@ -241,9 +241,24 @@ def normalize_config(raw, core) -> dict:
     colors = []
     raw_colors = raw.get("colors") if isinstance(raw.get("colors"), list) else []
     for value in raw_colors:
-        value = str(value or "").strip().lower()
-        if re.fullmatch(r"#[0-9a-f]{6}", value) and value not in colors:
-            colors.append(value)
+        if isinstance(value, dict):
+            hex_value = str(value.get("hex") or "").strip().lower()
+            brightness = value.get("brightness", 100)
+        else:
+            # Older configs stored bare hex strings.
+            hex_value = str(value or "").strip().lower()
+            brightness = 100
+        if not re.fullmatch(r"#[0-9a-f]{6}", hex_value):
+            continue
+        try:
+            brightness = max(10, min(100, int(brightness)))
+        except (TypeError, ValueError):
+            brightness = 100
+        existing = next((color for color in colors if color["hex"] == hex_value), None)
+        if existing is None:
+            colors.append({"hex": hex_value, "brightness": brightness})
+        else:
+            existing["brightness"] = brightness
         if len(colors) >= 12:
             break
     config["colors"] = colors
@@ -895,6 +910,8 @@ class Panel:
             rows = []
             for ip, entry in config["lights"].items():
                 info = self.live.get(ip) or {}
+                has_rgb = all(channel in info for channel in ("r", "g", "b"))
+                rgb = (info.get("r"), info.get("g"), info.get("b")) if has_rgb else None
                 rows.append(
                     {
                         "ip": ip,
@@ -909,16 +926,12 @@ class Panel:
                         "state": bool(info.get("state", False)),
                         "dimming": info.get("dimming"),
                         "temp": info.get("temp"),
-                        "r": info.get("r", 255),
-                        "g": info.get("g", 255),
-                        "b": info.get("b", 255),
-                        "hex": self.core.rgb_to_hex(
-                            (
-                                info.get("r", 255),
-                                info.get("g", 255),
-                                info.get("b", 255),
-                            )
-                        ),
+                        "r": info.get("r"),
+                        "g": info.get("g"),
+                        "b": info.get("b"),
+                        # A white bulb has no RGB values; the panel derives a
+                        # warm swatch from `temp` instead of inventing a color.
+                        "hex": self.core.rgb_to_hex(rgb) if rgb else None,
                     }
                 )
             rows.sort(key=lambda row: [int(part) for part in row["ip"].split(".")])
@@ -1205,13 +1218,21 @@ class Panel:
         value = str(payload.get("hex") or "").strip().lower()
         if not re.fullmatch(r"#[0-9a-f]{6}", value):
             raise ValueError("use a hex color like #ff8800")
+        try:
+            brightness = max(10, min(100, int(payload.get("brightness", 100))))
+        except (TypeError, ValueError):
+            raise ValueError("brightness must be a number between 10 and 100")
         with self.lock:
-            colors = list(self.config["colors"])
+            colors = [dict(color) for color in self.config["colors"]]
             if payload.get("remove"):
-                colors = [color for color in colors if color != value]
-            elif value not in colors:
-                colors.append(value)
-                colors = colors[-12:]
+                colors = [color for color in colors if color["hex"] != value]
+            else:
+                match = next((color for color in colors if color["hex"] == value), None)
+                if match is not None:
+                    match["brightness"] = brightness
+                else:
+                    colors.append({"hex": value, "brightness": brightness})
+                    colors = colors[-12:]
             self.config["colors"] = colors
             self._persist()
         return self.snapshot()
@@ -1265,8 +1286,11 @@ class Panel:
                 info["r"] = params["r"]
                 info["g"] = params.get("g", 0)
                 info["b"] = params.get("b", 0)
+                info.pop("temp", None)
             if "temp" in params:
                 info["temp"] = params["temp"]
+                for channel in ("r", "g", "b"):
+                    info.pop(channel, None)
             if "dimming" in params:
                 info["dimming"] = params["dimming"]
             if "sceneId" in params:

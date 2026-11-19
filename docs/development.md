@@ -68,7 +68,10 @@ or generate from a script:
   "groups": {
     "Living room": ["192.168.1.5", "192.168.1.7"]
   },
-  "colors": ["#fcbe11", "#78c8ff"],
+  "colors": [
+    {"hex": "#fcbe11", "brightness": 80},
+    {"hex": "#78c8ff", "brightness": 55}
+  ],
   "lights": {
     "192.168.1.5": {
       "name": "Left wall",
@@ -82,9 +85,10 @@ or generate from a script:
 }
 ```
 
-Rooms are named lists of IPs the panel already knows; saved colors are
-`#rrggbb` strings. Changing either never restarts a running sync. Point the
-panel at another file with `WIZ_AMBILIGHT_GUI_CONFIG` and
+Rooms are named lists of IPs the panel already knows; saved colors pair a
+`#rrggbb` string with the brightness it was saved at. A legacy bare string
+loads at 100 %. Changing either never restarts a running sync. Point the panel
+at another file with `WIZ_AMBILIGHT_GUI_CONFIG` and
 `WIZ_AMBILIGHT_SCENES_CONFIG`.
 
 `scenes.json` maps a scene name to per-bulb state. Only known bulbs are applied

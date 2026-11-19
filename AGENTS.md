@@ -44,26 +44,30 @@ headings, and leave interface names, option values and file paths untranslated.
   range-check every value; write config `0600` inside a `0700` directory.
 - **Design tokens.** Amber `#FCBE11`, hairlines `#1F1F1F`, shadow `#33000000`,
   radius at most `2px`, Merriweather Bold 700 served from `web/fonts/`, and the
-  numbered reading order `01`–`06`. `tests/test_design.py` is the contract: if
+  numbered reading order `01`–`05`. `tests/test_design.py` is the contract: if
   a restyle breaks it, the restyle is wrong.
 - **Panel ergonomics.** Direct control and Activity are `<details>` cards and
-  start closed; Lights, Session and Look start open. Zones are explained with
-  the miniature frame preview, never only with the raw name. The status dot is
-  the hidden five-second crazy trigger; do not turn it back into a visible
-  button or document the gesture.
-- **Panel layout.** 02–05 sit in one 2×2 grid with two equal rows, so the four
-  modules keep the same width and height; a collapsed card stays at its header
-  height inside its cell. **Look** is three equal hairline columns — Preset /
-  Sample / Send — with flat key/value rows, never nested boxes.
+  start closed; Lights, Session and Look start open. Zones are explained by the
+  preview on each bulb row, never only with the raw name; do not add a separate
+  Zone map column. The status dot is the hidden five-second crazy trigger; do
+  not turn it back into a visible button or document the gesture.
+- **Panel layout.** Session and Look share the left stack; Direct control gets
+  its own right stack, so a short Session never stretches to match a tall card.
+  Session is one compact row. Saved scenes are a small `<details>` submenu
+  inside Direct control, not a card. **Look** is three equal hairline columns —
+  Preset / Sample / Send — with flat key/value rows, never nested boxes.
 - **Performance chart.** Activity holds one frame with three unit lanes —
   CPU %, RAM MB, UDP KB/s — and a series each for mpv and the panel. CPU is a
   share of the whole processor, said so in the legend tooltip; never merge the
-  lanes onto one axis. mpv is sampled by the pid the Lua script writes into
-  its state file, so attach mode works without a parent link.
+  lanes onto one axis. Video and capture resolution, read fps and the process
+  count stay visible above the chart, not only in a tooltip. mpv is sampled by
+  the pid the Lua script writes into its state file, so attach mode works
+  without a parent link.
 - **Rooms and saved colors.** A room is a named set of known bulbs and steers
-  direct control only. `groups` and `colors` live in `lights.json`; changing
-  either never restarts the sync. Direct control powers a target with a
-  switch, not On/Off buttons.
+  direct control only; clicking a room targets it and opens Direct control.
+  `groups` and `colors` live in `lights.json`; changing either never restarts
+  the sync. A saved color is `{hex, brightness}`; legacy bare hex loads at
+  100 %. Power lives only in Direct control, never on a Light row.
 
 ## Terminology
 
@@ -112,14 +116,15 @@ headings, and leave interface names, option values and file paths untranslated.
 - The fork note lives in **Credits**, not in the intro: the summary says what
   the tool does, the credits say what came from where.
 - **Related Projects** closes the page with one short pointer to `mpv-config`
-  and its cropped keyboard map.
+  and its own `related.png` strip.
 
 ## Images
 
 - `assets/banner.py` (Pillow + numpy) draws the 1600×470 hero
-  (`banner.png`) and one 1200×158 strip per section. The only other images are
-  the crop described below and the architecture diagram. `design.png` is used
-  by `docs/design.md`, not by the README.
+  (`banner.png`) and one 1200×158 strip per section, including
+  `related.png`. The only other images are the reference crop described below
+  and the architecture diagram. `design.png` is used by `docs/design.md`, not
+  by the README.
 - Type is Fira Sans Condensed from `assets/banner-fonts/` (SIL OFL). Those
   files belong to the generator; the panel serves `web/fonts/` and nothing
   else.
@@ -129,8 +134,9 @@ headings, and leave interface names, option values and file paths untranslated.
   `assets/banner.png?v=<version>` and bump the query when `VERSION` changes so
   GitHub's image proxy refetches. `--version` defaults to the current release.
 - `assets/mpv-config.png` is a 1200×340 crop of `assets/keys.png` from
-  `mfascioli/mpv-config`, used only by **Related Projects**. Re-crop that file;
-  do not draw a look-alike.
+  `mfascioli/mpv-config`, kept for reference. The README now uses
+  `assets/related.png`; if you switch back, re-crop the current `keys.png`
+  instead of drawing a look-alike.
 - `docs/gui.png` is a real screenshot of the panel. If the panel's layout
   changes, retake it — do not mock one up.
 - `docs/architecture.mmd` is the Mermaid source; `docs/architecture.svg` is the
@@ -191,13 +197,13 @@ Before calling a change done:
 | `web/index.html` `web/style.css` `web/app.js` | panel UI, no build step |
 | `web/fonts/` | Merriweather Bold + SIL OFL licence, served to the panel |
 | `lua/wiz_ambilight.lua` | runs inside mpv, samples the frame and writes the state file, including mpv's pid |
-| `tests/test_design.py` | pins the design tokens, the numbered order, the 2×2 grid, the chart and the room controls |
+| `tests/test_design.py` | pins the design tokens, the numbered order, the two stacks, the scenes submenu, the chart and the room controls |
 | `tests/test_security.py` | pins loopback, process and architecture-doc invariants |
 | `tests/test_mpv_ambilight.py` | CLI, parsing, colors, discovery helpers |
 | `tests/test_webui.py` | config shape, panel handlers, ranges, token |
 | `assets/banner.py` | generator for the README banners |
 | `assets/banner-fonts/` | Fira Sans Condensed + OFL, generator only, never served |
-| `assets/*.png` | hero, one strip per section, `mpv-config.png` crop |
+| `assets/*.png` | hero, one strip per section, `mpv-config.png` reference crop |
 | `docs/architecture.mmd` | architecture source, kept next to the render |
 | `docs/architecture.svg` | architecture diagram linked from README and SECURITY |
 | `docs/design.md` | panel design language, layout and chart contract |

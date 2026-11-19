@@ -63,7 +63,6 @@ const refs = {
   mediaField: document.getElementById("mediaField"),
   mediaInput: document.getElementById("mediaInput"),
   browseBtn: document.getElementById("browseBtn"),
-  modeHint: document.getElementById("modeHint"),
   styleSelect: document.getElementById("styleSelect"),
   samplingSelect: document.getElementById("samplingSelect"),
   sampleStage: document.getElementById("sampleStage"),
@@ -80,12 +79,13 @@ const refs = {
   brightness: document.getElementById("brightness"),
   brightnessOut: document.getElementById("brightnessOut"),
   dryRun: document.getElementById("dryRun"),
-  mapping: document.getElementById("mapping"),
+  controlCard: document.getElementById("controlCard"),
   log: document.getElementById("log"),
   logCard: document.getElementById("logCard"),
   clearLog: document.getElementById("clearLog"),
   configPath: document.getElementById("configPath"),
   perf: document.getElementById("perf"),
+  perfMeta: document.getElementById("perfMeta"),
   perfLegend: document.getElementById("perfLegend"),
   perfSvg: document.getElementById("perfSvg"),
   rooms: document.getElementById("rooms"),
@@ -178,7 +178,12 @@ function rgbCss(light) {
   const dim = Math.max(0.08, Math.min(1, (light.dimming || 100) / 100));
   const scale = 0.25 + 0.75 * dim;
   const channel = (value) => Math.round((Number(value) || 0) * scale);
-  return `rgb(${channel(light.r)}, ${channel(light.g)}, ${channel(light.b)})`;
+  if (typeof light.r === "number" && typeof light.g === "number" && typeof light.b === "number") {
+    return `rgb(${channel(light.r)}, ${channel(light.g)}, ${channel(light.b)})`;
+  }
+  // White bulbs report a temperature, not RGB; approximate it for the swatch.
+  const value = Number.parseInt(kelvinToHex(light.temp || 3000).slice(1), 16);
+  return `rgb(${channel((value >> 16) & 255)}, ${channel((value >> 8) & 255)}, ${channel(value & 255)})`;
 }
 
 const HEX_RE = /^#?[0-9a-fA-F]{6}$/;
@@ -187,6 +192,28 @@ function normalizeHex(value) {
   const text = String(value || "").trim();
   if (!HEX_RE.test(text)) return null;
   return (text.startsWith("#") ? text : `#${text}`).toLowerCase();
+}
+
+/* A warm-white bulb at 3000 K looks like #ffb16e on screen, not white. This
+   follows Tanner Helland's fit so the hex field tracks the White slider; the
+   bulb itself still receives the Kelvin number. */
+function kelvinToHex(kelvin) {
+  const temp = Math.max(1000, Math.min(40000, Number(kelvin) || 3000)) / 100;
+  let r;
+  let g;
+  let b;
+  if (temp <= 66) {
+    r = 255;
+    g = 99.4708025861 * Math.log(temp) - 161.1195681661;
+    b = temp <= 19 ? 0 : 138.5177312231 * Math.log(temp - 10) - 305.0447927307;
+  } else {
+    r = 329.698727446 * (temp - 60) ** -0.1332047592;
+    g = 288.1221695283 * (temp - 60) ** -0.0755148492;
+    b = 255;
+  }
+  const channel = (value) =>
+    Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0");
+  return `#${channel(r)}${channel(g)}${channel(b)}`;
 }
 
 function targetIp() {
@@ -261,11 +288,6 @@ function buildCard(light) {
   identify.title = "Flash this bulb";
   identify.setAttribute("aria-label", "Identify light");
 
-  const power = el("button", "icon-btn power", "⏻");
-  power.type = "button";
-  power.title = "Turn the bulb on or off";
-  power.setAttribute("aria-label", "Toggle light power");
-
   const toggle = el("label", "switch");
   toggle.title = "Include this light in ambilight";
   const toggleInput = document.createElement("input");
@@ -273,7 +295,7 @@ function buildCard(light) {
   toggleInput.setAttribute("aria-label", "Include light");
   toggle.append(toggleInput, el("span"));
 
-  controls.append(zonePick, identify, power, toggle);
+  controls.append(zonePick, identify, toggle);
   root.append(swatch, main, controls);
 
   name.addEventListener("change", () => {
@@ -298,14 +320,6 @@ function buildCard(light) {
   });
   identify.addEventListener("click", () => {
     action("/api/identify", { ip: light.ip }, "Flashing the bulb…", identify);
-  });
-  power.addEventListener("click", () => {
-    action(
-      "/api/power",
-      { ip: light.ip, on: !(card.light?.state) },
-      card.light?.state ? "Turning the bulb off…" : "Turning the bulb on…",
-      power,
-    );
   });
   hexChip.addEventListener("click", () => {
     if (!card.light) return;
@@ -332,7 +346,6 @@ function buildCard(light) {
     zonePreview,
     toggleInput,
     identify,
-    power,
     light: null,
   };
   return card;
@@ -377,13 +390,11 @@ function updateCard(card, light) {
     card.zone.value = light.zone;
   }
   if (document.activeElement !== card.toggleInput) card.toggleInput.checked = light.enabled;
-  card.swatch.style.background = light.state ? rgbCss(light) : "#24212d";
-  card.swatch.style.color = light.state ? rgbCss(light) : "transparent";
+  const shown = light.state ? rgbCss(light) : "#24212d";
+  card.swatch.style.background = shown;
+  card.swatch.style.color = light.state ? shown : "transparent";
   card.swatch.classList.toggle("on", light.state && light.enabled);
   card.identify.disabled = !light.online;
-  card.power.disabled = !light.online;
-  card.power.title = light.state ? "Turn this bulb off" : "Turn this bulb on";
-  card.power.setAttribute("aria-label", card.power.title);
 }
 
 function renderLights(lights, zones) {
@@ -454,9 +465,8 @@ function renderSession(snapshot) {
       minute: "2-digit",
     });
     refs.sessionDetail.textContent = `Started at ${when} · changing settings restarts the sync.`;
-  } else {
-    refs.sessionDetail.textContent = "No sync running.";
   }
+  refs.sessionDetail.classList.toggle("hidden", !running || !session.started);
 
   const enabled = snapshot.lights.filter((light) => light.enabled).length;
   const online = snapshot.lights.filter((light) => light.online).length;
@@ -475,10 +485,6 @@ function renderSession(snapshot) {
   if (document.activeElement !== refs.mediaInput) refs.mediaInput.value = snapshot.config.media || "";
   refs.startBtn.textContent = running ? "Restart" : "Start Ambilight";
   refs.startBtn.disabled = enabled === 0 || (mode === "launch" && !snapshot.config.media.trim());
-  refs.modeHint.textContent =
-    mode === "attach"
-      ? "Attach follows any mpv window that loaded the Lua script."
-      : "Launch starts mpv with the chosen file.";
 }
 
 function fillSelect(select, values) {
@@ -639,29 +645,6 @@ function renderSettings(snapshot) {
   }
 }
 
-function renderMapping(snapshot) {
-  refs.mapping.replaceChildren();
-  const enabled = snapshot.lights.filter((light) => light.enabled);
-  if (!enabled.length) {
-    refs.mapping.append(el("span", "mapping-empty", "No lights enabled."));
-    return;
-  }
-  for (const light of enabled) {
-    const chip = el("span", "map-chip");
-    if (!light.online) chip.classList.add("offline");
-    const preview = el("span", "zone-preview");
-    preview.dataset.zone = light.effective_zone;
-    preview.setAttribute("aria-hidden", "true");
-    chip.append(
-      preview,
-      el("strong", "", light.name || light.ip),
-      el("span", "map-zone", zoneLabel(light.effective_zone)),
-    );
-    chip.title = `${light.name || light.ip} samples the ${zoneLabel(light.effective_zone)} of the video`;
-    refs.mapping.append(chip);
-  }
-}
-
 function fillTargetOptions(snapshot) {
   const groups = snapshot.config.groups || {};
   const signature = JSON.stringify([
@@ -783,7 +766,10 @@ function renderControl(snapshot) {
     paintRange(refs.controlTemp);
   }
   if (document.activeElement !== refs.controlHex && document.activeElement !== refs.controlColor) {
-    const value = normalizeHex(light.hex) || "#ffffff";
+    const value =
+      document.activeElement === refs.controlTemp
+        ? kelvinToHex(refs.controlTemp.value)
+        : normalizeHex(light.hex) || (light.temp ? kelvinToHex(light.temp) : "#ffffff");
     refs.controlColor.value = value;
     refs.controlHex.value = value;
   }
@@ -1169,6 +1155,9 @@ function renderPerf(snapshot) {
     bits.push(`${res.processes} process${res.processes === 1 ? "" : "es"}`);
   }
   if (typeof res.mpv_pid === "number") bits.push(`mpv pid ${res.mpv_pid}`);
+  refs.perfMeta.replaceChildren();
+  refs.perfMeta.classList.toggle("hidden", !bits.length);
+  for (const bit of bits) refs.perfMeta.append(el("span", "", bit));
   refs.perf.title = res.available
     ? bits.join(" · ")
     : "CPU and RAM need Linux /proc; WiZ UDP still comes from the sync stats";
@@ -1204,27 +1193,27 @@ function renderRooms(snapshot) {
 
     const text = el("button", "room-text");
     text.type = "button";
-    text.title = "Edit this room";
+    text.title = "Target this room in Direct control";
     text.append(
       el("b", "", name),
       el("i", "", `${members.length} ${members.length === 1 ? "light" : "lights"}`),
     );
-    text.addEventListener("click", () => openRoomEditor(name));
-
-    const toggle = el("label", "switch");
-    toggle.title = `Turn ${name} on or off`;
-    const toggleInput = document.createElement("input");
-    toggleInput.type = "checkbox";
-    toggleInput.checked = anyOn;
-    toggleInput.setAttribute("aria-label", `Power ${name}`);
-    toggleInput.addEventListener("change", () => {
-      action(
-        "/api/control",
-        { target: `group:${name}`, power: toggleInput.checked },
-        `${name} ${toggleInput.checked ? "on" : "off"}`,
-      );
+    text.addEventListener("click", () => {
+      if (!state.snapshot) return;
+      refs.targetSelect.value = `group:${name}`;
+      if (refs.controlCard) {
+        refs.controlCard.open = true;
+        refs.controlCard.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+      renderControl(state.snapshot);
+      toast(`Direct control: ${name}`);
     });
-    toggle.append(toggleInput, el("span"));
+
+    const edit = el("button", "room-edit", "✎");
+    edit.type = "button";
+    edit.title = "Edit this room";
+    edit.setAttribute("aria-label", `Edit ${name}`);
+    edit.addEventListener("click", () => openRoomEditor(name));
 
     const remove = el("button", "room-delete", state.roomArmed === name ? "!" : "×");
     remove.type = "button";
@@ -1246,7 +1235,7 @@ function renderRooms(snapshot) {
       action("/api/group", { name, delete: true }, `Deleted room “${name}”`);
     });
 
-    row.append(el("span", "room-dot"), text, toggle, remove);
+    row.append(el("span", "room-dot"), text, edit, remove);
     refs.roomList.append(row);
   }
 }
@@ -1302,19 +1291,36 @@ function saveRoom() {
 
 // --------------------------------------------------------------------- colors
 
+function savedColors(snapshot) {
+  const raw = snapshot.config.colors || [];
+  return raw
+    .map((entry) => {
+      if (typeof entry === "string") return { hex: normalizeHex(entry), brightness: 100 };
+      if (!entry || typeof entry !== "object") return null;
+      const brightness = Number(entry.brightness);
+      return {
+        hex: normalizeHex(entry.hex),
+        brightness: Number.isFinite(brightness)
+          ? Math.max(10, Math.min(100, Math.round(brightness)))
+          : 100,
+      };
+    })
+    .filter((entry) => entry && entry.hex);
+}
+
 function renderColors(snapshot) {
-  const colors = snapshot.config.colors || [];
+  const colors = savedColors(snapshot);
   refs.colorChips.replaceChildren();
   if (!colors.length) {
     refs.colorChips.append(el("span", "swatch-empty", "No saved colors."));
     return;
   }
-  for (const hex of colors) {
+  for (const { hex, brightness } of colors) {
     const chip = el("button", "color-chip");
     chip.type = "button";
     chip.style.setProperty("--c", hex);
-    chip.title = `${hex} — click to apply, Shift+click to remove`;
-    chip.setAttribute("aria-label", `Apply ${hex}`);
+    chip.title = `${hex} · ${brightness}% — click to apply, Shift+click to remove`;
+    chip.setAttribute("aria-label", `Apply ${hex} at ${brightness}%`);
     chip.addEventListener("click", (event) => {
       if (event.shiftKey) {
         action("/api/color", { hex, remove: true }, `Removed ${hex}`);
@@ -1322,7 +1328,10 @@ function renderColors(snapshot) {
       }
       refs.controlColor.value = hex;
       refs.controlHex.value = hex;
-      sendControl({ hex }, `Color ${hex}`, chip);
+      refs.controlBrightness.value = String(brightness);
+      refs.controlBrightnessOut.value = String(brightness);
+      paintRange(refs.controlBrightness);
+      sendControl({ hex, brightness }, `Color ${hex} · ${brightness}%`, chip);
     });
     refs.colorChips.append(chip);
   }
@@ -1341,7 +1350,6 @@ function apply(snapshot) {
   renderNetwork(snapshot);
   renderCrazy(snapshot);
   renderScenes(snapshot);
-  renderMapping(snapshot);
   renderLua(snapshot);
   renderLog(snapshot);
   renderRooms(snapshot);
@@ -1500,9 +1508,15 @@ refs.saveColorBtn.addEventListener("click", () => {
     refs.controlHex.focus();
     return;
   }
+  const brightness = Number(refs.controlBrightness.value) || 100;
   refs.controlColor.value = value;
   refs.controlHex.value = value;
-  action("/api/color", { hex: value }, `Saved ${value}`, refs.saveColorBtn);
+  action(
+    "/api/color",
+    { hex: value, brightness },
+    `Saved ${value} · ${brightness}%`,
+    refs.saveColorBtn,
+  );
 });
 
 // The chart is hidden while Activity is closed, so it is measured again when
@@ -1558,7 +1572,11 @@ refs.controlBrightness.addEventListener("change", () => {
   sendControl({ brightness: value }, `Brightness ${value}%`);
 });
 refs.controlTemp.addEventListener("input", () => {
-  refs.controlTempOut.value = `${refs.controlTemp.value} K`;
+  const value = Number(refs.controlTemp.value);
+  refs.controlTempOut.value = `${value} K`;
+  const hex = kelvinToHex(value);
+  refs.controlHex.value = hex;
+  refs.controlColor.value = hex;
 });
 refs.controlTemp.addEventListener("change", () => {
   const value = Number(refs.controlTemp.value);

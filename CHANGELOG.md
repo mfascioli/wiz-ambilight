@@ -4,19 +4,30 @@ Releases before 1.4.0 were never tagged; their history is in `git log`.
 
 ## Unreleased
 
-- **Panel:** 02–05 share one 2×2 grid with two equal rows, so all four keep the
-  same width and the same height; a collapsed card stays at its header height
-  inside its cell. Below 1000 px the cards fall back to the 02 → 03 → 04 → 05
-  order.
+- **Panel:** Session and Look share the left stack, Direct control gets its own
+  right stack, so a short Session no longer stretches to match a tall card.
+  Below 1000 px the stacks flatten to 02 → 03 → 04.
+- **Panel:** Session is one compact row — mode, start and stop — and only shows
+  its start time while a sync runs. Lights and Activity are renumbered 01 and
+  05; the separate Zone map column and its legend are gone.
 - **Panel:** Look is flat and modular — Preset, Sample and Send in three equal
   hairline columns with key/value rows instead of nested boxes.
 - **Panel:** one performance chart in Activity replaces the strip under the
   cards, with three unit lanes (CPU %, RAM MB, UDP KB/s) and a line each for
   mpv and for the panel; CPU is a share of the whole processor, stated in the
-  legend tooltip.
-- **Panel:** rooms group bulbs and switch them together, Direct control uses a
-  power switch, and a saved-colors row reapplies or deletes a color in one
-  click. Rooms and colors live in `lights.json` and never restart the sync.
+  legend tooltip. Video and capture resolution, read fps and the process count
+  are now visible above the chart instead of hidden in a tooltip.
+- **Panel:** power lives only in Direct control; Lights keeps naming, zones and
+  inclusion. Rooms are direct-control targets: clicking a room selects it,
+  opens the card and leaves editing to its own pencil button. Saved scenes are
+  a small disclosure inside Direct control.
+- **Panel:** a saved color now stores its brightness too. Clicking a chip
+  reapplies both; legacy bare-hex entries load at 100 %. Changing **White**
+  maps the Kelvin value to an approximate hex and updates the field live.
+- **Panel:** rooms group bulbs, Direct control uses a power switch, and a
+  saved-colors row reapplies or deletes a color in one click. Rooms and colors
+  live in `lights.json` and never restart the sync; RGB and white temperature
+  are kept mutually exclusive.
 - **Lua:** the state file carries mpv's pid, so the panel can sample a player
   it did not launch in attach mode.
 - **Panel:** hardware ids stay in an IP tooltip, a name/IP/model filter trims
@@ -26,8 +37,9 @@ Releases before 1.4.0 were never tagged; their history is in `git log`.
   live bulbs.
 - **Panel:** capture size and video resolution are reported separately, and a
   stale mpv state file no longer leaves the last movie's size on screen.
-- **Tests:** pin the 2×2 grid, the three Look columns, the chart payload, the
-  room and saved-color endpoints and the deep-scan listen window.
+- **Tests:** pin the two-column stacks, the slim Session, the integrated scenes
+  menu, the room targets, the saved-color brightness schema and the chart
+  payload.
 - **Docs:** the README now follows the user's path — overview, features,
   requirements, installation, quick start, panel, operating modes,
   configuration, direct control, architecture, performance, security,

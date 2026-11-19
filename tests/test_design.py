@@ -116,9 +116,9 @@ class HudTests(unittest.TestCase):
 
 class StructureTests(unittest.TestCase):
     def test_sections_are_numbered_in_reading_order(self):
-        # 02-05 share one 2×2 grid, so the DOM order is also the reading
-        # order: Session, Direct control, Look, My scenes. The two rows share
-        # one height, so the four modules keep the same width and height.
+        # Two independent stacks: Session and Look on the left, Direct control
+        # on the right. The DOM order is the reading order, and a short Session
+        # never stretches to match a tall Direct control.
         pairs = re.findall(
             r'<span class="step">(\d\d)</span>\s*<h2>([^<]+)</h2>', HTML
         )
@@ -127,25 +127,20 @@ class StructureTests(unittest.TestCase):
             [
                 ("01", "Lights"),
                 ("02", "Session"),
-                ("03", "Direct control"),
-                ("04", "Look"),
-                ("05", "My scenes"),
-                ("06", "Activity"),
+                ("03", "Look"),
+                ("04", "Direct control"),
+                ("05", "Activity"),
             ],
         )
         self.assertIn('<div class="pair">', HTML)
-        self.assertNotIn("pair-col", HTML)
-        self.assertIn("grid-template-rows: repeat(2, minmax(0, 1fr))", CSS)
-        for area in (
-            ".session-card { grid-area: 1 / 1; }",
-            ".control-card { grid-area: 1 / 2; }",
-            ".look-card { grid-area: 2 / 1; }",
-            ".scenes-card { grid-area: 2 / 2; }",
-        ):
-            with self.subTest(area=area):
-                self.assertIn(area, CSS)
+        self.assertEqual(HTML.count('class="pair-col"'), 2)
+        self.assertIn("align-content: start", CSS)
+        for area in (".session-card", ".control-card", ".look-card", ".scenes-card"):
+            with self.subTest(gone=area):
+                self.assertNotIn(f"{area} {{ grid-area:", CSS)
+        self.assertNotIn("grid-template-rows: repeat(2, minmax(0, 1fr))", CSS)
         # A collapsed card keeps its natural height instead of a tall shell.
-        self.assertIn("align-self: start", CSS)
+        self.assertIn("align-items: start", CSS)
 
     def test_the_panel_opens_without_a_quick_start_strip(self):
         self.assertNotIn("quickstart", HTML)
@@ -162,10 +157,15 @@ class StructureTests(unittest.TestCase):
         self.assertNotRegex(HTML, r'<details class="card log-card"[^>]* open')
 
     def test_zones_are_explained_visually(self):
-        self.assertIn("What a zone samples", HTML)
-        self.assertIn('class="zone-preview"', HTML)
+        # The separate Zone map column is gone; the per-light preview remains
+        # where the zone is actually chosen.
+        self.assertNotIn("What a zone samples", HTML)
+        self.assertNotIn("zone-panel", HTML)
+        self.assertNotIn("zone-panel", CSS)
+        self.assertNotIn("renderMapping", (WEB / "app.js").read_text(encoding="utf-8"))
         self.assertIn("zone-preview", CSS)
         self.assertIn("data-zone", CSS)
+        self.assertIn('"zone-preview"', (WEB / "app.js").read_text(encoding="utf-8"))
         for label in ("left edge", "right edge", "left third", "middle third", "right third"):
             with self.subTest(label=label):
                 self.assertIn(label, (WEB / "app.js").read_text(encoding="utf-8"))
@@ -230,6 +230,7 @@ class StructureTests(unittest.TestCase):
         # panel each get a CPU and a RAM line, plus the WiZ UDP rate.
         self.assertIn('id="perfSvg"', HTML)
         self.assertIn('id="perfLegend"', HTML)
+        self.assertIn('id="perfMeta"', HTML)
         self.assertIn('class="perf"', HTML)
         self.assertNotIn('class="spark"', HTML)
         self.assertNotIn('class="resources"', HTML)
@@ -246,7 +247,7 @@ class StructureTests(unittest.TestCase):
         self.assertIn('get_property_native("pid")', LUA)
         self.assertIn("stats-", CORE)
 
-    def test_power_is_a_switch_and_rooms_group_lights(self):
+    def test_power_is_a_direct_control_switch_and_rooms_target_lights(self):
         for control in (
             "rooms",
             "newRoomBtn",
@@ -257,12 +258,18 @@ class StructureTests(unittest.TestCase):
             "powerState",
             "colorChips",
             "saveColorBtn",
+            "scenesMenu",
         ):
             with self.subTest(control=control):
                 self.assertIn(f'id="{control}"', HTML)
         self.assertNotIn('id="powerOnBtn"', HTML)
         self.assertNotIn('id="powerOffBtn"', HTML)
+        # Per-bulb power is gone: power lives in Direct control only.
         js = (WEB / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn("Toggle light power", js)
+        self.assertIn("Target this room in Direct control", js)
+        self.assertIn('class="submenu" id="scenesMenu"', HTML)
+        self.assertIn("kelvinToHex", js)
         for needle in ("group:", "/api/group", "/api/color", "openRoomEditor", "renderRooms"):
             with self.subTest(needle=needle):
                 self.assertIn(needle, js)
@@ -270,6 +277,7 @@ class StructureTests(unittest.TestCase):
         self.assertIn('"colors"', WEBUI)
         self.assertIn("def set_group", WEBUI)
         self.assertIn("def save_color", WEBUI)
+        self.assertIn('"brightness"', WEBUI)
 
     def test_panel_stays_local_only(self):
         self.assertIn("127.0.0.1", WEBUI)
