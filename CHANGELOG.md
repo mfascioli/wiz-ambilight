@@ -2,7 +2,7 @@
 
 Releases before 1.4.0 were never tagged; their history is in `git log`.
 
-## Unreleased
+## 1.7.0 — 2026-11-18
 
 - **Panel:** crazy mode now pauses an attach-mode sync, restores every bulb's
   previous `getPilot` state after the burst and then resumes the sync. If the
