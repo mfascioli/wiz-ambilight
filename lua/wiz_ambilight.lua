@@ -144,6 +144,12 @@ local function emit(paused, eof, result, err)
             vh
         ),
     }
+    -- The panel samples mpv's CPU and RSS by pid. Attach mode has no parent
+    -- relationship to follow, so the pid travels in the state file itself.
+    local pid = mp.get_property_native("pid")
+    if type(pid) == "number" and pid > 0 then
+        parts[#parts + 1] = string.format(',"pid":%d', pid)
+    end
     if result and result.rect then
         parts[#parts + 1] = string.format(
             ',"rect":[%d,%d,%d,%d]',

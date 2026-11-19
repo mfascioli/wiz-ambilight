@@ -6,6 +6,7 @@ import stat
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -40,6 +41,8 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(config["brightness"], 100)
         self.assertEqual(config["mode"], "attach")
         self.assertEqual(config["lights"], {})
+        self.assertEqual(config["groups"], {})
+        self.assertEqual(config["colors"], [])
 
     def test_rejects_bad_values(self):
         config = webui.normalize_config(
@@ -85,6 +88,23 @@ class NormalizeTests(unittest.TestCase):
                 self.assertEqual(
                     webui.normalize_config({"sampling": profile}, m)["sampling"], profile
                 )
+
+    def test_rooms_and_saved_colors_are_normalized(self):
+        config = webui.normalize_config(
+            {
+                "lights": {"10.0.0.1": {}, "10.0.0.2": {}},
+                "groups": {
+                    "Desk": ["10.0.0.1", "10.0.0.9", "10.0.0.1"],
+                    "Empty": [],
+                    "  ": ["10.0.0.2"],
+                    7: [],
+                },
+                "colors": ["#ABCDEF", "red", "#abcdef", "#123456", "#12345"],
+            },
+            m,
+        )
+        self.assertEqual(config["groups"], {"Desk": ["10.0.0.1"]})
+        self.assertEqual(config["colors"], ["#abcdef", "#123456"])
 
     def test_light_fields(self):
         config = webui.normalize_config(
@@ -291,15 +311,36 @@ class DemoPanelTests(unittest.TestCase):
         self.assertIn("active", snapshot["crazy"])
         self.assertIn("resources", snapshot)
 
+    def test_mpv_pid_comes_from_a_fresh_state_file(self):
+        panel = webui.Panel(m, demo=True)
+        path = webui.runtime_dir() / "state-check.json"
+        path.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+        try:
+            # Attach mode has no parent link, so the Lua pid is the only source.
+            self.assertEqual(panel._mpv_pid(None, None), os.getpid())
+
+            stale = time.time() - 3600
+            os.utime(path, (stale, stale))
+            self.assertIsNone(panel._mpv_pid(None, None))
+        finally:
+            path.unlink(missing_ok=True)
+
     def test_resources_payload_is_well_formed(self):
         panel = webui.Panel(m, demo=True)
         resources = panel.resources()
         for key in (
             "at",
             "available",
+            "cores",
             "cpu",
             "ram_mb",
+            "cpu_wiz",
+            "ram_wiz",
+            "cpu_mpv",
+            "ram_mpv",
+            "mpv_pid",
             "network_bps",
+            "udp_kbps",
             "capture_fps",
             "capture_w",
             "capture_h",
@@ -308,8 +349,11 @@ class DemoPanelTests(unittest.TestCase):
         ):
             self.assertIn(key, resources)
         self.assertEqual(resources["network_bps"], 0.0)
+        self.assertEqual(resources["udp_kbps"], 0.0)
+        self.assertIsNone(resources["mpv_pid"])
         self.assertIsNone(resources["capture_fps"])
         self.assertIsNone(resources["video_w"])
+        self.assertGreaterEqual(resources["cores"], 1)
         if Path("/proc").is_dir():
             self.assertTrue(resources["available"])
             self.assertGreater(resources["ram_mb"], 0)
@@ -350,6 +394,41 @@ class DemoPanelTests(unittest.TestCase):
         rows = {row["ip"]: row for row in snapshot["lights"]}
         self.assertFalse(rows[first]["state"])
         self.assertNotEqual(rows[second]["state"], False)
+
+    def test_rooms_target_their_lights(self):
+        panel = webui.Panel(m, demo=True)
+        first, second, third = sorted(panel.config["lights"])[:3]
+        panel.set_group({"name": "Desk", "ips": [first, second, "8.8.8.8"]})
+        self.assertEqual(panel.config["groups"], {"Desk": [first, second]})
+
+        panel.control("all", {"power": True})
+        snapshot = panel.control("group:Desk", {"power": False})
+        rows = {row["ip"]: row for row in snapshot["lights"]}
+        self.assertFalse(rows[first]["state"])
+        self.assertFalse(rows[second]["state"])
+        self.assertTrue(rows[third]["state"])
+
+        panel.set_group({"name": "Office", "previous": "Desk", "ips": [first]})
+        self.assertEqual(panel.config["groups"], {"Office": [first]})
+
+        panel.set_group({"name": "Office", "delete": True})
+        self.assertEqual(panel.config["groups"], {})
+        with self.assertRaises(ValueError):
+            panel.control("group:Office", {"power": True})
+        with self.assertRaises(ValueError):
+            panel.set_group({"name": "Empty", "ips": []})
+
+    def test_saved_colors_add_dedupe_and_remove(self):
+        panel = webui.Panel(m, demo=True)
+        panel.save_color({"hex": "#ABCDEF"})
+        panel.save_color({"hex": "#abcdef"})
+        self.assertEqual(panel.config["colors"], ["#abcdef"])
+        panel.save_color({"hex": "#123456"})
+        self.assertEqual(panel.config["colors"], ["#abcdef", "#123456"])
+        panel.save_color({"hex": "#abcdef", "remove": True})
+        self.assertEqual(panel.config["colors"], ["#123456"])
+        with self.assertRaises(ValueError):
+            panel.save_color({"hex": "red"})
 
     def test_control_scene_and_speed(self):
         panel = webui.Panel(m, demo=True)
@@ -727,6 +806,27 @@ class HttpTests(unittest.TestCase):
     def test_control_endpoint_rejects_bad_hex(self):
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.request("/api/control", {"hex": "nope"}, self.auth_headers())
+        caught.exception.close()
+        self.assertEqual(caught.exception.code, 400)
+
+    def test_room_and_color_endpoints(self):
+        ips = sorted(self.panel.config["lights"])[:2]
+        with self.request(
+            "/api/group",
+            {"name": "Desk", "ips": ips},
+            self.auth_headers(),
+        ) as response:
+            snapshot = json.loads(response.read())
+        self.assertEqual(snapshot["config"]["groups"], {"Desk": ips})
+
+        with self.request(
+            "/api/color", {"hex": "#ABCDEF"}, self.auth_headers()
+        ) as response:
+            snapshot = json.loads(response.read())
+        self.assertEqual(snapshot["config"]["colors"], ["#abcdef"])
+
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request("/api/color", {"hex": "nope"}, self.auth_headers())
         caught.exception.close()
         self.assertEqual(caught.exception.code, 400)
 

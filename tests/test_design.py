@@ -21,6 +21,7 @@ CSS = (WEB / "style.css").read_text(encoding="utf-8")
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
 WEBUI = (ROOT / "webui.py").read_text(encoding="utf-8")
 CORE = (ROOT / "mpv_ambilight.py").read_text(encoding="utf-8")
+LUA = (ROOT / "lua" / "wiz_ambilight.lua").read_text(encoding="utf-8")
 
 
 def root_tokens():
@@ -115,9 +116,9 @@ class HudTests(unittest.TestCase):
 
 class StructureTests(unittest.TestCase):
     def test_sections_are_numbered_in_reading_order(self):
-        # The cards live in two independent columns (02/04 left, 03/05 right)
-        # so opening Direct control cannot push Look down. The numbers still
-        # match their headings, and each column holds its own stack.
+        # 02-05 share one 2×2 grid, so the DOM order is also the reading
+        # order: Session, Direct control, Look, My scenes. The two rows share
+        # one height, so the four modules keep the same width and height.
         pairs = re.findall(
             r'<span class="step">(\d\d)</span>\s*<h2>([^<]+)</h2>', HTML
         )
@@ -126,22 +127,25 @@ class StructureTests(unittest.TestCase):
             [
                 ("01", "Lights"),
                 ("02", "Session"),
-                ("04", "Look"),
                 ("03", "Direct control"),
+                ("04", "Look"),
                 ("05", "My scenes"),
                 ("06", "Activity"),
             ],
         )
-        columns = HTML.split('<div class="pair-col">')[1:]
-        self.assertEqual(len(columns), 2)
-        self.assertIn("session-card", columns[0])
-        self.assertIn("look-card", columns[0])
-        self.assertNotIn("control-card", columns[0])
-        self.assertIn("control-card", columns[1])
-        self.assertIn("scenes-card", columns[1])
-        self.assertNotIn("look-card", columns[1])
-        self.assertIn(".pair-col", CSS)
-        self.assertIn("align-content: start", CSS)
+        self.assertIn('<div class="pair">', HTML)
+        self.assertNotIn("pair-col", HTML)
+        self.assertIn("grid-template-rows: repeat(2, minmax(0, 1fr))", CSS)
+        for area in (
+            ".session-card { grid-area: 1 / 1; }",
+            ".control-card { grid-area: 1 / 2; }",
+            ".look-card { grid-area: 2 / 1; }",
+            ".scenes-card { grid-area: 2 / 2; }",
+        ):
+            with self.subTest(area=area):
+                self.assertIn(area, CSS)
+        # A collapsed card keeps its natural height instead of a tall shell.
+        self.assertIn("align-self: start", CSS)
 
     def test_the_panel_opens_without_a_quick_start_strip(self):
         self.assertNotIn("quickstart", HTML)
@@ -194,42 +198,78 @@ class StructureTests(unittest.TestCase):
         self.assertIn("SAMPLING_PROFILES", CORE)
         self.assertIn("--sampling", CORE)
 
-    def test_look_reads_as_a_signal_path(self):
-        # Sample -> color -> send, with the preset that owns each stage named.
-        # The numbers stay, but every one sits under a plain-language label.
-        self.assertIn('class="signal span-2"', HTML)
+    def test_look_reads_as_three_flat_columns(self):
+        # Preset, sample and send share the width in three equal columns.
+        # Values are flat key/value rows, not nested boxes.
+        self.assertIn('class="look-cols"', HTML)
+        self.assertEqual(HTML.count('class="look-col"'), 3)
         for stage in ("sampleStage", "colorStage", "sendStage"):
             with self.subTest(stage=stage):
                 self.assertIn(f'id="{stage}"', HTML)
+                self.assertRegex(HTML, r'class="kv" id="%s"' % stage)
         self.assertIn("A sampling preset can only lower the read rate", HTML)
         self.assertIn('id="layoutHint"', HTML)
         js = (WEB / "app.js").read_text(encoding="utf-8")
         self.assertIn("Edge band", js)
         self.assertIn("function renderStage", js)
+        self.assertIn('"kv-row"', js)
         for label in ("Frame", "Columns", "Avg pixels", "Saturation", "Brightness"):
             with self.subTest(label=label):
                 self.assertIn(f'["{label}"', js)
-        for gone in (
-            "styleHint",
-            "samplingHint",
-            "SAMPLING_HINTS",
-            "styleSpec",
-            "samplingSpec",
-            "renderSpec",
-        ):
+        for gone in ("stage-row", "stage-list", "class=\"signal", "span-2", "look-grid"):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, HTML)
+                self.assertNotIn(gone, js)
+        for gone in ("styleHint", "samplingHint", "SAMPLING_HINTS", "styleSpec", "samplingSpec", "renderSpec"):
             with self.subTest(gone=gone):
                 self.assertNotIn(gone, js)
                 self.assertNotIn(gone, HTML)
 
-    def test_resources_strip_has_cpu_ram_and_network(self):
-        self.assertEqual(HTML.count('class="spark"'), 3)
-        for control in ("resCpu", "resRam", "resNet", "sparkCpu", "sparkRam", "sparkNet"):
+    def test_activity_has_one_performance_chart(self):
+        # One frame, three unit lanes and five colored series: mpv and the
+        # panel each get a CPU and a RAM line, plus the WiZ UDP rate.
+        self.assertIn('id="perfSvg"', HTML)
+        self.assertIn('id="perfLegend"', HTML)
+        self.assertIn('class="perf"', HTML)
+        self.assertNotIn('class="spark"', HTML)
+        self.assertNotIn('class="resources"', HTML)
+        js = (WEB / "app.js").read_text(encoding="utf-8")
+        for series in ("mpvCpu", "wizCpu", "mpvRam", "wizRam", "udp"):
+            with self.subTest(series=series):
+                self.assertIn(series, js)
+        self.assertIn("PERF_LANES", js)
+        self.assertIn("renderPerfChart", js)
+        for key in ("cpu_mpv", "ram_mpv", "cpu_wiz", "ram_wiz", "udp_kbps", "cores"):
+            with self.subTest(key=key):
+                self.assertIn(key, WEBUI)
+        # The Lua state file carries mpv's pid so attach mode can sample it.
+        self.assertIn('get_property_native("pid")', LUA)
+        self.assertIn("stats-", CORE)
+
+    def test_power_is_a_switch_and_rooms_group_lights(self):
+        for control in (
+            "rooms",
+            "newRoomBtn",
+            "roomList",
+            "roomEditor",
+            "roomMembers",
+            "powerToggle",
+            "powerState",
+            "colorChips",
+            "saveColorBtn",
+        ):
             with self.subTest(control=control):
                 self.assertIn(f'id="{control}"', HTML)
+        self.assertNotIn('id="powerOnBtn"', HTML)
+        self.assertNotIn('id="powerOffBtn"', HTML)
         js = (WEB / "app.js").read_text(encoding="utf-8")
-        self.assertIn("sparkPath", js)
-        self.assertIn("network_bps", WEBUI)
-        self.assertIn("stats-", CORE)
+        for needle in ("group:", "/api/group", "/api/color", "openRoomEditor", "renderRooms"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, js)
+        self.assertIn('"groups"', WEBUI)
+        self.assertIn('"colors"', WEBUI)
+        self.assertIn("def set_group", WEBUI)
+        self.assertIn("def save_color", WEBUI)
 
     def test_panel_stays_local_only(self):
         self.assertIn("127.0.0.1", WEBUI)

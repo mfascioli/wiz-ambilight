@@ -49,6 +49,8 @@ CONFIG_KEYS = (
     "sampling_grid",
     "sampling_block",
     "sampling_capture",
+    "groups",
+    "colors",
 )
 DEFAULT_CONFIG = {
     "layout": "auto",
@@ -62,6 +64,8 @@ DEFAULT_CONFIG = {
     "sampling_grid": 80,
     "sampling_block": 1,
     "sampling_capture": "auto",
+    "groups": {},
+    "colors": [],
     "lights": {},
 }
 
@@ -216,6 +220,33 @@ def normalize_config(raw, core) -> dict:
             "firmware": str(entry.get("firmware") or "")[:20],
         }
     config["lights"] = lights
+
+    # Rooms are named sets of known bulbs. They only drive direct control, so
+    # they never feed the sync command and can change while it runs.
+    groups = {}
+    raw_groups = raw.get("groups") if isinstance(raw.get("groups"), dict) else {}
+    for name, members in raw_groups.items():
+        name = "".join(ch for ch in str(name) if ch.isprintable()).strip()[:40]
+        if not name or not isinstance(members, (list, tuple)):
+            continue
+        ips = []
+        for ip in members:
+            ip = str(ip).strip()
+            if ip in lights and ip not in ips:
+                ips.append(ip)
+        if ips:
+            groups[name] = ips
+    config["groups"] = groups
+
+    colors = []
+    raw_colors = raw.get("colors") if isinstance(raw.get("colors"), list) else []
+    for value in raw_colors:
+        value = str(value or "").strip().lower()
+        if re.fullmatch(r"#[0-9a-f]{6}", value) and value not in colors:
+            colors.append(value)
+        if len(colors) >= 12:
+            break
+    config["colors"] = colors
     return config
 
 
@@ -708,8 +739,8 @@ def _proc_stat(pid: int):
         return None
 
 
-def _process_family(roots):
-    """Every live pid in the panel/sync tree, or None when /proc is missing."""
+def _proc_table():
+    """Every readable process as pid -> (ppid, cpu ticks, rss pages)."""
     if not Path("/proc").is_dir():
         return None
     stats = {}
@@ -720,6 +751,11 @@ def _process_family(roots):
         info = _proc_stat(pid)
         if info is not None:
             stats[pid] = info
+    return stats
+
+
+def _descendants(stats, roots):
+    """The roots plus every process below them, from one /proc snapshot."""
     children = {}
     for pid, (ppid, _ticks, _rss) in stats.items():
         children.setdefault(ppid, []).append(pid)
@@ -732,6 +768,33 @@ def _process_family(roots):
         seen.add(pid)
         stack.extend(children.get(pid, ()))
     return {pid: stats[pid] for pid in seen if pid in stats}
+
+
+def _fresh_state_pid(max_age: float = 4.0):
+    """The mpv pid in the newest fresh Lua state file, or None.
+
+    Attach mode has no parent link to follow, so the Lua script writes its own
+    pid. Old scripts do not, and a stale file from a closed player is ignored.
+    """
+    try:
+        paths = list(runtime_dir().glob("state*.json"))
+    except OSError:
+        return None
+    now = time.time()
+    newest = None
+    for path in paths:
+        try:
+            modified = path.stat().st_mtime
+        except OSError:
+            continue
+        if now - modified > max_age:
+            continue
+        data = read_json(path, None)
+        pid = data.get("pid") if isinstance(data, dict) else None
+        if isinstance(pid, int) and pid > 0 and _pid_alive(pid):
+            if newest is None or modified > newest[0]:
+                newest = (modified, pid)
+    return newest[1] if newest else None
 
 
 class Panel:
@@ -749,7 +812,7 @@ class Panel:
         self._res_lock = threading.Lock()
         self._res_prev = {}
         self._res_prev_time = 0.0
-        self._res_cpu = None
+        self._res_cpu = {}
         self._crazy_stop = threading.Event()
         self._crazy_thread = None
         self._crazy_target = "all"
@@ -897,66 +960,123 @@ class Panel:
                 newest = data
         return newest
 
-    def resources(self) -> dict:
-        """CPU, RSS and WiZ UDP traffic for the panel and the sync tree.
+    def _mpv_pid(self, sync_pid, stats):
+        """The mpv process that feeds the sync, or None when it cannot be told.
 
+        The Lua script writes its own pid into the state file, which is the only
+        link in attach mode. Launch mode also has mpv as a child of the sync,
+        so an older installed script still works through the process tree.
+        """
+        pid = _fresh_state_pid()
+        if pid:
+            return pid
+        if isinstance(sync_pid, int) and stats is not None:
+            for child in _descendants(stats, [sync_pid]):
+                if child == sync_pid:
+                    continue
+                argv0 = _read_cmdline(child).split(" ", 1)[0]
+                if os.path.basename(argv0).startswith("mpv"):
+                    return child
+        return None
+
+    def resources(self) -> dict:
+        """Per-process CPU and RSS for mpv and the panel, plus WiZ UDP traffic.
+
+        CPU is a share of the whole processor: 100 % means every logical core
+        is busy, so two saturated cores on an eight-core machine read 25 %.
         Linux exposes all of this through /proc; elsewhere the function still
-        returns a well-formed payload so the strip can say "unavailable".
+        returns a well-formed payload so the chart can say "unavailable".
         """
         session = self.session.snapshot()
-        roots = [os.getpid()]
-        if session.get("running") and isinstance(session.get("pid"), int):
-            roots.append(session["pid"])
-        family = _process_family(roots)
-        available = family is not None
+        running = bool(session.get("running"))
+        sync_pid = session.get("pid") if running else None
+        if not isinstance(sync_pid, int):
+            sync_pid = None
+        stats = _proc_table()
+        available = stats is not None
         now = time.monotonic()
-        cpu = None
-        ram_mb = None
-        if family is not None:
+        cores = os.cpu_count() or 1
+        mpv_pid = self._mpv_pid(sync_pid, stats) if running else None
+
+        cpu_wiz = cpu_mpv = None
+        ram_wiz = ram_mpv = None
+        processes = 0
+        if stats is not None:
+            roots = [os.getpid()]
+            if sync_pid:
+                roots.append(sync_pid)
+            wiz = _descendants(stats, roots)
+            mpv = _descendants(stats, [mpv_pid]) if mpv_pid else {}
+            # In launch mode mpv is a child of the sync; never count it twice.
+            wiz = {pid: info for pid, info in wiz.items() if pid not in mpv}
             page_size = _sysconf("SC_PAGE_SIZE", 4096)
-            ram_mb = round(
-                sum(info[2] for info in family.values()) * page_size / (1024 * 1024), 1
+            ram_wiz = round(
+                sum(info[2] for info in wiz.values()) * page_size / (1024 * 1024), 1
             )
-            ticks = {pid: info[1] for pid, info in family.items()}
+            if mpv:
+                ram_mpv = round(
+                    sum(info[2] for info in mpv.values()) * page_size / (1024 * 1024), 1
+                )
+            processes = len(wiz) + len(mpv)
+            ticks_wiz = {pid: info[1] for pid, info in wiz.items()}
+            ticks_mpv = {pid: info[1] for pid, info in mpv.items()}
             with self._res_lock:
                 if self._res_prev and now - self._res_prev_time >= 0.4:
                     elapsed = now - self._res_prev_time
-                    shared = ticks.keys() & self._res_prev.keys()
-                    delta = sum(max(0, ticks[pid] - self._res_prev[pid]) for pid in shared)
-                    cpu = round(delta / _sysconf("SC_CLK_TCK", 100) / elapsed * 100.0, 1)
-                    self._res_cpu = cpu
-                elif self._res_cpu is not None:
-                    cpu = self._res_cpu
+                    clock = _sysconf("SC_CLK_TCK", 100)
+
+                    def share(ticks):
+                        shared = ticks.keys() & self._res_prev.keys()
+                        delta = sum(max(0, ticks[pid] - self._res_prev[pid]) for pid in shared)
+                        return round(delta / clock / elapsed / cores * 100.0, 2)
+
+                    cpu_wiz = share(ticks_wiz)
+                    cpu_mpv = share(ticks_mpv) if ticks_mpv else None
+                    self._res_cpu = {"wiz": cpu_wiz, "mpv": cpu_mpv}
+                else:
+                    cpu_wiz = self._res_cpu.get("wiz")
+                    cpu_mpv = self._res_cpu.get("mpv") if ticks_mpv else None
                 if not self._res_prev or now - self._res_prev_time >= 0.4:
-                    self._res_prev = ticks
+                    self._res_prev = {**ticks_wiz, **ticks_mpv}
                     self._res_prev_time = now
 
-        running = bool(session.get("running"))
-        stats = self._sync_stats(session.get("pid")) if running else None
+        stats_file = self._sync_stats(sync_pid) if running else None
         network_bps = 0.0
         if running:
             network_bps = None
-            if stats is not None and isinstance(stats.get("tx_bps"), (int, float)):
-                network_bps = round(float(stats["tx_bps"]), 1)
+            if stats_file is not None and isinstance(stats_file.get("tx_bps"), (int, float)):
+                network_bps = round(float(stats_file["tx_bps"]), 1)
+        udp_kbps = (
+            round(network_bps / 1024.0, 2)
+            if isinstance(network_bps, (int, float))
+            else None
+        )
 
         def number(key):
-            value = stats.get(key) if stats else None
+            value = stats_file.get(key) if stats_file else None
             return value if isinstance(value, (int, float)) else None
 
         return {
             "at": time.time(),
             "available": available,
-            "cpu": cpu,
-            "ram_mb": ram_mb,
-            "processes": len(family) if family else 0,
+            "cores": cores,
+            "cpu": cpu_wiz,
+            "ram_mb": ram_wiz,
+            "cpu_wiz": cpu_wiz,
+            "ram_wiz": ram_wiz,
+            "cpu_mpv": cpu_mpv,
+            "ram_mpv": ram_mpv,
+            "mpv_pid": mpv_pid,
+            "processes": processes,
             "network_bps": network_bps,
-            "network_ready": stats is not None,
+            "udp_kbps": udp_kbps,
+            "network_ready": stats_file is not None,
             "capture_fps": number("capture_fps"),
             "capture_w": number("w"),
             "capture_h": number("h"),
             "video_w": number("vw"),
             "video_h": number("vh"),
-            "capture": stats.get("capture") if stats else None,
+            "capture": stats_file.get("capture") if stats_file else None,
         }
 
     def snapshot(self) -> dict:
@@ -1019,7 +1139,10 @@ class Panel:
             if self.demo:
                 self.config["dry_run"] = True
             self._persist()
-        if self.session.running() and ("lights" in patch or any(k in patch for k in CONFIG_KEYS)):
+        if self.session.running() and (
+            "lights" in patch
+            or any(k in patch for k in CONFIG_KEYS if k not in ("groups", "colors"))
+        ):
             self.restart()
         return self.snapshot()
 
@@ -1033,6 +1156,64 @@ class Panel:
             self._persist()
         if self.session.running():
             self.restart()
+        return self.snapshot()
+
+    def set_group(self, payload: dict) -> dict:
+        """Create, rename, update or delete a room.
+
+        Rooms only steer direct control, so changing one never restarts the
+        sync. A rename is one request: `previous` names the old key.
+        """
+        if not isinstance(payload, dict):
+            raise ValueError("expected a JSON object")
+        name = "".join(
+            ch for ch in str(payload.get("name") or "") if ch.isprintable()
+        ).strip()[:40]
+        if not name:
+            raise ValueError("give the room a name")
+        previous = "".join(
+            ch for ch in str(payload.get("previous") or "") if ch.isprintable()
+        ).strip()[:40]
+        with self.lock:
+            groups = json.loads(json.dumps(self.config["groups"]))
+            if payload.get("delete"):
+                if name not in groups:
+                    raise ValueError("unknown room")
+                groups.pop(name, None)
+            else:
+                raw_ips = payload.get("ips")
+                if not isinstance(raw_ips, list):
+                    raise ValueError("ips must be a list")
+                members = []
+                for ip in raw_ips:
+                    ip = str(ip).strip()
+                    if ip in self.config["lights"] and ip not in members:
+                        members.append(ip)
+                if not members:
+                    raise ValueError("a room needs at least one light")
+                if previous and previous != name:
+                    groups.pop(previous, None)
+                groups[name] = members
+            self.config["groups"] = groups
+            self._persist()
+        return self.snapshot()
+
+    def save_color(self, payload: dict) -> dict:
+        """Add or remove a saved color without touching the running sync."""
+        if not isinstance(payload, dict):
+            raise ValueError("expected a JSON object")
+        value = str(payload.get("hex") or "").strip().lower()
+        if not re.fullmatch(r"#[0-9a-f]{6}", value):
+            raise ValueError("use a hex color like #ff8800")
+        with self.lock:
+            colors = list(self.config["colors"])
+            if payload.get("remove"):
+                colors = [color for color in colors if color != value]
+            elif value not in colors:
+                colors.append(value)
+                colors = colors[-12:]
+            self.config["colors"] = colors
+            self._persist()
         return self.snapshot()
 
     def restart(self) -> None:
@@ -1059,6 +1240,12 @@ class Panel:
     def _target_ips(self, target: str):
         target = str(target or "all")
         with self.lock:
+            if target.startswith("group:"):
+                name = target[len("group:"):]
+                ips = list(self.config["groups"].get(name, []))
+                if not ips:
+                    raise ValueError("unknown room")
+                return ips
             if target in ("all", "enabled"):
                 pairs = enabled_lights(self.config) if target == "enabled" else None
                 if pairs is not None:
@@ -1553,6 +1740,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(
                     self.panel.set_light(str(payload.get("ip") or ""), payload)
                 )
+            elif path == "/api/group":
+                self._json(self.panel.set_group(payload))
+            elif path == "/api/color":
+                self._json(self.panel.save_color(payload))
             elif path == "/api/scan":
                 count = self.panel.scan()
                 snapshot = self.panel.snapshot()

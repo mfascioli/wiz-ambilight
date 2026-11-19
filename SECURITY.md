@@ -54,9 +54,9 @@ Every surface is listed here; if it is not in this table, it does not exist.
 | --- | --- | --- | --- |
 | `127.0.0.1:8765` TCP | only with `--gui` | serve the local panel | loopback bind, Host/Origin checks, per-run token, strict CSP |
 | ephemeral UDP source port | during sync, discovery and direct control | send `setPilot`/`getPilot` and read replies | not a service, no `listen`/`accept`, short timeouts, no `bind` to a public interface |
-| `state-<pid>.json`, `control.json` | during sync | hand zone colors from mpv to Python | runtime dir `0700` |
+| `state-<pid>.json`, `control.json` | during sync | hand zone colors and mpv's pid from mpv to Python | runtime dir `0700` |
 | `stats-<pid>.json` | during sync, once a second | let the panel graph capture rate and real UDP traffic | runtime dir `0700`, removed on exit, ignored when older than 6 s or owned by another PID |
-| `lights.json`, `scenes.json` | panel | names, zones and saved looks | files `0600`; values range-checked |
+| `lights.json`, `scenes.json` | panel | names, zones, rooms, saved colors and saved looks | files `0600`; values range-checked |
 
 There is no inbound TCP service other than the optional panel, no UDP listener
 started by design, and no internet endpoint.
@@ -119,7 +119,7 @@ What has **not** been done:
 - no fuzzing of the UDP parsers or of the panel's JSON bodies;
 - no test on Windows, where the runtime directory, the Lua install path and
   the file picker still assume Unix — see the roadmap in the
-  [README](README.md#roadmap).
+  [README](README.md#-roadmap).
 
 ## Limits
 

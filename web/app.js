@@ -32,8 +32,8 @@ const refs = {
   targetSelect: document.getElementById("targetSelect"),
   targetPill: document.getElementById("targetPill"),
   controlNote: document.getElementById("controlNote"),
-  powerOnBtn: document.getElementById("powerOnBtn"),
-  powerOffBtn: document.getElementById("powerOffBtn"),
+  powerToggle: document.getElementById("powerToggle"),
+  powerState: document.getElementById("powerState"),
   controlBrightness: document.getElementById("controlBrightness"),
   controlBrightnessOut: document.getElementById("controlBrightnessOut"),
   controlTemp: document.getElementById("controlTemp"),
@@ -82,16 +82,22 @@ const refs = {
   dryRun: document.getElementById("dryRun"),
   mapping: document.getElementById("mapping"),
   log: document.getElementById("log"),
+  logCard: document.getElementById("logCard"),
   clearLog: document.getElementById("clearLog"),
   configPath: document.getElementById("configPath"),
-  resources: document.getElementById("resources"),
-  resCpu: document.getElementById("resCpu"),
-  resRam: document.getElementById("resRam"),
-  resNet: document.getElementById("resNet"),
-  resNote: document.getElementById("resNote"),
-  sparkCpu: document.getElementById("sparkCpu"),
-  sparkRam: document.getElementById("sparkRam"),
-  sparkNet: document.getElementById("sparkNet"),
+  perf: document.getElementById("perf"),
+  perfLegend: document.getElementById("perfLegend"),
+  perfSvg: document.getElementById("perfSvg"),
+  rooms: document.getElementById("rooms"),
+  newRoomBtn: document.getElementById("newRoomBtn"),
+  roomList: document.getElementById("roomList"),
+  roomEditor: document.getElementById("roomEditor"),
+  roomName: document.getElementById("roomName"),
+  roomMembers: document.getElementById("roomMembers"),
+  roomSaveBtn: document.getElementById("roomSaveBtn"),
+  roomCancelBtn: document.getElementById("roomCancelBtn"),
+  saveColorBtn: document.getElementById("saveColorBtn"),
+  colorChips: document.getElementById("colorChips"),
   toast: document.getElementById("toast"),
 };
 
@@ -105,8 +111,11 @@ const state = {
   busy: false,
   closed: false,
   scenesSignature: "",
-  resourceAt: 0,
-  resourceHistory: { cpu: [], ram: [], net: [] },
+  perfAt: 0,
+  perf: { mpvCpu: [], wizCpu: [], mpvRam: [], wizRam: [], udp: [] },
+  perfTimes: [],
+  roomsSignature: "",
+  roomArmed: null,
 };
 
 // --------------------------------------------------------------------- utils
@@ -184,12 +193,24 @@ function targetIp() {
   return refs.targetSelect.value || "all";
 }
 
+function targetLights(snapshot) {
+  const value = targetIp();
+  const lights = snapshot?.lights || [];
+  if (value === "all") return lights;
+  if (value.startsWith("group:")) {
+    const ips = snapshot?.config?.groups?.[value.slice(6)] || [];
+    return lights.filter((light) => ips.includes(light.ip));
+  }
+  return lights.filter((light) => light.ip === value);
+}
+
 function targetLight(snapshot) {
-  const ip = targetIp();
-  return (snapshot?.lights || []).find((light) => light.ip === ip) || null;
+  return targetLights(snapshot)[0] || null;
 }
 
 function targetName(snapshot) {
+  const value = targetIp();
+  if (value.startsWith("group:")) return value.slice(6);
   const light = targetLight(snapshot);
   if (light) return light.name || light.ip;
   return "all lights";
@@ -499,7 +520,7 @@ function autoSampling(height) {
 function renderStage(list, rows) {
   if (!list) return;
   while (list.children.length < rows.length) {
-    const row = el("div", "stage-row");
+    const row = el("div", "kv-row");
     row.append(el("dt", "", ""), el("dd", "", ""));
     list.append(row);
   }
@@ -642,13 +663,23 @@ function renderMapping(snapshot) {
 }
 
 function fillTargetOptions(snapshot) {
-  const signature = snapshot.lights.map((light) => `${light.ip}:${light.name}`).join("|");
+  const groups = snapshot.config.groups || {};
+  const signature = JSON.stringify([
+    snapshot.lights.map((light) => `${light.ip}:${light.name}`),
+    Object.keys(groups).sort().map((name) => [name, groups[name]]),
+  ]);
   if (refs.targetSelect.dataset.signature === signature) return;
   const wanted = refs.targetSelect.value || "all";
   refs.targetSelect.replaceChildren();
   const all = el("option", "", "All lights");
   all.value = "all";
   refs.targetSelect.append(all);
+  for (const name of Object.keys(groups).sort((a, b) => a.localeCompare(b))) {
+    const count = groups[name].length;
+    const option = el("option", "", `${name} · ${count} ${count === 1 ? "light" : "lights"}`);
+    option.value = `group:${name}`;
+    refs.targetSelect.append(option);
+  }
   for (const light of snapshot.lights) {
     const option = el("option", "", light.name ? `${light.name} · ${light.ip}` : light.ip);
     option.value = light.ip;
@@ -719,7 +750,8 @@ function renderControl(snapshot) {
   fillTargetOptions(snapshot);
   fillSceneOptions(snapshot);
 
-  const light = targetLight(snapshot);
+  const lights = targetLights(snapshot);
+  const light = lights[0] || null;
   const isAll = targetIp() === "all";
   refs.targetPill.textContent = isAll ? "all lights" : targetName(snapshot);
   refs.controlNote.textContent = snapshot.session.running
@@ -727,11 +759,15 @@ function renderControl(snapshot) {
     : "Control bulbs without starting Ambilight.";
 
   const hasLights = snapshot.lights.length > 0;
-  refs.powerOnBtn.disabled = !hasLights;
-  refs.powerOffBtn.disabled = !hasLights;
+  const hasTarget = lights.length > 0;
+  const anyOn = lights.some((row) => row.state);
   refs.applyColorBtn.disabled = !hasLights;
   refs.applySceneBtn.disabled = !hasLights || !refs.sceneSelect.options.length;
   refs.saveSceneBtn.disabled = !hasLights;
+  refs.powerToggle.disabled = !hasTarget;
+  if (document.activeElement !== refs.powerToggle) refs.powerToggle.checked = anyOn;
+  refs.powerState.textContent = hasTarget ? (anyOn ? "On" : "Off") : "—";
+  refs.powerState.classList.toggle("on", anyOn);
 
   if (!light) return;
   if (document.activeElement !== refs.controlBrightness) {
@@ -826,85 +862,470 @@ function renderLog(snapshot) {
   }
 }
 
-const SPARK_W = 110;
-const SPARK_H = 20;
-const RESOURCE_HISTORY = 36;
+const PERF_SAMPLES = 60;
 
-function pushResource(kind, value) {
-  const series = state.resourceHistory[kind];
-  series.push(typeof value === "number" && Number.isFinite(value) ? value : null);
-  if (series.length > RESOURCE_HISTORY) series.splice(0, series.length - RESOURCE_HISTORY);
+/* One chart frame, three lanes by unit. CPU, MB and KB/s cannot share an
+   honest axis, so each lane has its own scale; the colors tell the processes
+   apart. These are chalk tones, not the amber accent: the accent stays for the
+   chrome. */
+const PERF_LANES = [
+  {
+    label: "CPU %",
+    min: 5,
+    format: (value) => `${value < 10 ? value.toFixed(1) : Math.round(value)}%`,
+    series: [
+      {
+        key: "mpvCpu",
+        label: "mpv CPU",
+        color: "#e08c82",
+        tip: "mpv's share of the whole processor",
+      },
+      {
+        key: "wizCpu",
+        label: "wiz CPU",
+        color: "#9fcf9f",
+        tip: "Panel and sync share of the whole processor",
+      },
+    ],
+  },
+  {
+    label: "RAM MB",
+    min: 10,
+    format: (value) => `${Math.round(value)} MB`,
+    series: [
+      {
+        key: "mpvRam",
+        label: "mpv RAM",
+        color: "#fcbe11",
+        tip: "mpv's resident memory",
+      },
+      {
+        key: "wizRam",
+        label: "wiz RAM",
+        color: "#8fb6db",
+        tip: "Panel and sync resident memory",
+      },
+    ],
+  },
+  {
+    label: "UDP KB/s",
+    min: 1,
+    format: (value) => `${value < 10 ? value.toFixed(1) : Math.round(value)} KB/s`,
+    series: [
+      {
+        key: "udp",
+        label: "WiZ UDP",
+        color: "#b9a0d8",
+        tip: "Datagrams the sync sends to the bulbs",
+      },
+    ],
+  },
+];
+
+function svgNode(tag, attrs) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [name, value] of Object.entries(attrs || {})) node.setAttribute(name, String(value));
+  return node;
 }
 
-function sparkPath(values, zeroBased) {
-  const numbers = values.filter((value) => typeof value === "number" && Number.isFinite(value));
-  if (numbers.length < 2) return "";
-  const max = Math.max(...numbers);
-  const min = zeroBased ? 0 : Math.min(...numbers);
-  const span = max - min;
-  const step = SPARK_W / Math.max(1, values.length - 1);
-  let path = "";
-  let pen = false;
-  values.forEach((value, index) => {
-    if (typeof value !== "number" || !Number.isFinite(value)) {
-      pen = false;
-      return;
-    }
-    const x = index * step;
-    const y = span ? SPARK_H - 2 - ((value - min) / span) * (SPARK_H - 4) : (zeroBased ? SPARK_H - 2 : SPARK_H / 2);
-    path += `${pen ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)} `;
-    pen = true;
-  });
-  return path.trim();
+/* Round a peak up to a readable maximum: 0.42 -> 0.5, 37 -> 40, 230 -> 250. */
+function niceCeil(value) {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  const exponent = Math.floor(Math.log10(value));
+  const base = 10 ** exponent;
+  const fraction = value / base;
+  const steps = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+  const step = steps.find((candidate) => fraction <= candidate) || 10;
+  return step * base;
 }
 
-function formatRate(bps) {
-  if (typeof bps !== "number" || !Number.isFinite(bps)) return "—";
-  if (bps < 1024) return `${Math.round(bps)} B/s`;
-  if (bps < 1024 * 1024) return `${(bps / 1024).toFixed(1)} KB/s`;
-  return `${(bps / (1024 * 1024)).toFixed(2)} MB/s`;
-}
-
-function renderResources(snapshot) {
-  const res = snapshot.resources || {};
-  if (res.at && res.at !== state.resourceAt) {
-    state.resourceAt = res.at;
-    pushResource("cpu", res.available ? res.cpu : null);
-    pushResource("ram", res.available ? res.ram_mb : null);
-    pushResource("net", res.network_bps);
+function lastValue(values) {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    const value = values[index];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
   }
+  return null;
+}
 
-  refs.resCpu.textContent = res.available
-    ? (typeof res.cpu === "number" ? `${res.cpu >= 10 ? Math.round(res.cpu) : res.cpu.toFixed(1)}%` : "—")
-    : "n/a";
-  refs.resRam.textContent = res.available && typeof res.ram_mb === "number"
-    ? `${Math.round(res.ram_mb)} MB`
-    : (res.available ? "—" : "n/a");
-  refs.resNet.textContent = formatRate(res.network_bps);
+function formatMetric(key, value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  if (key.endsWith("Cpu")) return `${value < 1 ? value.toFixed(2) : value.toFixed(1)}%`;
+  if (key.endsWith("Ram")) return `${Math.round(value)} MB`;
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} KB/s`;
+}
 
-  refs.sparkCpu.setAttribute("d", sparkPath(state.resourceHistory.cpu, true));
-  refs.sparkRam.setAttribute("d", sparkPath(state.resourceHistory.ram, false));
-  refs.sparkNet.setAttribute("d", sparkPath(state.resourceHistory.net, true));
+function pushPerf(res) {
+  if (!res.at || res.at === state.perfAt) return;
+  state.perfAt = res.at;
+  const incoming = {
+    mpvCpu: res.cpu_mpv,
+    wizCpu: res.cpu_wiz,
+    mpvRam: res.ram_mpv,
+    wizRam: res.ram_wiz,
+    udp: res.udp_kbps,
+  };
+  for (const [key, series] of Object.entries(state.perf)) {
+    const value = incoming[key];
+    series.push(typeof value === "number" && Number.isFinite(value) ? value : null);
+    if (series.length > PERF_SAMPLES) series.splice(0, series.length - PERF_SAMPLES);
+  }
+  state.perfTimes.push(res.at);
+  if (state.perfTimes.length > PERF_SAMPLES) {
+    state.perfTimes.splice(0, state.perfTimes.length - PERF_SAMPLES);
+  }
+}
 
-  const bits = [snapshot.session.running ? "panel + sync" : "panel only"];
-  const capW = typeof res.capture_w === "number" ? Math.round(res.capture_w) : null;
-  const capH = typeof res.capture_h === "number" ? Math.round(res.capture_h) : null;
-  const srcW = typeof res.video_w === "number" ? Math.round(res.video_w) : null;
-  const srcH = typeof res.video_h === "number" ? Math.round(res.video_h) : null;
-  if (srcW && srcH) {
-    bits.push(`${srcW}×${srcH}`);
-    if (capW && capH && (capW !== srcW || capH !== srcH)) bits.push(`cap ${capW}×${capH}`);
-  } else if (capW && capH) {
-    bits.push(`${capW}×${capH}`);
+function renderPerfLegend(res) {
+  refs.perfLegend.replaceChildren();
+  const cores = Number(res.cores) || 0;
+  for (const lane of PERF_LANES) {
+    for (const series of lane.series) {
+      const item = el("span", "legend-item");
+      const swatch = el("span", "legend-swatch");
+      swatch.style.setProperty("--c", series.color);
+      item.append(
+        swatch,
+        el("span", "", series.label),
+        el("span", "legend-value", formatMetric(series.key, lastValue(state.perf[series.key]))),
+      );
+      item.title = cores ? `${series.tip} · 100% = all ${cores} cores busy` : series.tip;
+      refs.perfLegend.append(item);
+    }
+  }
+}
+
+function renderPerfChart(res) {
+  const svg = refs.perfSvg;
+  if (!svg) return;
+  const width = Math.max(320, Math.round(svg.clientWidth || 720));
+  const height = Math.max(140, Math.round(svg.clientHeight || 206));
+  const left = 46;
+  const right = 10;
+  const top = 8;
+  const bottom = 18;
+  const plotW = width - left - right;
+  const laneH = (height - top - bottom) / 3;
+  const stepX = plotW / (PERF_SAMPLES - 1);
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.replaceChildren();
+
+  const mono = "ui-monospace, Menlo, Consolas, monospace";
+  const time = (x, text, anchor) => {
+    const node = svgNode("text", {
+      x,
+      y: height - 4,
+      "text-anchor": anchor,
+      fill: "#6f6b62",
+      "font-family": mono,
+      "font-size": 8,
+    });
+    node.textContent = text;
+    return node;
+  };
+  const span = state.perfTimes.length >= 2
+    ? Math.max(1, Math.round(state.perfTimes[state.perfTimes.length - 1] - state.perfTimes[0]))
+    : PERF_SAMPLES;
+  svg.append(time(left, `−${span} s`, "start"));
+  svg.append(time(left + plotW / 2, `−${Math.round(span / 2)} s`, "middle"));
+  svg.append(time(left + plotW, "now", "end"));
+
+  [0, 0.5, 1].forEach((fraction) => {
+    const x = left + plotW * fraction;
+    svg.append(
+      svgNode("line", {
+        x1: x,
+        y1: top,
+        x2: x,
+        y2: height - bottom,
+        stroke: "rgba(255,255,255,0.045)",
+        "stroke-width": 1,
+      }),
+    );
+  });
+
+  PERF_LANES.forEach((lane, laneIndex) => {
+    const laneTop = top + laneIndex * laneH;
+    const laneBottom = laneTop + laneH;
+    if (laneIndex > 0) {
+      svg.append(
+        svgNode("line", {
+          x1: 0,
+          y1: laneTop,
+          x2: width,
+          y2: laneTop,
+          stroke: "rgba(255,255,255,0.10)",
+          "stroke-width": 1,
+        }),
+      );
+    }
+
+    const numbers = lane.series.flatMap((series) =>
+      state.perf[series.key].filter((value) => Number.isFinite(value)),
+    );
+    const peak = numbers.length ? Math.max(...numbers) : 0;
+    const max = niceCeil(Math.max(peak * 1.15, lane.min));
+    const usable = laneH - 12;
+
+    const label = svgNode("text", {
+      x: left - 8,
+      y: laneTop + 10,
+      "text-anchor": "end",
+      fill: "#8a857a",
+      "font-family": mono,
+      "font-size": 7.5,
+      "letter-spacing": "0.06em",
+    });
+    label.textContent = lane.label;
+    svg.append(label);
+
+    const cap = svgNode("text", {
+      x: width - right,
+      y: laneTop + 10,
+      "text-anchor": "end",
+      fill: "#6f6b62",
+      "font-family": mono,
+      "font-size": 7,
+    });
+    cap.textContent = lane.format(max);
+    svg.append(cap);
+
+    [0.25, 0.5, 0.75].forEach((fraction) => {
+      const y = laneBottom - 4 - fraction * usable;
+      svg.append(
+        svgNode("line", {
+          x1: left,
+          y1: y,
+          x2: width - right,
+          y2: y,
+          stroke: "rgba(255,255,255,0.05)",
+          "stroke-width": 1,
+          "stroke-dasharray": "1 3",
+        }),
+      );
+    });
+
+    for (const series of lane.series) {
+      const values = state.perf[series.key];
+      let path = "";
+      let pen = false;
+      values.forEach((value, index) => {
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+          pen = false;
+          return;
+        }
+        const x = left + index * stepX;
+        const y = laneBottom - 4 - Math.min(1, value / max) * usable;
+        path += `${pen ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)} `;
+        pen = true;
+      });
+      if (!path) continue;
+      svg.append(
+        svgNode("path", {
+          d: path.trim(),
+          fill: "none",
+          stroke: series.color,
+          "stroke-width": 1.7,
+          "stroke-linejoin": "round",
+          "stroke-linecap": "round",
+          "vector-effect": "non-scaling-stroke",
+        }),
+      );
+    }
+  });
+
+  if (!res.available) {
+    const note = svgNode("text", {
+      x: width / 2,
+      y: height / 2,
+      "text-anchor": "middle",
+      fill: "#6f6b62",
+      "font-family": mono,
+      "font-size": 9,
+    });
+    note.textContent = "CPU and RAM need /proc (Linux)";
+    svg.append(note);
+  }
+}
+
+function renderPerf(snapshot) {
+  const res = snapshot.resources || {};
+  pushPerf(res);
+  renderPerfLegend(res);
+  renderPerfChart(res);
+
+  const bits = [];
+  const videoW = typeof res.video_w === "number" ? Math.round(res.video_w) : null;
+  const videoH = typeof res.video_h === "number" ? Math.round(res.video_h) : null;
+  const captureW = typeof res.capture_w === "number" ? Math.round(res.capture_w) : null;
+  const captureH = typeof res.capture_h === "number" ? Math.round(res.capture_h) : null;
+  if (videoW && videoH) bits.push(`video ${videoW}×${videoH}`);
+  if (captureW && captureH && (captureW !== videoW || captureH !== videoH)) {
+    bits.push(`capture ${captureW}×${captureH}`);
   }
   if (typeof res.capture_fps === "number" && res.capture_fps > 0) {
     bits.push(`${res.capture_fps.toFixed(1)} fps`);
   }
-  refs.resNote.textContent = bits.join(" · ");
-  refs.resources.title = res.available
-    ? `Panel and sync tree · ${res.processes} process${res.processes === 1 ? "" : "es"} · ` +
-      `WiZ UDP ${formatRate(res.network_bps)}`
-    : "CPU and RAM need Linux /proc; the network counter still works";
+  if (typeof res.processes === "number" && res.processes > 0) {
+    bits.push(`${res.processes} process${res.processes === 1 ? "" : "es"}`);
+  }
+  if (typeof res.mpv_pid === "number") bits.push(`mpv pid ${res.mpv_pid}`);
+  refs.perf.title = res.available
+    ? bits.join(" · ")
+    : "CPU and RAM need Linux /proc; WiZ UDP still comes from the sync stats";
+}
+
+// ---------------------------------------------------------------------- rooms
+
+function renderRooms(snapshot) {
+  const groups = snapshot.config.groups || {};
+  const lights = snapshot.lights || [];
+  const names = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+  const signature = JSON.stringify([
+    names.map((name) => [name, groups[name]]),
+    lights.map((light) => [light.ip, light.state, light.online, light.name]),
+    state.roomArmed,
+  ]);
+  if (signature === state.roomsSignature) return;
+  state.roomsSignature = signature;
+  refs.roomList.replaceChildren();
+
+  if (!names.length) {
+    refs.roomList.append(
+      el("span", "room-empty", "No rooms yet — group lights to switch them together."),
+    );
+    return;
+  }
+
+  for (const name of names) {
+    const members = lights.filter((light) => groups[name].includes(light.ip));
+    const anyOn = members.some((light) => light.state);
+    const row = el("div", "room");
+    row.classList.toggle("on", anyOn);
+
+    const text = el("button", "room-text");
+    text.type = "button";
+    text.title = "Edit this room";
+    text.append(
+      el("b", "", name),
+      el("i", "", `${members.length} ${members.length === 1 ? "light" : "lights"}`),
+    );
+    text.addEventListener("click", () => openRoomEditor(name));
+
+    const toggle = el("label", "switch");
+    toggle.title = `Turn ${name} on or off`;
+    const toggleInput = document.createElement("input");
+    toggleInput.type = "checkbox";
+    toggleInput.checked = anyOn;
+    toggleInput.setAttribute("aria-label", `Power ${name}`);
+    toggleInput.addEventListener("change", () => {
+      action(
+        "/api/control",
+        { target: `group:${name}`, power: toggleInput.checked },
+        `${name} ${toggleInput.checked ? "on" : "off"}`,
+      );
+    });
+    toggle.append(toggleInput, el("span"));
+
+    const remove = el("button", "room-delete", state.roomArmed === name ? "!" : "×");
+    remove.type = "button";
+    remove.title = state.roomArmed === name ? "Press again to delete" : "Delete this room";
+    remove.classList.toggle("armed", state.roomArmed === name);
+    remove.addEventListener("click", () => {
+      if (state.roomArmed !== name) {
+        state.roomArmed = name;
+        renderRooms(state.snapshot);
+        window.setTimeout(() => {
+          if (state.roomArmed === name) {
+            state.roomArmed = null;
+            renderRooms(state.snapshot);
+          }
+        }, 3000);
+        return;
+      }
+      state.roomArmed = null;
+      action("/api/group", { name, delete: true }, `Deleted room “${name}”`);
+    });
+
+    row.append(el("span", "room-dot"), text, toggle, remove);
+    refs.roomList.append(row);
+  }
+}
+
+function openRoomEditor(name) {
+  const snapshot = state.snapshot;
+  if (!snapshot) return;
+  const selected = new Set(snapshot.config.groups?.[name] || []);
+  refs.roomName.value = name || "";
+  refs.roomMembers.replaceChildren();
+  for (const light of snapshot.lights) {
+    const label = el("label", "room-member");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.value = light.ip;
+    box.checked = selected.has(light.ip);
+    label.append(box, el("span", "", light.name || light.ip));
+    refs.roomMembers.append(label);
+  }
+  if (!snapshot.lights.length) {
+    refs.roomMembers.append(el("span", "room-empty", "No lights known yet."));
+  }
+  refs.roomEditor.dataset.editing = name || "";
+  refs.roomEditor.classList.remove("hidden");
+  refs.roomName.focus();
+  refs.roomName.select();
+}
+
+function closeRoomEditor() {
+  refs.roomEditor.dataset.editing = "";
+  refs.roomEditor.classList.add("hidden");
+}
+
+function saveRoom() {
+  const name = refs.roomName.value.trim();
+  if (!name) {
+    toast("Give the room a name first.", true);
+    refs.roomName.focus();
+    return;
+  }
+  const ips = [...refs.roomMembers.querySelectorAll("input[type=checkbox]")]
+    .filter((box) => box.checked)
+    .map((box) => box.value);
+  if (!ips.length) {
+    toast("Pick at least one light for this room.", true);
+    return;
+  }
+  const previous = refs.roomEditor.dataset.editing || "";
+  action("/api/group", { name, ips, previous }, `Room “${name}” saved`).then((data) => {
+    if (data) closeRoomEditor();
+  });
+}
+
+// --------------------------------------------------------------------- colors
+
+function renderColors(snapshot) {
+  const colors = snapshot.config.colors || [];
+  refs.colorChips.replaceChildren();
+  if (!colors.length) {
+    refs.colorChips.append(el("span", "swatch-empty", "No saved colors."));
+    return;
+  }
+  for (const hex of colors) {
+    const chip = el("button", "color-chip");
+    chip.type = "button";
+    chip.style.setProperty("--c", hex);
+    chip.title = `${hex} — click to apply, Shift+click to remove`;
+    chip.setAttribute("aria-label", `Apply ${hex}`);
+    chip.addEventListener("click", (event) => {
+      if (event.shiftKey) {
+        action("/api/color", { hex, remove: true }, `Removed ${hex}`);
+        return;
+      }
+      refs.controlColor.value = hex;
+      refs.controlHex.value = hex;
+      sendControl({ hex }, `Color ${hex}`, chip);
+    });
+    refs.colorChips.append(chip);
+  }
 }
 
 function apply(snapshot) {
@@ -923,7 +1344,9 @@ function apply(snapshot) {
   renderMapping(snapshot);
   renderLua(snapshot);
   renderLog(snapshot);
-  renderResources(snapshot);
+  renderRooms(snapshot);
+  renderColors(snapshot);
+  renderPerf(snapshot);
 }
 
 // --------------------------------------------------------------------- events
@@ -1056,12 +1479,44 @@ refs.clearLog.addEventListener("click", () => {
 refs.targetSelect.addEventListener("change", () => {
   if (state.snapshot) renderControl(state.snapshot);
 });
-refs.powerOnBtn.addEventListener("click", () =>
-  sendControl({ power: true }, `${targetName(state.snapshot)} on`, refs.powerOnBtn),
-);
-refs.powerOffBtn.addEventListener("click", () =>
-  sendControl({ power: false }, `${targetName(state.snapshot)} off`, refs.powerOffBtn),
-);
+refs.powerToggle.addEventListener("change", () => {
+  const on = refs.powerToggle.checked;
+  sendControl({ power: on }, `${targetName(state.snapshot)} ${on ? "on" : "off"}`);
+});
+refs.newRoomBtn.addEventListener("click", () => openRoomEditor(""));
+refs.roomSaveBtn.addEventListener("click", saveRoom);
+refs.roomCancelBtn.addEventListener("click", closeRoomEditor);
+refs.roomName.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    saveRoom();
+  }
+  if (event.key === "Escape") closeRoomEditor();
+});
+refs.saveColorBtn.addEventListener("click", () => {
+  const value = normalizeHex(refs.controlHex.value);
+  if (!value) {
+    toast("Use a hex color like #ff8800.", true);
+    refs.controlHex.focus();
+    return;
+  }
+  refs.controlColor.value = value;
+  refs.controlHex.value = value;
+  action("/api/color", { hex: value }, `Saved ${value}`, refs.saveColorBtn);
+});
+
+// The chart is hidden while Activity is closed, so it is measured again when
+// the card opens or the window changes size instead of waiting for a sample.
+refs.logCard.addEventListener("toggle", () => {
+  if (refs.logCard.open && state.snapshot) renderPerf(state.snapshot);
+});
+let perfResize = 0;
+window.addEventListener("resize", () => {
+  window.cancelAnimationFrame(perfResize);
+  perfResize = window.requestAnimationFrame(() => {
+    if (state.snapshot) renderPerfChart(state.snapshot.resources || {});
+  });
+});
 let dotClicks = [];
 const CRAZY_WINDOW = 3000;
 
