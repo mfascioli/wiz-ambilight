@@ -2,7 +2,7 @@
 
 Releases before 1.4.0 were never tagged; their history is in `git log`.
 
-## Unreleased
+## 1.9.0 — 2026-11-22
 
 - **Reactions:** `equalize`, `cut`, `motion`, `beat` and `vu` now share three
   profiles — `soft`, `balanced` and `strong` — exposed as **Reaction profile**
