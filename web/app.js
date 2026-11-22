@@ -66,6 +66,16 @@ const refs = {
   styleSelect: document.getElementById("styleSelect"),
   reactSelect: document.getElementById("reactSelect"),
   reactHint: document.getElementById("reactHint"),
+  reactAmount: document.getElementById("reactAmount"),
+  reactAmountOut: document.getElementById("reactAmountOut"),
+  reactProfile: document.getElementById("reactProfile"),
+  reactProfileField: document.getElementById("reactProfileField"),
+  reactProfileHint: document.getElementById("reactProfileHint"),
+  reactTarget: document.getElementById("reactTarget"),
+  reactTargetField: document.getElementById("reactTargetField"),
+  reactTargetOut: document.getElementById("reactTargetOut"),
+  reactBands: document.getElementById("reactBands"),
+  reactBandsField: document.getElementById("reactBandsField"),
   samplingSelect: document.getElementById("samplingSelect"),
   sampleStage: document.getElementById("sampleStage"),
   colorStage: document.getElementById("colorStage"),
@@ -606,6 +616,13 @@ function fillReactionSelect(snapshot) {
       reaction.label,
       reaction.group,
       reaction.hint,
+      reaction.detail,
+      reaction.audio,
+      reaction.profiles?.map((profile) => [
+        profile.id,
+        profile.label,
+        profile.hint,
+      ]),
     ]),
     groups.map((group) => [group.id, group.label]),
   ]);
@@ -630,19 +647,114 @@ function fillReactionSelect(snapshot) {
       reactions.map((reaction) => [reaction.id, reaction.hint || ""]),
     ),
   );
+  refs.reactSelect.dataset.details = JSON.stringify(
+    Object.fromEntries(
+      reactions.map((reaction) => [
+        reaction.id,
+        reaction.detail || reaction.hint || "",
+      ]),
+    ),
+  );
+}
+
+function reactionById(snapshot, id) {
+  return (snapshot?.reactions || []).find((reaction) => reaction.id === id) || null;
 }
 
 function renderReactionHint(reaction) {
+  let details = {};
+  try {
+    details = JSON.parse(refs.reactSelect.dataset.details || "{}");
+  } catch {
+    details = {};
+  }
+  refs.reactHint.textContent = details[reaction] || "";
+  refs.reactHint.title =
+    "Reactions scale with the strength slider and the style; audio modes " +
+    "add a five-band analyser only while selected";
+}
+
+function fillProfileSelect(reaction) {
+  const profiles = reaction?.profiles || [];
+  refs.reactProfileField.classList.toggle("hidden", profiles.length === 0);
+  if (!profiles.length) return;
+  const signature = JSON.stringify(
+    profiles.map((profile) => [profile.id, profile.label, profile.hint]),
+  );
+  if (refs.reactProfile.dataset.signature !== signature) {
+    refs.reactProfile.replaceChildren();
+    for (const profile of profiles) {
+      const option = el("option", "", profile.label);
+      option.value = profile.id;
+      option.title = profile.hint || "";
+      refs.reactProfile.append(option);
+    }
+    refs.reactProfile.dataset.signature = signature;
+    refs.reactProfile.dataset.hints = JSON.stringify(
+      Object.fromEntries(
+        profiles.map((profile) => [profile.id, profile.hint || ""]),
+      ),
+    );
+  }
+}
+
+function renderProfileHint() {
   let hints = {};
   try {
-    hints = JSON.parse(refs.reactSelect.dataset.hints || "{}");
+    hints = JSON.parse(refs.reactProfile.dataset.hints || "{}");
   } catch {
     hints = {};
   }
-  refs.reactHint.textContent = hints[reaction] || "";
-  refs.reactHint.title =
-    "Reactions scale with the style and the brightness slider; audio modes " +
-    "add a pass-through analyser only while selected";
+  refs.reactProfileHint.textContent = hints[refs.reactProfile.value] || "";
+}
+
+function buildBandInputs(snapshot) {
+  const bands = snapshot.bands || [];
+  const signature = JSON.stringify(bands.map((band) => [band.id, band.label]));
+  if (refs.reactBands.dataset.signature === signature) return;
+  refs.reactBands.replaceChildren();
+  for (const band of bands) {
+    const label = el("label", "band-color");
+    const input = document.createElement("input");
+    input.type = "color";
+    input.value = band.color;
+    input.dataset.band = band.id;
+    input.setAttribute("aria-label", `${band.label} band color`);
+    label.append(input, el("span", "", band.label));
+    refs.reactBands.append(label);
+  }
+  refs.reactBands.dataset.signature = signature;
+}
+
+function syncReactionFields(snapshot, config) {
+  const reaction = reactionById(snapshot, config.react);
+  const profiles = reaction?.profiles || [];
+  fillProfileSelect(reaction);
+  refs.reactTargetField.classList.toggle("hidden", config.react !== "equalize");
+  refs.reactBandsField.classList.toggle("hidden", !reaction?.audio);
+  if (profiles.length && document.activeElement !== refs.reactProfile) {
+    const valid = profiles.some((profile) => profile.id === config.react_profile);
+    refs.reactProfile.value = valid ? config.react_profile : profiles[0].id;
+  }
+  renderProfileHint();
+  if (document.activeElement !== refs.reactAmount) {
+    const amount = Math.round((Number(config.react_amount) || 0) * 100);
+    refs.reactAmount.value = String(amount);
+    refs.reactAmountOut.value = String(amount);
+    paintRange(refs.reactAmount);
+  }
+  if (document.activeElement !== refs.reactTarget) {
+    const target = Math.round((Number(config.react_target) || 0.45) * 100);
+    refs.reactTarget.value = String(target);
+    refs.reactTargetOut.value = String(target);
+    paintRange(refs.reactTarget);
+  }
+  if (!refs.reactBands.contains(document.activeElement)) {
+    const colors = Array.isArray(config.react_bands) ? config.react_bands : [];
+    refs.reactBands.querySelectorAll('input[type="color"]').forEach((input, index) => {
+      if (colors[index]) input.value = colors[index];
+    });
+  }
 }
 
 function renderSettings(snapshot) {
@@ -651,6 +763,7 @@ function renderSettings(snapshot) {
   fillSelect(refs.layoutSelect, snapshot.layouts);
   fillSamplingSelect();
   fillReactionSelect(snapshot);
+  buildBandInputs(snapshot);
   if (document.activeElement !== refs.styleSelect) refs.styleSelect.value = config.style;
   if (document.activeElement !== refs.reactSelect) {
     refs.reactSelect.value = config.react;
@@ -665,6 +778,7 @@ function renderSettings(snapshot) {
   refs.dryRun.checked = Boolean(config.dry_run);
   refs.lookPill.textContent = config.style;
   renderReactionHint(config.react);
+  syncReactionFields(snapshot, config);
 
   const details = snapshot.style_details?.[config.style] || {};
   const styleFps = Number(details.fps) || 0;
@@ -1539,9 +1653,43 @@ refs.mediaInput.addEventListener("change", () => {
   if (value !== (state.snapshot?.config.media || "")) saveConfig({ media: value });
 });
 refs.styleSelect.addEventListener("change", () => saveConfig({ style: refs.styleSelect.value }));
-refs.reactSelect.addEventListener("change", () =>
-  saveConfig({ react: refs.reactSelect.value }),
-);
+refs.reactSelect.addEventListener("change", () => {
+  const reaction = refs.reactSelect.value;
+  renderReactionHint(reaction);
+  if (state.snapshot) {
+    syncReactionFields(state.snapshot, {
+      ...state.snapshot.config,
+      react: reaction,
+    });
+  }
+  saveConfig({ react: reaction });
+});
+refs.reactAmount.addEventListener("input", () => {
+  refs.reactAmountOut.value = refs.reactAmount.value;
+  paintRange(refs.reactAmount);
+});
+refs.reactAmount.addEventListener("change", () => {
+  saveConfig({ react_amount: Number(refs.reactAmount.value) / 100 });
+});
+refs.reactProfile.addEventListener("change", () => {
+  renderProfileHint();
+  saveConfig({ react_profile: refs.reactProfile.value });
+});
+refs.reactTarget.addEventListener("input", () => {
+  refs.reactTargetOut.value = refs.reactTarget.value;
+  paintRange(refs.reactTarget);
+});
+refs.reactTarget.addEventListener("change", () => {
+  saveConfig({ react_target: Number(refs.reactTarget.value) / 100 });
+});
+refs.reactBands.addEventListener("change", (event) => {
+  const input = event.target.closest('input[type="color"]');
+  if (!input) return;
+  const colors = [...refs.reactBands.querySelectorAll('input[type="color"]')].map(
+    (swatch) => swatch.value,
+  );
+  saveConfig({ react_bands: colors });
+});
 refs.samplingSelect.addEventListener("change", () =>
   saveConfig({ sampling: refs.samplingSelect.value }),
 );

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 820" role="img" aria-labelledby="title desc">
   <title id="title">wiz-ambilight architecture</title>
-  <desc id="desc">mpv samples video frames with a Lua script and writes zone colors to the runtime directory; when an audio reaction is active it also adds a pass-through analyser and writes the levels. A Python sync process reads them, fades, and sends UDP setPilot packets to WiZ bulbs on the local network. An optional panel runs on 127.0.0.1:8765 and can spawn the sync and control bulbs directly. No component uses the internet.</desc>
+  <desc id="desc">mpv samples video frames with a Lua script and writes zone colors to the runtime directory; when an audio reaction is active it also adds a five-band analyser and writes the levels. A Python sync process reads them, fades, and sends UDP setPilot packets to WiZ bulbs on the local network. An optional panel runs on 127.0.0.1:8765 and can spawn the sync and control bulbs directly. No component uses the internet.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#a8a49a"/>

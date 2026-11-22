@@ -41,12 +41,16 @@ mpv start. Nothing downloads code, and no installer fetches anything at all.
   it returns an empty path and the manual **Video file** field stays the way
   to choose a file.
 - **Audio.** `beat` and `vu` analyse the audio mpv is already decoding. The
-  Lua script appends a labelled `lavfi`/`astats` pass-through pair to mpv's
-  audio filter chain only while one of those modes is selected, reads the
-  levels from `af-metadata`, and removes the pair on exit. It never opens a
-  microphone, a capture device or a file, never adds a dependency, and does not
-  alter the samples sent to the output. With any other reaction the audio
-  chain is untouched.
+  Lua script appends three labelled `lavfi` stages to mpv's audio filter chain
+  only while one of those modes is selected: `astats` for the overall levels,
+  a stereo `acrossover`/`amerge`/`astats` graph for the five bands, and `anull`
+  as a removable tail. It reads the levels from `af-metadata`, and removes all
+  three labels on exit. The band graph recombines the crossover slices before
+  the output, so the mix keeps its magnitude (measured within 0.6 dB with white
+  noise) but gains an all-pass phase shift; it is not a bit-identical
+  pass-through. It never opens a microphone, a capture device or a file and
+  never adds a dependency. With any other reaction the audio chain is
+  untouched.
 - **Files written.** `state-<pid>.json`, `stats-<pid>.json` and
   `control.json` under `$XDG_RUNTIME_DIR/wiz-ambilight/` (`/tmp` fallback,
   `0700`), the `gui-daemon.json` PID file beside them, `lights.json` and

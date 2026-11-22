@@ -941,6 +941,52 @@ input[type="range"]::-moz-range-thumb {
   text-align: right;
 }
 .look-col .field { margin-bottom: 2px; }
+.band-colors {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 3px;
+}
+.field .band-color {
+  display: grid;
+  gap: 2px;
+  justify-content: normal;
+  justify-items: stretch;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 6.5px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+  text-align: center;
+  white-space: nowrap;
+}
+.field .band-color span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.field .band-color input[type="color"] {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 17px;
+  padding: 0;
+  background: var(--bg-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.field .band-color input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.field .band-color input[type="color"]::-webkit-color-swatch {
+  border: 0;
+  border-radius: 1px;
+}
+.field .band-color input[type="color"]::-moz-color-swatch {
+  border: 0;
+  border-radius: 1px;
+}
 .kv { margin: 0; display: grid; align-content: start; }
 .kv-row {
   display: flex;

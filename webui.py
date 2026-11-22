@@ -43,6 +43,8 @@ CONFIG_KEYS = (
     "react",
     "react_amount",
     "react_target",
+    "react_profile",
+    "react_bands",
     "brightness",
     "mode",
     "media",
@@ -61,6 +63,8 @@ DEFAULT_CONFIG = {
     "react": "color",
     "react_amount": 0.8,
     "react_target": 0.45,
+    "react_profile": "balanced",
+    "react_bands": [],
     "brightness": 100,
     "mode": "attach",
     "media": "",
@@ -193,6 +197,12 @@ def normalize_config(raw, core) -> dict:
         config["react_target"] = max(0.05, min(0.95, float(config["react_target"])))
     except (TypeError, ValueError):
         config["react_target"] = 0.45
+    if config["react_profile"] not in core.PROFILE_LABELS:
+        config["react_profile"] = "balanced"
+    config["react_bands"] = [
+        core.rgb_to_hex(color)
+        for color in core.normalize_band_colors(config.get("react_bands"))
+    ]
     try:
         config["brightness"] = max(10, min(100, int(config["brightness"])))
     except (TypeError, ValueError):
@@ -435,6 +445,10 @@ def build_command(config: dict, core, demo: bool = False):
         f"{config.get('react_amount', 0.8):g}",
         "--react-target",
         f"{config.get('react_target', 0.45):g}",
+        "--react-profile",
+        config.get("react_profile", "balanced"),
+        "--react-bands",
+        ",".join(config.get("react_bands") or core.DEFAULT_BAND_COLORS),
         "--brightness",
         str(config["brightness"]),
         "--sampling",
@@ -1145,8 +1159,31 @@ class Panel:
                     "group": details["group"],
                     "label": details["label"],
                     "hint": details["hint"],
+                    "detail": details.get("detail", details["hint"]),
+                    "audio": key in self.core.AUDIO_REACTIONS,
+                    "profiles": [
+                        {
+                            "id": profile,
+                            "label": self.core.PROFILE_LABELS[profile],
+                            "hint": values.get("hint", ""),
+                        }
+                        for profile, values in self.core.REACTION_PROFILES.get(
+                            key, {}
+                        ).items()
+                    ],
                 }
                 for key, details in self.core.REACTIONS.items()
+            ],
+            "bands": [
+                {
+                    "id": name,
+                    "label": self.core.BAND_LABELS[name],
+                    "color": color,
+                }
+                for name, color in zip(
+                    self.core.BANDS,
+                    config.get("react_bands") or self.core.DEFAULT_BAND_COLORS,
+                )
             ],
             "reaction_groups": [
                 {

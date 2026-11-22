@@ -61,15 +61,22 @@ headings, and leave interface names, option values and file paths untranslated.
   inside Direct control, not a card. **Look** is three equal hairline columns —
   Preset / Sample / Send — with flat key/value rows, never nested boxes. The
   **Reaction** dropdown sits inside **Preset**, under Style preset, with one
-  `<optgroup>` per source (Video / Audio); it never adds a column or a card.
+  `<optgroup>` per source (Video / Audio); reaction strength, the profile
+  select, the Equalize target and the five band color swatches are flat rows
+  under it, shown only when they apply. It never adds a column or a card.
 - **Reactions and audio.** `react` is one of `color`, `equalize`, `cut`,
   `motion`, `duotone`, `beat`, `vu`; `color` stays the default. Every reaction
-  is scaled by `react_amount`, so `0` is a no-op. Audio modes are `beat` and
-  `vu` only: the Lua script adds a labelled `lavfi`/`astats` pass-through pair
-  while one is selected, removes it on exit and never touches a user's `af`
-  chain. No audio dependency, no separate process, no microphone. The
-  `lux.json` sensor is design-only; do not add its flag until the hardware path
-  is tested.
+  is scaled by `react_amount`, so `0` is a no-op. The reactive modes share
+  `react_profile` (`soft` / `balanced` / `strong`), and audio modes split the
+  mix into five bands (`sub`, `low`, `low-mid`, `mid`, `high`) with one color
+  each via `react_bands`; one bulb follows the overall volume, 2–5 bulbs spread
+  the bands. Audio modes are `beat` and `vu` only: the Lua script adds a
+  labelled `lavfi`/`acrossover`/`astats` analyser while one is selected,
+  removes all its labels on exit and never touches a user's `af` chain. The
+  graph keeps the mix's magnitude but adds an all-pass phase shift, so never
+  describe it as bit-identical. No audio dependency, no separate process, no
+  microphone. The `lux.json` sensor is design-only; do not add its flag until
+  the hardware path is tested.
 - **Performance chart.** Activity holds one frame with three unit lanes —
   CPU %, RAM MB, UDP KB/s — and a series each for mpv and the panel. CPU is a
   share of the whole processor, said so in the legend tooltip; never merge the

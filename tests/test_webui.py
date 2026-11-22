@@ -94,13 +94,25 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(config["react"], "color")
         self.assertEqual(config["react_amount"], 0.8)
         self.assertEqual(config["react_target"], 0.45)
+        self.assertEqual(config["react_profile"], "balanced")
+        self.assertEqual(config["react_bands"], list(m.DEFAULT_BAND_COLORS))
 
         bad = webui.normalize_config(
-            {"react": "strobe", "react_amount": 9, "react_target": "x"}, m
+            {
+                "react": "strobe",
+                "react_amount": 9,
+                "react_target": "x",
+                "react_profile": "extreme",
+                "react_bands": ["#FF0000"],
+            },
+            m,
         )
         self.assertEqual(bad["react"], "color")
         self.assertEqual(bad["react_amount"], 1.0)
         self.assertEqual(bad["react_target"], 0.45)
+        self.assertEqual(bad["react_profile"], "balanced")
+        self.assertEqual(bad["react_bands"][0], "#ff0000")
+        self.assertEqual(bad["react_bands"][1:], list(m.DEFAULT_BAND_COLORS[1:]))
 
         self.assertEqual(
             webui.normalize_config({"react_amount": -3}, m)["react_amount"], 0.0
@@ -277,12 +289,35 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--capture") + 1], "source")
 
     def test_reaction_flags_are_passed_to_the_sync(self):
-        config = make_config(react="beat", react_amount=0.55, react_target=0.6)
+        config = make_config(
+            react="beat",
+            react_amount=0.55,
+            react_target=0.6,
+            react_profile="strong",
+            react_bands=["#010203", "#040506", "#070809", "#0a0b0c", "#0d0e0f"],
+        )
         config["lights"] = {"10.0.0.1": {"enabled": True}}
         argv, _ips, _zones = webui.build_command(config, m)
         self.assertEqual(argv[argv.index("--react") + 1], "beat")
         self.assertEqual(argv[argv.index("--react-amount") + 1], "0.55")
         self.assertEqual(argv[argv.index("--react-target") + 1], "0.6")
+        self.assertEqual(argv[argv.index("--react-profile") + 1], "strong")
+        self.assertEqual(
+            argv[argv.index("--react-bands") + 1],
+            "#010203,#040506,#070809,#0a0b0c,#0d0e0f",
+        )
+
+    def test_reaction_flags_use_defaults_for_old_configs(self):
+        config = make_config()
+        config.pop("react_profile", None)
+        config.pop("react_bands", None)
+        config["lights"] = {"10.0.0.1": {"enabled": True}}
+        argv, _ips, _zones = webui.build_command(config, m)
+        self.assertEqual(argv[argv.index("--react-profile") + 1], "balanced")
+        self.assertEqual(
+            argv[argv.index("--react-bands") + 1],
+            ",".join(m.DEFAULT_BAND_COLORS),
+        )
 
     def test_missing_reaction_keys_fall_back_to_color(self):
         config = make_config()
@@ -370,6 +405,26 @@ class DemoPanelTests(unittest.TestCase):
         self.assertEqual(len(reactions), len(m.REACTIONS))
         self.assertEqual(reactions["beat"]["group"], "audio")
         self.assertEqual(reactions["equalize"]["group"], "video")
+        self.assertTrue(reactions["beat"]["audio"])
+        self.assertFalse(reactions["cut"]["audio"])
+        self.assertTrue(reactions["cut"]["detail"])
+        self.assertEqual(
+            [profile["id"] for profile in reactions["equalize"]["profiles"]],
+            ["soft", "balanced", "strong"],
+        )
+        self.assertEqual(reactions["color"]["profiles"], [])
+        self.assertEqual(
+            [band["id"] for band in snapshot["bands"]],
+            list(m.BANDS),
+        )
+        self.assertEqual(
+            [band["color"] for band in snapshot["bands"]],
+            list(m.DEFAULT_BAND_COLORS),
+        )
+        self.assertEqual(snapshot["config"]["react_profile"], "balanced")
+        self.assertEqual(
+            snapshot["config"]["react_bands"], list(m.DEFAULT_BAND_COLORS)
+        )
         self.assertEqual(
             [group["id"] for group in snapshot["reaction_groups"]], ["video", "audio"]
         )
@@ -377,6 +432,25 @@ class DemoPanelTests(unittest.TestCase):
         self.assertIsInstance(snapshot["network"], list)
         self.assertIn("active", snapshot["crazy"])
         self.assertIn("resources", snapshot)
+
+    def test_snapshot_reflects_custom_reaction_config(self):
+        path = Path(os.environ["WIZ_AMBILIGHT_GUI_CONFIG"])
+        colors = ["#010203", "#040506", "#070809", "#0a0b0c", "#0d0e0f"]
+        path.write_text(
+            json.dumps(
+                {
+                    "react": "vu",
+                    "react_profile": "strong",
+                    "react_bands": colors,
+                }
+            ),
+            encoding="utf-8",
+        )
+        panel = webui.Panel(m, demo=True)
+        snapshot = panel.snapshot()
+        self.assertEqual(snapshot["config"]["react"], "vu")
+        self.assertEqual(snapshot["config"]["react_profile"], "strong")
+        self.assertEqual([band["color"] for band in snapshot["bands"]], colors)
 
     def test_mpv_pid_comes_from_a_fresh_state_file(self):
         panel = webui.Panel(m, demo=True)

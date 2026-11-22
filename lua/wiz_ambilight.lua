@@ -32,7 +32,7 @@
         wiz_ambilight-sample=1          average an NxN block per cell (1-4; 0 = auto)
         wiz_ambilight-capture=scaled    scaled (window size) or video (source)
         wiz_ambilight-react=color       color, equalize, cut, motion, duotone,
-                                        beat or vu (audio modes add a pass-through
+                                        beat or vu (audio modes add a five-band
                                         analyser only while active)
 
     JSON written on every capture:
@@ -129,29 +129,43 @@ local function is_audio_react(name)
     return name == "beat" or name == "vu"
 end
 
--- The analyser is a pair of labelled libavfilter filters. astats injects the
--- RMS/peak metadata, anull keeps the chain valid when astats is removed first.
--- Both are pass-through: the samples reaching the audio output are untouched.
+-- The analyser is a chain of labelled libavfilter filters. astats injects the
+-- RMS/peak metadata, acrossover splits the mix into five bands for the meter,
+-- and anull keeps the chain valid while the labels are removed one by one.
+-- The band graph recombines the five slices, so the mix keeps its magnitude;
+-- like any crossover it adds a small all-pass phase shift.
 local FILTER_STATS = "@wizstats:lavfi=[astats=metadata=1:reset=1]"
+local FILTER_BANDS = "@wizbands:lavfi=[aformat=channel_layouts=stereo,"
+    .. "acrossover=split=60 250 800 2500[b0][b1][b2][b3][b4];"
+    .. "[b0][b1][b2][b3][b4]amerge=inputs=5,"
+    .. "astats=metadata=1:reset=1,"
+    .. "pan=stereo|c0=c0+c2+c4+c6+c8|c1=c1+c3+c5+c7+c9]"
 local FILTER_TAIL = "@wiztail:lavfi=[anull]"
+
+local function audio_stats_off()
+    for _, name in ipairs({ "@wizbands", "@wizstats", "@wiztail" }) do
+        local af = mp.get_property("af") or ""
+        if af:find(name, 1, true) then
+            mp.commandv("af", "remove", name)
+        end
+    end
+end
 
 local function audio_stats_on()
     local af = mp.get_property("af") or ""
-    if af:find("@wizstats", 1, true) then
+    if af:find("@wizstats", 1, true) and af:find("@wizbands", 1, true) then
         return true
     end
-    return mp.commandv("af", "add", FILTER_STATS .. "," .. FILTER_TAIL)
-end
-
-local function audio_stats_off()
-    local af = mp.get_property("af") or ""
-    if af:find("@wizstats", 1, true) then
-        mp.commandv("af", "remove", "@wizstats")
+    if af:find("@wizstats", 1, true) or af:find("@wizbands", 1, true)
+        or af:find("@wiztail", 1, true)
+    then
+        audio_stats_off()
     end
-    af = mp.get_property("af") or ""
-    if af:find("@wiztail", 1, true) then
-        mp.commandv("af", "remove", "@wiztail")
-    end
+    return mp.commandv(
+        "af",
+        "add",
+        FILTER_STATS .. "," .. FILTER_BANDS .. "," .. FILTER_TAIL
+    )
 end
 
 local function sync_audio_filter()
@@ -184,12 +198,15 @@ local function audio_json()
     if type(meta) ~= "table" then
         return nil
     end
-    local function field(name, fallback)
-        local value = tonumber(meta[name])
+    local function meta_field(source, name, fallback)
+        local value = tonumber(source[name])
         if value then
             return value
         end
         return fallback
+    end
+    local function field(name, fallback)
+        return meta_field(meta, name, fallback)
     end
     local rms = field("lavfi.astats.Overall.RMS_level")
     local peak = field(
@@ -212,12 +229,36 @@ local function audio_json()
     if peak ~= nil then
         crest = peak - (rms or left)
     end
+    -- The band graph exposes ten channels: five stereo bands, two channels
+    -- each. Take the louder channel per band so a one-sided mix still shows.
+    local band_meta = mp.get_property_native("af-metadata/wizbands")
+    local band_parts = {}
+    if type(band_meta) == "table" then
+        for index = 0, 4 do
+            local band_left = tonumber(
+                band_meta["lavfi.astats." .. (index * 2 + 1) .. ".RMS_level"]
+            )
+            local band_right = tonumber(
+                band_meta["lavfi.astats." .. (index * 2 + 2) .. ".RMS_level"]
+            )
+            local value = band_left
+            if band_right ~= nil and (value == nil or band_right > value) then
+                value = band_right
+            end
+            band_parts[#band_parts + 1] = json_number(value)
+        end
+    end
+    local bands_json = ""
+    if #band_parts == 5 then
+        bands_json = ',"bands":[' .. table.concat(band_parts, ",") .. "]"
+    end
     return ',"audio":{"rms":' .. json_number(rms or left)
         .. ',"peak":' .. json_number(peak)
         .. ',"crest":' .. json_number(crest)
         .. ',"zcr":' .. json_number(zcr)
         .. ',"l":' .. json_number(left)
         .. ',"r":' .. json_number(right)
+        .. bands_json
         .. "}"
 end
 

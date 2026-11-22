@@ -59,6 +59,8 @@ or generate from a script:
   "react": "color",
   "react_amount": 0.8,
   "react_target": 0.45,
+  "react_profile": "balanced",
+  "react_bands": ["#ff5a3c", "#fcbe11", "#7ad66b", "#38bdf8", "#a78bfa"],
   "brightness": 100,
   "mode": "attach",
   "media": "",
@@ -116,15 +118,31 @@ layer and are scaled by `react_amount` (`0` is a no-op). Spans below are at
 | --- | --- | --- | --- |
 | `color` | video | `zones.all` / per-zone | default |
 | `equalize` | video | `zones.all` luma | slow EMA (`EQUALIZE_TAU = 4 s`), target `react_target`, `±35 %`, 35 % floor |
-| `cut` | video | frame-to-frame distance | 120 ms flash, 1.5 s cooldown, 6 per minute, 22 % headroom |
+| `cut` | video | frame-to-frame distance | one hard edit, 120 ms flash, 1.5 s cooldown, 6 per minute, 22 % headroom |
 | `motion` | video | per-zone distance | 0.35 s release, brightness and saturation |
 | `duotone` | video | per-zone colour | odd bulbs get `hue_shift(rgb, 180° × amount)` |
-| `beat` | audio | overall RMS | 5 dB over the running average, 2 Hz max, 60 ms attack / 250 ms release |
-| `vu` | audio | per-channel RMS | −45…−12 dBFS → 25…100 %, left/right bulbs |
+| `beat` | audio | per-band transient | each band 5 dB over its running average; 2 Hz max, 60 ms attack / 250 ms release |
+| `vu` | audio | per-band RMS | −45…−12 dBFS per band; one bulb uses overall RMS |
+
+`react_profile` (`soft`, `balanced`, `strong`) selects a row from
+`REACTION_PROFILES` for `equalize`, `cut`, `motion`, `beat` and `vu`. The
+profile moves span, time constant, threshold, cooldown and rate limit
+together; `react_amount` still scales the spans, so the two compose. `color`
+and `duotone` have no profile. An unknown profile falls back to `balanced`.
+
+`react_bands` is five `#rrggbb` strings in `sub`, `low`, `low-mid`, `mid`,
+`high` order. The crossover splits at 60, 250, 800 and 2500 Hz. Missing or
+malformed entries fall back to `DEFAULT_BAND_COLORS` at their own position, so
+the rest of the list never shifts. The CLI form is
+`--react-bands '#aabbcc,#…'`; the panel stores the same list in `lights.json`.
+`band_for(index, count)` spreads the bands over the bulbs: one bulb follows the
+overall level, 2–5 map to `[0,4]`, `[0,2,4]`, `[0,1,3,4]` and `[0,1,2,3,4]`,
+and more than five repeat. With one bulb the colour is the loudest band's.
 
 The pure helpers are in `mpv_ambilight.py`: `scene_luma`, `rgb_distance`,
-`hue_shift`, `equalize_gain`, `vu_level`, `beat_pulse`, `cut_pulse` and the
-`Reaction` state class. `Reaction.update()` runs when Lua writes a state frame;
+`hue_shift`, `equalize_gain`, `vu_level`, `beat_pulse`, `cut_pulse`,
+`finite_float`, `band_for`, `normalize_band_colors`, `parse_band_colors` and
+the `Reaction` state class. `Reaction.update()` runs when Lua writes a state frame;
 `Reaction.dimming()` runs on every send tick so a 120 ms flash is not lost
 between frames. Colour changes happen before saturation/gamma; brightness is
 per bulb.
@@ -135,29 +153,42 @@ Audio modes use mpv's own `lavfi` bridge, so there is no new dependency and no
 external process. On activation the Lua script appends:
 
 ```text
-@wizstats:lavfi=[astats=metadata=1:reset=1],@wiztail:lavfi=[anull]
+@wizstats:lavfi=[astats=metadata=1:reset=1],
+@wizbands:lavfi=[aformat=channel_layouts=stereo,
+  acrossover=split=60 250 800 2500[b0][b1][b2][b3][b4];
+  [b0][b1][b2][b3][b4]amerge=inputs=5,astats=metadata=1:reset=1,
+  pan=stereo|c0=c0+c2+c4+c6+c8|c1=c1+c3+c5+c7+c9],
+@wiztail:lavfi=[anull]
 ```
 
-`astats` is pass-through and injects `af-metadata/wizstats`; `anull` keeps the
-chain valid while the filters are removed one label at a time. The script adds
-the pair only when `react` is `beat` or `vu`, re-adds it after `file-loaded`,
-and removes both on a switch back to a video mode, on stop and on shutdown. A
-user's own `af` chain is left in place.
+`astats` injects `af-metadata/wizstats` with the overall levels. `acrossover`
+splits the stereo downmix into five bands, `amerge` stacks them into ten
+channels and a second `astats` exposes `af-metadata/wizbands`, one RMS pair per
+band. `pan` recombines the ten channels into the stereo output. The crossover
+keeps the magnitude flat (measured within 0.6 dB with white noise) but adds an
+all-pass phase shift, so the output is not sample-identical; it is not a
+pass-through. `anull` keeps the chain valid while the labels are removed.
+The script adds the chain only when `react` is `beat` or `vu`, re-adds it after
+`file-loaded`, and removes `@wizbands`, `@wizstats` and `@wiztail` in any order
+on a switch back to a video mode, on stop and on shutdown. A user's own `af`
+chain is left in place.
 
 While an audio mode is active the state snapshot gains:
 
 ```json
 "audio": {"rms": -24.1, "peak": -18.0, "crest": 6.1, "zcr": 0.12,
-          "l": -24.1, "r": -25.0}
+          "l": -24.1, "r": -25.0,
+          "bands": [-41.2, -33.8, -27.0, -24.1, -30.5]}
 ```
 
 Levels are dBFS; `crest` is peak minus RMS in dB and `zcr` is the
-zero-crossing rate. Digital silence (`-inf`) and NaN become `null`; Python
-treats `null` as silence. Mono files expose only channel 1, so the VU falls
-back to the overall level. On an
-audio-only file the Lua script keeps emitting a heartbeat at the capture rate
-with `audio` and no `zones`; the sync holds a warm base color and drives only
-the brightness.
+zero-crossing rate. `bands` is present only when the band graph is active; the
+louder channel of each stereo band pair is used, so a one-sided mix still
+registers. Digital silence (`-inf`) and NaN become `null`; Python treats
+`null` as silence. Mono files expose only channel 1, so the meter falls back to
+the overall level. On an audio-only file the Lua script keeps emitting a
+heartbeat at the capture rate with `audio` and no `zones`; the sync holds a warm
+base color and drives only the brightness.
 
 ## Light sensor design
 

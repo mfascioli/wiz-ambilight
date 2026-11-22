@@ -2,6 +2,32 @@
 
 Releases before 1.4.0 were never tagged; their history is in `git log`.
 
+## Unreleased
+
+- **Reactions:** `equalize`, `cut`, `motion`, `beat` and `vu` now share three
+  profiles — `soft`, `balanced` and `strong` — exposed as **Reaction profile**
+  in **Look → Preset** and `--react-profile` on the CLI. A profile moves span,
+  speed, threshold and rate limit together, and still composes with **Reaction
+  strength** (`react_amount`), which the panel now exposes as a slider.
+- **Reactions:** every mode has a plain-language description in the panel and
+  the README. `cut` now explains that it reacts to one hard edit, not camera
+  motion, and what the dimmed interval between flashes is for.
+- **Audio:** `beat` and `vu` split the mix into five bands — `sub`, `low`,
+  `low-mid`, `mid`, `high` — each with its own color picker in **Look →
+  Preset** or `--react-bands '#…,#…,#…,#…,#…'`. One bulb follows the overall
+  volume (0–100 %); 2–5 bulbs spread the bands from sub to high, and more than
+  five repeat. The Lua analyser now uses a labelled
+  `acrossover`/`amerge`/`astats` graph that recombines the slices before
+  output: magnitude is preserved, with an all-pass phase shift.
+- **Panel:** Reaction strength, profile, Equalize target and the five band
+  color swatches live inside **Preset** as flat rows; the three-column Look
+  contract is unchanged. Controls appear only for the reactions that use them.
+- **Docs:** README Reactions, `docs/development.md`, `docs/design.md` and
+  `SECURITY.md` describe the profiles, bands and the corrected audio path.
+- **Tests:** cover band assignment for 1–7 bulbs, profile parameter changes,
+  reaction descriptions, the Lua band graph, config normalization, command
+  flags and snapshot metadata.
+
 ## 1.8.0 — 2026-11-22
 
 - **Reactions:** six new modes on top of plain color — `equalize`, `cut`,

@@ -53,7 +53,7 @@ machine.
   explicitly chosen zones per bulb.
 - **Reactive modes.** Beyond plain color: equalize room brightness, flash on
   cuts, follow motion, split into a duotone, pulse on the beat or meter the
-  volume. Audio analysis is opt-in and pass-through. See
+  five audio bands. Audio analysis is opt-in and runs on mpv's own filters. See
   [Reactions](#-reactions).
 - **Panel telemetry.** One chart in **Activity** shows mpv and the panel in
   three unit lanes: CPU %, RAM MB and WiZ UDP KB/s, above the video and
@@ -161,7 +161,7 @@ lists every bulb it finds, and lets you:
 - collapse any section: **Direct control** and **Activity** start closed, so
   the first screen is just lights, session and look.
 
-![The panel in demo mode: three bulbs on thirds, the Reaction dropdown in Look and Direct control on the right](docs/gui.png)
+![The panel in demo mode: three bulbs on thirds, the VU reaction with strength, profile and five band colors in Look, and Direct control on the right](docs/gui.png)
 <sub>Demo mode with three bulbs on thirds: Session and Look share the left stack, Direct control sits on the right with rooms and saved colors, and Activity waits below.</sub>
 
 The visual language and the layout rules are documented in
@@ -297,26 +297,49 @@ nothing changes unless you ask. The panel shows one **Reaction** dropdown
 inside **Look → Preset**, split into **Video** and **Audio** groups, so the
 same control says how the lights react and what they react to.
 
-| reaction   | source | what it does | room defaults |
-|------------|--------|--------------|---------------|
-| `color`    | video  | Classic Ambilight: each bulb copies its zone. | — |
-| `equalize` | video  | Holds the perceived room brightness: bright scenes dim the bulbs, dark scenes lift them. | target luma `0.45`, ±35 %, 35 % floor, 4 s average |
-| `cut`      | video  | Fires a short flash when the picture cuts to a new scene. | 120 ms, at most 6 per minute, 22 % brightness headroom |
-| `motion`   | video  | Still shots stay calm; movement adds brightness and saturation. | 0.28 span, 0.35 s release |
-| `duotone`  | video  | Alternates each bulb between its zone color and the opposite hue. | 180° hue split |
-| `beat`     | audio  | Pulses the bulbs on bass hits above the running average. | 5 dB threshold, 2 Hz max, 25 % headroom |
-| `vu`       | audio  | Each bulb follows its channel (left/right) as a volume meter. | −45…−12 dBFS → 25…100 % |
+| reaction   | source | what it does |
+|------------|--------|--------------|
+| `color`    | video  | Classic Ambilight: each bulb copies its own zone. Nothing reacts; this is the baseline look. |
+| `equalize` | video  | Measures the average brightness of the frame and slowly raises or lowers every bulb to hold the room near a target. Bright scenes dim, dark scenes lift; the correction is capped and never goes black. |
+| `cut`      | video  | A cut is one hard edit, not camera motion. When the whole frame jumps to a new scene, the bulbs flash at full brightness for a moment; between cuts they sit slightly dimmer so the flash reads as a pulse. Rate-limited. |
+| `motion`   | video  | Compares each zone with the previous frame. Still shots stay calm and slightly dim; movement adds brightness and saturation to the bulbs watching the action. |
+| `duotone`  | video  | Even bulbs keep the sampled color, odd bulbs get the opposite hue. Two bulbs become a complementary pair; more bulbs become a striped duotone. |
+| `beat`     | audio  | Listens to five frequency bands. Each bulb owns one band and flashes its chosen color when that band jumps above its recent average. With one bulb it pulses on the overall beat. |
+| `vu`       | audio  | A five-band level meter: each bulb follows its band from silence to full, in that band's color. With one bulb it follows the overall volume and takes the color of the loudest band. |
 
-Ranges are at full strength (`--react-amount 1`); the default `0.8` scales the
-color and brightness spans, while timings and thresholds stay fixed.
+**Strength.** Every reaction scales with `--react-amount` (0–1, default `0.8`);
+`0` keeps the source color and disables the reaction. The panel's **Reaction
+strength** slider writes the same value.
+
+**Profiles.** `equalize`, `cut`, `motion`, `beat` and `vu` also have a
+`soft` / `balanced` / `strong` profile (`--react-profile`), which moves span,
+speed, threshold and rate limit together. `balanced` is the default and matches
+the numbers below; `soft` is subtler and slower, `strong` is wider and faster.
+The profile and the strength slider compose.
+
+| reaction   | soft | balanced | strong |
+|------------|------|----------|--------|
+| `equalize` | ±20 %, 6 s average, 55 % floor | ±35 %, 4 s average, 35 % floor | ±55 %, 2 s average, 20 % floor |
+| `cut`      | 30 % jump, 3/min, 15 % headroom | 22 % jump, 6/min, 22 % headroom | 14 % jump, 12/min, 35 % headroom |
+| `motion`   | 0.18 span, 0.55 s release | 0.28 span, 0.35 s release | 0.40 span, 0.20 s release |
+| `beat`     | 7 dB above average, soft long pulses | 5 dB, 25 % headroom, 2 Hz max | 3 dB, 40 % headroom, short pulses |
+| `vu`       | −50…−14 dBFS | −45…−12 dBFS | −40…−10 dBFS, full range |
+
+**Band colors.** Audio modes split the mix into five bands:
+`sub` (<60 Hz), `low` (60–250 Hz), `low-mid` (250–800 Hz), `mid` (800–2500 Hz)
+and `high` (>2500 Hz). Each band has its own color picker in **Look → Preset**;
+from the CLI the five colors are
+`--react-bands '#rrggbb,#rrggbb,#rrggbb,#rrggbb,#rrggbb'`, in that order.
+With one bulb the meter follows the overall volume (0–100 %) and takes the
+loudest band's color. With 2–5 bulbs the bands are spread from sub to high:
+two bulbs get sub/high, three get sub/low-mid/high, four get sub/low/mid/high
+and five get one each; more than five repeat the cycle.
 
 Pulse and meter modes reserve headroom: at **Brightness 100** the bulbs idle
 slightly below 100 so the flash has somewhere to go. Equalize is deliberately
-slow (4 s); it averages the scene instead of pumping with every cut. It can
-only lift a dark scene when the brightness ceiling leaves room, so set
-**Brightness** around 80 if you want both directions; at 100 it mostly dims.
-All six reactions scale with one knob, `--react-amount` (0–1, default `0.8`);
-`0` keeps the source color but disables the reaction.
+slow; it averages the scene instead of pumping with every cut. It can only lift
+a dark scene when the brightness ceiling leaves room, so set **Brightness**
+around 80 if you want both directions; at 100 it mostly dims.
 
 ```bash
 # keep the room at a constant brightness
@@ -325,21 +348,29 @@ All six reactions scale with one knob, `--react-amount` (0–1, default `0.8`);
 # flash on cuts, but gently
 ./mpv_ambilight.py --react cut --react-amount 0.5 movie.mkv
 
+# sharper reactions across the board
+./mpv_ambilight.py --react motion --react-profile strong --react-amount 0.7 movie.mkv
+
 # audio modes: music or any file with an audio track
 ./mpv_ambilight.py --react vu concert.mkv
-./mpv_ambilight.py --react beat --react-amount 0.7 song.flac
+./mpv_ambilight.py --react beat --react-profile soft song.flac
+./mpv_ambilight.py --react vu \
+  --react-bands '#ff3b30,#ff9500,#ffcc00,#34c759,#5ac8fa' concert.mkv
 ```
 
 Audio modes use mpv's built-in `lavfi`/`astats` bridge. The Lua script adds a
-labelled pass-through analyser only while `beat` or `vu` is selected, removes
-it when you switch back to a video mode, and never changes the samples that
-reach your speakers. No extra package is installed. An audio-only file has no
-frame to sample, so the bulbs hold a warm white base while the beat or the VU
-meter drives their brightness.
+labelled five-band analyser only while `beat` or `vu` is selected, removes it
+when you switch back to a video mode, and never opens a microphone or extra
+process. The crossover recombines the five slices before the output, so the
+mix keeps its magnitude; like any crossover it adds a small all-pass phase
+shift. No extra package is installed. An audio-only file has no frame to
+sample, so the bulbs hold a warm white base while the beat or the VU meter
+drives their brightness.
 
 `--react-target` (default `0.45`) sets the luma Equalize aims for; lower values
-keep the room dimmer, higher values brighter. The panel exposes the mode but
-keeps `react_amount` and `react_target` in `lights.json` for scripted setups.
+keep the room dimmer, higher values brighter. The panel exposes the mode,
+strength, profile, target and band colors; the same values live in
+`lights.json` for scripted setups.
 
 ### 🧩 Layouts and zones
 

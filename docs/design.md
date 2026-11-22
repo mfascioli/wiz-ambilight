@@ -55,9 +55,13 @@ decoration: they explain the path from choosing bulbs to watching the effect.
   count visible above it.
 - **Look** is three equal hairline columns — **Preset / Sample / Send** — with
   flat key/value rows, never nested boxes. **Preset** holds the style and the
-  Reaction dropdown under it; the dropdown groups **Video** and **Audio** with
-  an optgroup each and describes the selected mode in one hint line. Reactions
-  never add a fourth column or a second card.
+  Reaction group: the dropdown (with a **Video** / **Audio** optgroup each and
+  one hint line for the selected mode), then Reaction strength, a **Reaction
+  profile** select with its own hint, the Equalize target luma slider
+  and five band color swatches. The profile select, target and band row appear
+  only for the reactions that use them; the band swatches are one hairline row
+  of five equal `input[type="color"]` cells labelled Sub, Low, Low-mid, Mid and
+  High. Reactions never add a fourth column or a second card.
 - Below `1000px` both stacks flatten to a single column in 01 → 05 order.
   `prefers-reduced-motion` disables transitions.
 

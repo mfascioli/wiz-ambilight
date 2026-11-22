@@ -432,6 +432,92 @@ class ReactionMathTests(unittest.TestCase):
         self.assertEqual(m.cut_pulse(m.CUT_SECONDS - 0.001), 1.0)
         self.assertEqual(m.cut_pulse(m.CUT_SECONDS), 0.0)
 
+    def test_band_for_spreads_five_bands_across_the_bulbs(self):
+        self.assertIsNone(m.band_for(0, 1))
+        self.assertEqual([m.band_for(index, 2) for index in range(2)], [0, 4])
+        self.assertEqual([m.band_for(index, 3) for index in range(3)], [0, 2, 4])
+        self.assertEqual(
+            [m.band_for(index, 4) for index in range(4)], [0, 1, 3, 4]
+        )
+        self.assertEqual(
+            [m.band_for(index, 5) for index in range(5)], [0, 1, 2, 3, 4]
+        )
+        # More than five bulbs repeat the cycle.
+        self.assertEqual(
+            [m.band_for(index, 7) for index in range(7)], [0, 1, 2, 3, 4, 0, 1]
+        )
+
+    def test_normalize_band_colors_repairs_missing_and_bad_values(self):
+        colors = m.normalize_band_colors(["#010203", "bogus", (4, 5, 6)])
+        self.assertEqual(colors[0], (1, 2, 3))
+        self.assertEqual(colors[1], m.hex_to_rgb(m.DEFAULT_BAND_COLORS[1]))
+        self.assertEqual(colors[2], (4, 5, 6))
+        self.assertEqual(colors[3], m.hex_to_rgb(m.DEFAULT_BAND_COLORS[3]))
+        self.assertEqual(len(colors), len(m.BANDS))
+        self.assertEqual(
+            m.normalize_band_colors(None),
+            tuple(m.hex_to_rgb(color) for color in m.DEFAULT_BAND_COLORS),
+        )
+
+    def test_parse_band_colors_accepts_five_hex_values(self):
+        colors = m.parse_band_colors(
+            "#010203, #040506,#070809,#0a0b0c,#0d0e0f"
+        )
+        self.assertEqual(colors[0], (1, 2, 3))
+        self.assertEqual(colors[-1], (13, 14, 15))
+        with self.assertRaises(ValueError):
+            m.parse_band_colors("#010203")
+        with self.assertRaises(ValueError):
+            m.parse_band_colors("#010203,#040506,#070809,#0a0b0c,#zzzzzz")
+
+    def test_profiles_cover_every_reactive_mode(self):
+        self.assertEqual(
+            set(m.REACTION_PROFILES),
+            {"equalize", "cut", "motion", "beat", "vu"},
+        )
+        self.assertEqual(set(m.PROFILE_LABELS), {"soft", "balanced", "strong"})
+        for mode, profiles in m.REACTION_PROFILES.items():
+            with self.subTest(mode=mode):
+                self.assertEqual(set(profiles), set(m.PROFILE_LABELS))
+                for name, values in profiles.items():
+                    self.assertTrue(values.get("hint"), f"{mode}/{name} has no hint")
+                    self.assertIn("span", values)
+
+    def test_profiles_move_the_parameters_in_the_expected_direction(self):
+        soft = m.Reaction("equalize", 1.0, 0.45, "soft")
+        strong = m.Reaction("equalize", 1.0, 0.45, "strong")
+        self.assertLess(soft.eq_span, strong.eq_span)
+        self.assertGreater(soft.eq_tau, strong.eq_tau)
+        self.assertGreater(soft.eq_floor, strong.eq_floor)
+
+        soft = m.Reaction("cut", 1.0, 0.45, "soft")
+        strong = m.Reaction("cut", 1.0, 0.45, "strong")
+        self.assertGreater(soft.cut_threshold, strong.cut_threshold)
+        self.assertGreater(soft.cut_cooldown, strong.cut_cooldown)
+        self.assertLess(soft.cut_per_minute, strong.cut_per_minute)
+
+        soft = m.Reaction("beat", 1.0, 0.45, "soft")
+        strong = m.Reaction("beat", 1.0, 0.45, "strong")
+        self.assertGreater(soft.beat_threshold, strong.beat_threshold)
+        self.assertLess(soft.beat_span, strong.beat_span)
+
+    def test_unknown_profile_falls_back_to_balanced(self):
+        reaction = m.Reaction("equalize", 1.0, 0.45, "extreme")
+        balanced = m.Reaction("equalize", 1.0, 0.45, "balanced")
+        self.assertEqual(reaction.profile, "balanced")
+        self.assertEqual(reaction.eq_span, balanced.eq_span)
+
+    def test_every_reaction_explains_itself(self):
+        for mode, details in m.REACTIONS.items():
+            with self.subTest(mode=mode):
+                self.assertTrue(details["hint"])
+                self.assertTrue(details.get("detail"))
+                self.assertGreaterEqual(len(details["detail"]), len(details["hint"]))
+        # Cut and the audio modes are the ones that needed plain-language copy.
+        self.assertIn("hard edit", m.REACTIONS["cut"]["detail"])
+        self.assertIn("five frequency bands", m.REACTIONS["beat"]["detail"])
+        self.assertIn("five-band meter", m.REACTIONS["vu"]["detail"])
+
 
 class ReactionModeTests(unittest.TestCase):
     def update(
@@ -546,25 +632,139 @@ class ReactionModeTests(unittest.TestCase):
         )
         self.assertEqual(reaction.dimming("a", 100, 101.2, 0.05), 75)
 
-    def test_vu_follows_the_left_and_right_channels(self):
+    def test_vu_with_one_bulb_uses_overall_volume_and_dominant_color(self):
         reaction = m.Reaction("vu", 1.0, 0.45)
-        audio = {"rms": -20.0, "l": -12.0, "r": -45.0}
-        now = 100.0
-        for _ in range(40):
-            self.update(
-                reaction,
-                now,
-                audio=audio,
-                lights=("left-bulb", "right-bulb"),
-                names=("left", "right"),
-            )
-            now += 0.05
-        self.assertAlmostEqual(reaction.levels["left-bulb"], 1.0)
-        self.assertAlmostEqual(reaction.levels["right-bulb"], 0.0)
-        left = reaction.dimming("left-bulb", 100, now, 0.05)
-        right = reaction.dimming("right-bulb", 100, now, 0.05)
-        self.assertGreater(left, right)
-        self.assertEqual(right, 25)
+        raw = self.update(
+            reaction,
+            100.0,
+            audio={
+                "rms": -12.0,
+                "bands": [-60.0, -60.0, -12.0, -60.0, -60.0],
+            },
+        )
+        self.assertAlmostEqual(reaction.levels["a"], 1.0)
+        self.assertEqual(reaction.assignments, {"a": None})
+        self.assertEqual(raw["a"], m.hex_to_rgb(m.DEFAULT_BAND_COLORS[2]))
+
+    def test_vu_with_three_bulbs_tracks_three_bands(self):
+        reaction = m.Reaction("vu", 1.0, 0.45)
+        raw = self.update(
+            reaction,
+            100.0,
+            audio={
+                "rms": -20.0,
+                "bands": [-6.0, -60.0, -30.0, -60.0, -18.0],
+            },
+            lights=("a", "b", "c"),
+            names=("all", "all", "all"),
+        )
+        self.assertEqual(reaction.assignments, {"a": 0, "b": 2, "c": 4})
+        self.assertGreater(reaction.levels["a"], reaction.levels["b"])
+        self.assertGreater(reaction.levels["c"], reaction.levels["b"])
+        self.assertEqual(raw["a"], m.hex_to_rgb(m.DEFAULT_BAND_COLORS[0]))
+        self.assertEqual(raw["b"], m.hex_to_rgb(m.DEFAULT_BAND_COLORS[2]))
+        self.assertEqual(raw["c"], m.hex_to_rgb(m.DEFAULT_BAND_COLORS[4]))
+        self.assertGreater(
+            reaction.dimming("a", 100, 100.0, 0.05),
+            reaction.dimming("b", 100, 100.0, 0.05),
+        )
+
+    def test_vu_with_five_bulbs_assigns_one_band_each(self):
+        reaction = m.Reaction("vu", 1.0, 0.45)
+        self.update(
+            reaction,
+            100.0,
+            audio={"rms": -20.0, "bands": [-6, -12, -18, -30, -45]},
+            lights=("a", "b", "c", "d", "e"),
+            names=("all",) * 5,
+        )
+        self.assertEqual(
+            reaction.assignments, {"a": 0, "b": 1, "c": 2, "d": 3, "e": 4}
+        )
+
+    def test_audio_modes_use_the_configured_band_colors(self):
+        reaction = m.Reaction("vu", 1.0, 0.45, "balanced", ["#010203"] * 5)
+        raw = self.update(
+            reaction,
+            100.0,
+            audio={"rms": -20.0, "bands": [-60.0] * 5},
+            lights=("a", "b"),
+            names=("all", "all"),
+        )
+        self.assertEqual(raw["a"], (1, 2, 3))
+        self.assertEqual(raw["b"], (1, 2, 3))
+
+    def test_beat_with_two_bulbs_pulses_the_band_that_moved(self):
+        reaction = m.Reaction("beat", 1.0, 0.45)
+        self.update(
+            reaction,
+            100.0,
+            audio={"rms": -40.0, "bands": [-40, -60, -60, -60, -60]},
+            lights=("a", "b"),
+            names=("all", "all"),
+        )
+        self.update(
+            reaction,
+            100.2,
+            audio={"rms": -38.0, "bands": [-40, -60, -60, -60, -10]},
+            lights=("a", "b"),
+            names=("all", "all"),
+        )
+        self.assertEqual(reaction.assignments, {"a": 0, "b": 4})
+        self.assertIsNone(reaction.band_at[0])
+        self.assertEqual(reaction.band_at[4], 100.2)
+
+    def test_audio_modes_still_work_without_band_metadata(self):
+        # Older state files and audio-only edge cases carry only the overall
+        # RMS; the meter must not go dark just because `bands` is missing.
+        reaction = m.Reaction("vu", 1.0, 0.45)
+        raw = self.update(reaction, 100.0, audio={"rms": -12.0})
+        self.assertAlmostEqual(reaction.levels["a"], 1.0)
+        self.assertEqual(raw["a"], m.hex_to_rgb(m.DEFAULT_BAND_COLORS[0]))
+
+        beat = m.Reaction("beat", 1.0, 0.45)
+        self.update(beat, 100.0, audio={"rms": -40.0})
+        self.update(beat, 100.2, audio={"rms": -25.0})
+        self.assertEqual(beat.beat_at, 100.2)
+
+    def test_audio_modes_ignore_nan_and_infinite_levels(self):
+        reaction = m.Reaction("vu", 1.0, 0.45)
+        raw = self.update(
+            reaction,
+            100.0,
+            audio={"rms": float("nan"), "bands": [float("inf")] * 5},
+        )
+        self.assertEqual(raw, {})
+        self.assertEqual(reaction.levels, {})
+
+    def test_audio_amount_zero_is_a_no_op(self):
+        for mode in ("beat", "vu"):
+            with self.subTest(mode=mode):
+                reaction = m.Reaction(mode, 0.0, 0.45)
+                raw = {"a": (10, 20, 30)}
+                self.update(
+                    reaction,
+                    100.0,
+                    audio={"rms": -12.0, "bands": [-12.0] * 5},
+                    raw=raw,
+                )
+                self.assertEqual(raw, {"a": (10, 20, 30)})
+                self.assertEqual(reaction.dimming("a", 73, 100.1, 0.05), 73)
+
+
+class LuaAudioContractTests(unittest.TestCase):
+    def test_lua_graph_exposes_five_labelled_bands(self):
+        source = (
+            Path(__file__).resolve().parents[1] / "lua" / "wiz_ambilight.lua"
+        ).read_text(encoding="utf-8")
+        self.assertIn("@wizstats", source)
+        self.assertIn("@wizbands", source)
+        self.assertIn("@wiztail", source)
+        self.assertIn("acrossover=split=60 250 800 2500", source)
+        self.assertIn("amerge=inputs=5", source)
+        self.assertIn('"bands":[', source)
+        # The removal path must tear the whole analyser down, in any order.
+        self.assertIn("{ \"@wizbands\", \"@wizstats\", \"@wiztail\" }", source)
 
 
 class DirectControlTests(unittest.TestCase):

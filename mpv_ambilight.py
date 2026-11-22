@@ -531,45 +531,100 @@ REACTIONS = {
         "group": "video",
         "label": "Color — follow the picture",
         "hint": "The classic ambilight: each bulb copies its own zone.",
+        "detail": (
+            "Samples the frame and sends each bulb its own zone. Nothing is "
+            "reacted to; this is the baseline look."
+        ),
     },
     "equalize": {
         "group": "video",
         "label": "Equalize — hold the room brightness",
         "hint": "Bright scenes dim the bulbs and dark scenes lift them, slowly.",
+        "detail": (
+            "Measures the average brightness of the frame and slowly raises or "
+            "lowers every bulb to hold the room near the target. Bright scenes "
+            "dim, dark scenes lift; the correction is capped and never goes "
+            "black."
+        ),
     },
     "cut": {
         "group": "video",
-        "label": "Cut flash — pulse on scene cuts",
+        "label": "Cut flash — pulse on hard cuts",
         "hint": "A short flash when the picture cuts, at most six per minute.",
+        "detail": (
+            "A cut is one hard edit, not camera motion. When the whole frame "
+            "jumps to a new scene, the bulbs flash at full brightness for a "
+            "moment; between cuts they sit slightly dimmer so the flash reads "
+            "as a pulse. Rate-limited."
+        ),
     },
     "motion": {
         "group": "video",
         "label": "Motion — follow the action",
         "hint": "Still shots stay calm; movement adds brightness and punch.",
+        "detail": (
+            "Compares each zone with the previous frame. Still shots stay calm "
+            "and slightly dim; movement adds brightness and saturation to the "
+            "bulbs watching the action."
+        ),
     },
     "duotone": {
         "group": "video",
         "label": "Duotone — dominant and complement",
         "hint": "Bulbs alternate the zone color and its opposite hue.",
+        "detail": (
+            "Even bulbs keep the sampled color, odd bulbs get the opposite hue. "
+            "With two bulbs you get a complementary pair; with more, a striped "
+            "duotone."
+        ),
     },
     "beat": {
         "group": "audio",
         "label": "Beat — pulse on the beat",
-        "hint": (
-            "Bass hits flash the bulbs; the audio analyser runs only in this mode."
+        "hint": "Band hits flash the bulbs; the audio analyser runs only now.",
+        "detail": (
+            "Listens to five frequency bands. Each bulb owns one band and "
+            "flashes its chosen color when that band jumps above its recent "
+            "average. With one bulb it pulses on the overall beat."
         ),
     },
     "vu": {
         "group": "audio",
-        "label": "VU — follow the volume",
-        "hint": (
-            "Each bulb follows its channel level; the audio analyser runs only "
-            "in this mode."
+        "label": "VU — five-band meter",
+        "hint": "Each bulb follows its band as a level meter.",
+        "detail": (
+            "Turns the bulbs into a five-band meter. Each bulb follows the "
+            "level of its assigned band, from silence to full, in that band's "
+            "chosen color. With one bulb it follows the overall volume and "
+            "takes the color of the loudest band."
         ),
     },
 }
 REACTION_GROUPS = ("video", "audio")
 AUDIO_REACTIONS = frozenset({"beat", "vu"})
+
+# Five analysis bands, lowest first. The Lua crossover splits at 60, 250, 800
+# and 2500 Hz; these are the user-facing names for those slices.
+BANDS = ("sub", "low", "low-mid", "mid", "high")
+BAND_LABELS = {
+    "sub": "Sub",
+    "low": "Low",
+    "low-mid": "Low-mid",
+    "mid": "Mid",
+    "high": "High",
+}
+DEFAULT_BAND_COLORS = (
+    "#ff5a3c",
+    "#fcbe11",
+    "#7ad66b",
+    "#38bdf8",
+    "#a78bfa",
+)
+PROFILE_LABELS = {
+    "soft": "Soft",
+    "balanced": "Balanced",
+    "strong": "Strong",
+}
 
 # Room and TV defaults. The living room is 3.6 x 3.3 m with a 2.40 m ceiling
 # (28.5 m3, 11.9 m2): two bulbs can dominate it, so every effect stays modest.
@@ -597,6 +652,179 @@ REACTION_SMOOTH = 0.08
 # Audio-only files have no zone colour, so the bulbs hold this warm base while
 # the beat or the VU meter drives their brightness.
 REACTION_FALLBACK_RGB = (255, 190, 120)
+
+# One profile id per intensity level, shared by every reaction that has
+# profiles. The values replace the module defaults above; `react_amount`
+# still scales the spans, so a profile and the strength knob compose.
+REACTION_PROFILES = {
+    "equalize": {
+        "soft": {
+            "span": 0.20,
+            "tau": 6.0,
+            "floor": 0.55,
+            "hint": "Small, slow corrections; keeps the room's mood.",
+        },
+        "balanced": {
+            "span": REACTION_SPAN,
+            "tau": EQUALIZE_TAU,
+            "floor": REACTION_FLOOR,
+            "hint": "The default: visible correction without pumping.",
+        },
+        "strong": {
+            "span": 0.55,
+            "tau": 2.0,
+            "floor": 0.20,
+            "hint": "Large, fast corrections; the room tracks the scene.",
+        },
+    },
+    "cut": {
+        "soft": {
+            "threshold": 0.30,
+            "cooldown": 2.5,
+            "per_minute": 3,
+            "span": 0.15,
+            "seconds": 0.10,
+            "hint": "Only obvious cuts, with gentle headroom.",
+        },
+        "balanced": {
+            "threshold": CUT_THRESHOLD,
+            "cooldown": CUT_COOLDOWN,
+            "per_minute": CUT_PER_MINUTE,
+            "span": CUT_SPAN,
+            "seconds": CUT_SECONDS,
+            "hint": "Responsive without flashing on camera moves.",
+        },
+        "strong": {
+            "threshold": 0.14,
+            "cooldown": 0.8,
+            "per_minute": 12,
+            "span": 0.35,
+            "seconds": 0.16,
+            "hint": "Picks up small cuts and flashes harder.",
+        },
+    },
+    "motion": {
+        "soft": {
+            "span": 0.18,
+            "tau": 0.55,
+            "distance": 0.18,
+            "hint": "Subtle lift for movement.",
+        },
+        "balanced": {
+            "span": MOTION_SPAN,
+            "tau": MOTION_TAU,
+            "distance": MOTION_DISTANCE,
+            "hint": "The default balance of calm and punch.",
+        },
+        "strong": {
+            "span": 0.40,
+            "tau": 0.20,
+            "distance": 0.07,
+            "hint": "Action scenes drive the bulbs hard.",
+        },
+    },
+    "beat": {
+        "soft": {
+            "threshold": 7.0,
+            "cooldown": 0.7,
+            "span": 0.15,
+            "attack": 0.08,
+            "release": 0.35,
+            "hint": "Only strong hits; long, soft flashes.",
+        },
+        "balanced": {
+            "threshold": BEAT_THRESHOLD_DB,
+            "cooldown": BEAT_COOLDOWN,
+            "span": BEAT_SPAN,
+            "attack": BEAT_ATTACK,
+            "release": BEAT_RELEASE,
+            "hint": "The default: hits above the running average.",
+        },
+        "strong": {
+            "threshold": 3.0,
+            "cooldown": 0.3,
+            "span": 0.40,
+            "attack": 0.04,
+            "release": 0.18,
+            "hint": "Sensitive, short flashes on most beats.",
+        },
+    },
+    "vu": {
+        "soft": {
+            "low": -50.0,
+            "high": -14.0,
+            "span": 0.45,
+            "hint": "Narrow range; the meter stays near the middle.",
+        },
+        "balanced": {
+            "low": VU_LOW_DB,
+            "high": VU_HIGH_DB,
+            "span": VU_SPAN,
+            "hint": "The default −45…−12 dBFS range.",
+        },
+        "strong": {
+            "low": -40.0,
+            "high": -10.0,
+            "span": 1.0,
+            "hint": "Wide range; quiet parts go dark, loud parts go full.",
+        },
+    },
+}
+
+
+def finite_float(value):
+    """A finite float, or None for missing, NaN and infinite values."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def band_for(index: int, count: int):
+    """Which of the five bands bulb `index` follows; None means overall.
+
+    With 2–5 bulbs the bands are spread from sub to high, so two bulbs get the
+    extremes and five get one each. More than five bulbs repeat the cycle.
+    """
+    if count <= 1:
+        return None
+    if count > len(BANDS):
+        return index % len(BANDS)
+    return int(round(index * (len(BANDS) - 1) / (count - 1)))
+
+
+def normalize_band_colors(value):
+    """Five RGB triplets, in band order, from hex strings or RGB tuples.
+
+    A missing or malformed entry falls back to that band's default, so the
+    remaining bands never shift position.
+    """
+    raw = list(value) if isinstance(value, (list, tuple)) else []
+    colors = []
+    for index in range(len(BANDS)):
+        item = raw[index] if index < len(raw) else None
+        try:
+            if isinstance(item, str):
+                colors.append(hex_to_rgb(item))
+            else:
+                channels = tuple(int(channel) for channel in item)
+                if len(channels) != 3:
+                    raise ValueError
+                colors.append(
+                    tuple(max(0, min(255, channel)) for channel in channels)
+                )
+        except (TypeError, ValueError):
+            colors.append(hex_to_rgb(DEFAULT_BAND_COLORS[index]))
+    return tuple(colors)
+
+
+def parse_band_colors(value):
+    """Parse the CLI's five comma-separated hex colors, or raise ValueError."""
+    parts = [part.strip() for part in str(value).split(",") if part.strip()]
+    if len(parts) != len(BANDS):
+        raise ValueError("expected five comma-separated colors")
+    return tuple(hex_to_rgb(part) for part in parts)
 
 
 def scene_luma(rgb) -> float:
@@ -692,11 +920,35 @@ class Reaction:
         mode: str = "color",
         amount: float = 0.8,
         target: float = REACTION_TARGET,
+        profile: str = "balanced",
+        bands=None,
     ):
         self.mode = mode if mode in REACTIONS else "color"
         self.amount = max(0.0, min(1.0, float(amount)))
         self.target = max(0.05, min(0.95, float(target)))
+        self.profile = profile if profile in PROFILE_LABELS else "balanced"
+        values = REACTION_PROFILES.get(self.mode, {}).get(self.profile, {})
         self.audio = self.mode in AUDIO_REACTIONS
+        self.band_colors = normalize_band_colors(bands)
+        self.eq_span = float(values.get("span", REACTION_SPAN))
+        self.eq_tau = float(values.get("tau", EQUALIZE_TAU))
+        self.eq_floor = float(values.get("floor", REACTION_FLOOR))
+        self.cut_threshold = float(values.get("threshold", CUT_THRESHOLD))
+        self.cut_seconds = float(values.get("seconds", CUT_SECONDS))
+        self.cut_cooldown = float(values.get("cooldown", CUT_COOLDOWN))
+        self.cut_per_minute = int(values.get("per_minute", CUT_PER_MINUTE))
+        self.cut_span = float(values.get("span", CUT_SPAN))
+        self.motion_span = float(values.get("span", MOTION_SPAN))
+        self.motion_tau = float(values.get("tau", MOTION_TAU))
+        self.motion_distance = float(values.get("distance", MOTION_DISTANCE))
+        self.beat_threshold = float(values.get("threshold", BEAT_THRESHOLD_DB))
+        self.beat_cooldown = float(values.get("cooldown", BEAT_COOLDOWN))
+        self.beat_span = float(values.get("span", BEAT_SPAN))
+        self.beat_attack = float(values.get("attack", BEAT_ATTACK))
+        self.beat_release = float(values.get("release", BEAT_RELEASE))
+        self.vu_low = float(values.get("low", VU_LOW_DB))
+        self.vu_high = float(values.get("high", VU_HIGH_DB))
+        self.vu_span = float(values.get("span", VU_SPAN))
         self.last_frame_at = None
         self.luma = None
         self.gain = 1.0
@@ -708,6 +960,12 @@ class Reaction:
         self.last_cut_at = float("-inf")
         self.beat_base = None
         self.beat_at = None
+        self.band_db = [None] * len(BANDS)
+        self.band_levels = [0.0] * len(BANDS)
+        self.band_bases = [None] * len(BANDS)
+        self.band_at = [None] * len(BANDS)
+        self.pulse_at = {}
+        self.assignments = {}
         self.levels = {}
         self.smoothed = {}
 
@@ -723,7 +981,7 @@ class Reaction:
         """Fold one mpv state snapshot into the reaction.
 
         `raw_colors` maps each bulb IP to the unadjusted zone colour and is
-        updated in place by Duotone.
+        updated in place by Duotone and by the audio band colours.
         """
         dt = self._elapsed(now)
         zones = state.get("zones") if isinstance(state.get("zones"), dict) else {}
@@ -737,10 +995,10 @@ class Reaction:
             if self.luma is None:
                 self.luma = luma
             else:
-                alpha = 1.0 - math.exp(-max(0.0, dt) / EQUALIZE_TAU)
+                alpha = 1.0 - math.exp(-max(0.0, dt) / max(0.1, self.eq_tau))
                 self.luma += (luma - self.luma) * alpha
             self.gain = equalize_gain(
-                self.luma, self.target, REACTION_SPAN * self.amount, REACTION_FLOOR
+                self.luma, self.target, self.eq_span * self.amount, self.eq_floor
             )
 
         elif self.mode == "cut" and all_rgb is not None:
@@ -750,9 +1008,9 @@ class Reaction:
                 while self.cut_times and now - self.cut_times[0] > 60.0:
                     self.cut_times.popleft()
                 if (
-                    distance >= CUT_THRESHOLD
-                    and now - self.last_cut_at >= CUT_COOLDOWN
-                    and len(self.cut_times) < CUT_PER_MINUTE
+                    distance >= self.cut_threshold
+                    and now - self.last_cut_at >= self.cut_cooldown
+                    and len(self.cut_times) < self.cut_per_minute
                 ):
                     self.cut_times.append(now)
                     self.last_cut_at = now
@@ -760,12 +1018,14 @@ class Reaction:
             self.prev_all = rgb
 
         elif self.mode == "motion":
-            alpha = 1.0 - math.exp(-max(0.0, dt) / MOTION_TAU)
+            alpha = 1.0 - math.exp(-max(0.0, dt) / max(0.05, self.motion_tau))
             for ip, zone in zip(lights, zone_names):
                 current = zone_color(zones, zone)
                 previous = self.prev_zones.get(ip)
                 distance = rgb_distance(current, previous) if previous else 0.0
-                energy = max(0.0, min(1.0, distance / MOTION_DISTANCE))
+                energy = max(
+                    0.0, min(1.0, distance / max(0.01, self.motion_distance))
+                )
                 level = self.motion.get(ip, 0.0)
                 self.motion[ip] = level + (energy - level) * alpha
                 self.prev_zones[ip] = tuple(float(channel) for channel in current)
@@ -777,44 +1037,76 @@ class Reaction:
                     raw_colors[ip] = hue_shift(rgb, 180.0 * self.amount)
 
         elif self.mode == "beat":
-            self._read_beat(now, audio)
+            if self.amount > 0:
+                self._read_audio(now, audio, raw_colors, lights, beat=True)
 
         elif self.mode == "vu":
-            self._read_vu(audio, lights)
+            if self.amount > 0:
+                self._read_audio(now, audio, raw_colors, lights, beat=False)
 
-    def _read_beat(self, now: float, audio: dict) -> None:
-        rms = audio.get("rms")
+    def _read_audio(self, now, audio, raw_colors, lights, beat):
+        """Read the five band levels, assign bands to bulbs and set colours."""
+        rms = finite_float(audio.get("rms"))
         if rms is None:
-            rms = audio.get("l")
-        try:
-            rms = float(rms)
-        except (TypeError, ValueError):
+            rms = finite_float(audio.get("l"))
+        raw_bands = audio.get("bands")
+        values = []
+        if isinstance(raw_bands, (list, tuple)):
+            values = [
+                finite_float(value) for value in list(raw_bands)[: len(BANDS)]
+            ]
+        while len(values) < len(BANDS):
+            values.append(None)
+        if rms is None and all(value is None for value in values):
             return
-        if not math.isfinite(rms):
-            return
-        if self.beat_base is None:
-            self.beat_base = rms
-            return
-        if (
-            rms >= -55.0
-            and rms - self.beat_base >= BEAT_THRESHOLD_DB
-            and (self.beat_at is None or now - self.beat_at >= BEAT_COOLDOWN)
-        ):
-            self.beat_at = now
-            # Re-seed the baseline so one loud hit does not retrigger by itself.
-            self.beat_base = rms
-        else:
-            self.beat_base += (rms - self.beat_base) * 0.18
-
-    def _read_vu(self, audio: dict, lights) -> None:
-        rms = audio.get("rms")
-        left = audio.get("l", rms)
-        right = audio.get("r", left)
-        if len(lights) == 1:
-            left = right = rms
+        self.band_db = values
+        self.band_levels = [
+            vu_level(value, self.vu_low, self.vu_high) for value in values
+        ]
+        count = len(lights)
+        self.assignments = {
+            ip: band_for(index, count) for index, ip in enumerate(lights)
+        }
+        overall = (
+            vu_level(rms, self.vu_low, self.vu_high)
+            if rms is not None
+            else max(self.band_levels)
+        )
+        dominant = max(range(len(BANDS)), key=lambda index: self.band_levels[index])
+        if beat:
+            for index, value in enumerate(values):
+                self.band_bases[index], self.band_at[index] = self._transient(
+                    now, value, self.band_bases[index], self.band_at[index]
+                )
+            self.beat_base, self.beat_at = self._transient(
+                now, rms, self.beat_base, self.beat_at
+            )
         for index, ip in enumerate(lights):
-            db = left if index % 2 == 0 else right
-            self.levels[ip] = vu_level(db)
+            band = self.assignments[ip]
+            if band is None:
+                color = self.band_colors[dominant]
+                self.levels[ip] = overall
+                self.pulse_at[ip] = self.beat_at
+            else:
+                color = self.band_colors[band]
+                self.levels[ip] = self.band_levels[band]
+                self.pulse_at[ip] = self.band_at[band]
+            raw_colors[ip] = color
+
+    def _transient(self, now, value, base, at):
+        """One band's beat detector: a jump over the running average."""
+        if value is None:
+            return base, at
+        if base is None:
+            return value, at
+        if (
+            value >= -55.0
+            and value - base >= self.beat_threshold
+            and (at is None or now - at >= self.beat_cooldown)
+        ):
+            # Re-seed the baseline so one loud hit does not retrigger itself.
+            return value, now
+        return base + (value - base) * 0.18, at
 
     def saturation(self, ip: str) -> float:
         """Per-bulb saturation multiplier applied before the style's boost."""
@@ -828,18 +1120,21 @@ class Reaction:
         if self.mode == "equalize":
             mult = self.gain
         elif self.mode == "cut":
-            steady = 1.0 - CUT_SPAN * self.amount
+            steady = 1.0 - self.cut_span * self.amount
             age = now - self.flash_at if self.flash_at is not None else float("inf")
-            mult = 1.0 if cut_pulse(age) else steady
+            mult = 1.0 if cut_pulse(age, self.cut_seconds) else steady
         elif self.mode == "motion":
-            span = MOTION_SPAN * self.amount
+            span = self.motion_span * self.amount
             mult = 1.0 - span + span * self.motion.get(ip, 0.0)
         elif self.mode == "beat":
-            steady = 1.0 - BEAT_SPAN * self.amount
-            age = now - self.beat_at if self.beat_at is not None else float("inf")
-            mult = steady + (1.0 - steady) * beat_pulse(age)
+            steady = 1.0 - self.beat_span * self.amount
+            pulse_at = self.pulse_at.get(ip, self.beat_at)
+            age = now - pulse_at if pulse_at is not None else float("inf")
+            mult = steady + (1.0 - steady) * beat_pulse(
+                age, self.beat_attack, self.beat_release
+            )
         elif self.mode == "vu":
-            span = VU_SPAN * self.amount
+            span = self.vu_span * self.amount
             mult = 1.0 - span + span * self.levels.get(ip, 0.0)
         else:
             mult = 1.0
@@ -1054,6 +1349,8 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
         getattr(args, "react", "color"),
         getattr(args, "react_amount", 0.8),
         getattr(args, "react_target", REACTION_TARGET),
+        getattr(args, "react_profile", "balanced"),
+        getattr(args, "react_bands", None),
     )
     send_interval = 1.0 / max(1.0, args.send_hz)
     pid = os.getpid()
@@ -1073,6 +1370,11 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
     if reaction.mode != "color":
         print(
             f"reaction: {reaction.mode} ({reaction.amount:.0%} amount"
+            + (
+                f", {reaction.profile} profile"
+                if REACTION_PROFILES.get(reaction.mode)
+                else ""
+            )
             + (
                 f", target luma {reaction.target:.2f}"
                 if reaction.mode == "equalize"
@@ -1696,6 +1998,23 @@ def main(argv=None) -> int:
         help="equalize only: target scene luma, 0.05-0.95 (default: 0.45)",
     )
     parser.add_argument(
+        "--react-profile",
+        default="balanced",
+        choices=[*PROFILE_LABELS],
+        help=(
+            "reaction intensity profile: soft, balanced or strong "
+            "(default: balanced)"
+        ),
+    )
+    parser.add_argument(
+        "--react-bands",
+        default=None,
+        help=(
+            "five audio band colors as #rrggbb,#rrggbb,#rrggbb,#rrggbb,#rrggbb "
+            "(sub, low, low-mid, mid, high)"
+        ),
+    )
+    parser.add_argument(
         "--sampling",
         default="auto",
         choices=SAMPLING_CHOICES,
@@ -1913,6 +2232,13 @@ def main(argv=None) -> int:
         REACTION_TARGET if args.react_target is None else args.react_target
     )
     args.react_target = max(0.05, min(0.95, float(args.react_target)))
+    if args.react_bands is None:
+        args.react_bands = normalize_band_colors(None)
+    else:
+        try:
+            args.react_bands = parse_band_colors(args.react_bands)
+        except ValueError as error:
+            parser.error(f"--react-bands: {error}")
     resolve_sampling(args, explicit)
 
     if args.attach:

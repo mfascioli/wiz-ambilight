@@ -218,6 +218,35 @@ class StructureTests(unittest.TestCase):
         self.assertLess(HTML.index('id="reactSelect"'), HTML.index("sampleStage"))
         self.assertEqual(HTML.count('class="look-col"'), 3)
 
+    def test_reaction_granularity_stays_inside_preset(self):
+        js = (WEB / "app.js").read_text(encoding="utf-8")
+        # Strength, profile, target and five band swatches are Preset fields,
+        # not new columns or cards.
+        for control in (
+            'id="reactAmount"',
+            'id="reactProfile"',
+            'id="reactTarget"',
+            'id="reactBands"',
+        ):
+            with self.subTest(control=control):
+                self.assertIn(control, HTML)
+        self.assertLess(HTML.index('id="reactSelect"'), HTML.index('id="reactAmount"'))
+        self.assertLess(HTML.index('id="reactAmount"'), HTML.index("sampleStage"))
+        self.assertLess(HTML.index('id="reactBands"'), HTML.index("sampleStage"))
+        self.assertIn("syncReactionFields", js)
+        self.assertIn("fillProfileSelect", js)
+        self.assertIn("buildBandInputs", js)
+        self.assertIn("react_profile", js)
+        self.assertIn("react_bands", js)
+        self.assertEqual(HTML.count('class="look-col"'), 3)
+
+    def test_band_color_swatches_keep_the_hairline_language(self):
+        self.assertIn(".band-colors", CSS)
+        self.assertIn(".band-color", CSS)
+        # Five equal slots, a real color input, and no new radius token.
+        self.assertIn("grid-template-columns: repeat(5, minmax(0, 1fr))", CSS)
+        self.assertIn('input[type="color"]', CSS)
+
     def test_lights_can_be_forgotten(self):
         js = (WEB / "app.js").read_text(encoding="utf-8")
         self.assertIn("/api/light/delete", js)

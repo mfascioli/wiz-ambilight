@@ -145,6 +145,26 @@
                 <p class="hint tight" id="reactHint"></p>
               </div>
               <div class="field">
+                <label for="reactAmount">Reaction strength <output id="reactAmountOut">80</output></label>
+                <input id="reactAmount" type="range" min="0" max="100" step="1" value="80">
+              </div>
+              <div class="field" id="reactProfileField">
+                <label for="reactProfile">Reaction profile</label>
+                <select id="reactProfile"></select>
+                <p class="hint tight" id="reactProfileHint"></p>
+              </div>
+              <div class="field" id="reactTargetField">
+                <label for="reactTarget">Target luma <output id="reactTargetOut">45</output></label>
+                <input id="reactTarget" type="range" min="5" max="95" step="1" value="45">
+              </div>
+              <div class="field" id="reactBandsField">
+                <label>Band colors</label>
+                <div class="band-colors" id="reactBands"></div>
+                <p class="hint tight" id="reactBandsHint">
+                  One bulb follows the mix; more bulbs split the bands.
+                </p>
+              </div>
+              <div class="field">
                 <label for="brightness">Brightness <output id="brightnessOut">100</output></label>
                 <input id="brightness" type="range" min="10" max="100" step="1" value="100">
               </div>
