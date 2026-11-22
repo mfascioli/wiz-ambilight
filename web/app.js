@@ -64,6 +64,8 @@ const refs = {
   mediaInput: document.getElementById("mediaInput"),
   browseBtn: document.getElementById("browseBtn"),
   styleSelect: document.getElementById("styleSelect"),
+  reactSelect: document.getElementById("reactSelect"),
+  reactHint: document.getElementById("reactHint"),
   samplingSelect: document.getElementById("samplingSelect"),
   sampleStage: document.getElementById("sampleStage"),
   colorStage: document.getElementById("colorStage"),
@@ -288,6 +290,41 @@ function buildCard(light) {
   identify.title = "Flash this bulb";
   identify.setAttribute("aria-label", "Identify light");
 
+  const forget = el("button", "icon-btn forget", "×");
+  forget.type = "button";
+  forget.title = "Forget this light";
+  forget.setAttribute("aria-label", "Forget light");
+  let forgetArmed = false;
+  let forgetTimer = null;
+  const disarmForget = () => {
+    forgetArmed = false;
+    forget.textContent = "×";
+    forget.classList.remove("armed");
+    forget.title = "Forget this light";
+    if (forgetTimer) {
+      window.clearTimeout(forgetTimer);
+      forgetTimer = null;
+    }
+  };
+  forget.addEventListener("click", () => {
+    if (!forgetArmed) {
+      forgetArmed = true;
+      forget.textContent = "!";
+      forget.classList.add("armed");
+      forget.title = "Press again to forget this light";
+      forgetTimer = window.setTimeout(disarmForget, 3000);
+      return;
+    }
+    const label = card.light?.name || card.light?.ip || "light";
+    disarmForget();
+    action(
+      "/api/light/delete",
+      { ip: light.ip },
+      `Forgot ${label}. A scan can add a reachable bulb back.`,
+      forget,
+    );
+  });
+
   const toggle = el("label", "switch");
   toggle.title = "Include this light in ambilight";
   const toggleInput = document.createElement("input");
@@ -295,7 +332,7 @@ function buildCard(light) {
   toggleInput.setAttribute("aria-label", "Include light");
   toggle.append(toggleInput, el("span"));
 
-  controls.append(zonePick, identify, toggle);
+  controls.append(zonePick, identify, toggle, forget);
   root.append(swatch, main, controls);
 
   name.addEventListener("change", () => {
@@ -346,6 +383,7 @@ function buildCard(light) {
     zonePreview,
     toggleInput,
     identify,
+    forget,
     light: null,
   };
   return card;
@@ -395,6 +433,7 @@ function updateCard(card, light) {
   card.swatch.style.color = light.state ? shown : "transparent";
   card.swatch.classList.toggle("on", light.state && light.enabled);
   card.identify.disabled = !light.online;
+  card.forget.setAttribute("aria-label", `Forget ${light.name || light.ip}`);
 }
 
 function renderLights(lights, zones) {
@@ -555,12 +594,67 @@ function fillSamplingSelect() {
   }
 }
 
+/* The reaction list arrives from the core so the panel and the CLI can never
+   disagree about the modes. Video and audio stay in separate optgroups: the
+   same control says how the lights react and what they react to. */
+function fillReactionSelect(snapshot) {
+  const reactions = snapshot.reactions || [];
+  const groups = snapshot.reaction_groups || [];
+  const signature = JSON.stringify([
+    reactions.map((reaction) => [
+      reaction.id,
+      reaction.label,
+      reaction.group,
+      reaction.hint,
+    ]),
+    groups.map((group) => [group.id, group.label]),
+  ]);
+  if (refs.reactSelect.dataset.signature === signature) return;
+  refs.reactSelect.replaceChildren();
+  for (const group of groups) {
+    const members = reactions.filter((reaction) => reaction.group === group.id);
+    if (!members.length) continue;
+    const optgroup = el("optgroup");
+    optgroup.label = group.label;
+    for (const reaction of members) {
+      const option = el("option", "", reaction.label);
+      option.value = reaction.id;
+      option.title = reaction.hint || "";
+      optgroup.append(option);
+    }
+    refs.reactSelect.append(optgroup);
+  }
+  refs.reactSelect.dataset.signature = signature;
+  refs.reactSelect.dataset.hints = JSON.stringify(
+    Object.fromEntries(
+      reactions.map((reaction) => [reaction.id, reaction.hint || ""]),
+    ),
+  );
+}
+
+function renderReactionHint(reaction) {
+  let hints = {};
+  try {
+    hints = JSON.parse(refs.reactSelect.dataset.hints || "{}");
+  } catch {
+    hints = {};
+  }
+  refs.reactHint.textContent = hints[reaction] || "";
+  refs.reactHint.title =
+    "Reactions scale with the style and the brightness slider; audio modes " +
+    "add a pass-through analyser only while selected";
+}
+
 function renderSettings(snapshot) {
   const config = snapshot.config;
   fillSelect(refs.styleSelect, snapshot.styles);
   fillSelect(refs.layoutSelect, snapshot.layouts);
   fillSamplingSelect();
+  fillReactionSelect(snapshot);
   if (document.activeElement !== refs.styleSelect) refs.styleSelect.value = config.style;
+  if (document.activeElement !== refs.reactSelect) {
+    refs.reactSelect.value = config.react;
+  }
   if (document.activeElement !== refs.layoutSelect) refs.layoutSelect.value = config.layout;
   if (document.activeElement !== refs.samplingSelect) refs.samplingSelect.value = config.sampling;
   if (document.activeElement !== refs.brightness) {
@@ -570,6 +664,7 @@ function renderSettings(snapshot) {
   }
   refs.dryRun.checked = Boolean(config.dry_run);
   refs.lookPill.textContent = config.style;
+  renderReactionHint(config.react);
 
   const details = snapshot.style_details?.[config.style] || {};
   const styleFps = Number(details.fps) || 0;
@@ -1444,6 +1539,9 @@ refs.mediaInput.addEventListener("change", () => {
   if (value !== (state.snapshot?.config.media || "")) saveConfig({ media: value });
 });
 refs.styleSelect.addEventListener("change", () => saveConfig({ style: refs.styleSelect.value }));
+refs.reactSelect.addEventListener("change", () =>
+  saveConfig({ react: refs.reactSelect.value }),
+);
 refs.samplingSelect.addEventListener("change", () =>
   saveConfig({ sampling: refs.samplingSelect.value }),
 );

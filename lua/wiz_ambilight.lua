@@ -31,12 +31,19 @@
         wiz_ambilight-grid=80           sample columns (24-240; 0 = auto)
         wiz_ambilight-sample=1          average an NxN block per cell (1-4; 0 = auto)
         wiz_ambilight-capture=scaled    scaled (window size) or video (source)
+        wiz_ambilight-react=color       color, equalize, cut, motion, duotone,
+                                        beat or vu (audio modes add a pass-through
+                                        analyser only while active)
 
     JSON written on every capture:
         {"active":true,"t":12.345,"paused":false,"eof":false,
          "w":1920,"h":1080,"rect":[x0,y0,x1,y1],
          "zones":{"all":[r,g,b],"left":[...],"right":[...],"top":[...],
                   "bottom":[...],"thirds":[ [...], [...], [...] ]}}
+
+    In beat and vu the snapshot also carries the analyser levels:
+        "audio":{"rms":-24.1,"peak":-18.0,"crest":6.1,"zcr":0.12,
+                 "l":-24.1,"r":-25.0}
 ]]
 
 local utils = require("mp.utils")
@@ -58,6 +65,8 @@ local S = {
     sample = 1,
     capture = "video",
     sampling = "manual",
+    react = "color",
+    audio_warned = false,
     fps_now = 10,
     next_due = 0,
     capture_w = 0,
@@ -114,6 +123,102 @@ end
 
 local function color_json(c)
     return string.format("[%d,%d,%d]", round(c[1]), round(c[2]), round(c[3]))
+end
+
+local function is_audio_react(name)
+    return name == "beat" or name == "vu"
+end
+
+-- The analyser is a pair of labelled libavfilter filters. astats injects the
+-- RMS/peak metadata, anull keeps the chain valid when astats is removed first.
+-- Both are pass-through: the samples reaching the audio output are untouched.
+local FILTER_STATS = "@wizstats:lavfi=[astats=metadata=1:reset=1]"
+local FILTER_TAIL = "@wiztail:lavfi=[anull]"
+
+local function audio_stats_on()
+    local af = mp.get_property("af") or ""
+    if af:find("@wizstats", 1, true) then
+        return true
+    end
+    return mp.commandv("af", "add", FILTER_STATS .. "," .. FILTER_TAIL)
+end
+
+local function audio_stats_off()
+    local af = mp.get_property("af") or ""
+    if af:find("@wizstats", 1, true) then
+        mp.commandv("af", "remove", "@wizstats")
+    end
+    af = mp.get_property("af") or ""
+    if af:find("@wiztail", 1, true) then
+        mp.commandv("af", "remove", "@wiztail")
+    end
+end
+
+local function sync_audio_filter()
+    if S.active and is_audio_react(S.react) then
+        if not audio_stats_on() and not S.audio_warned then
+            S.audio_warned = true
+            msg.warn("audio analyser unavailable; beat and VU will hold steady")
+        end
+    else
+        audio_stats_off()
+    end
+end
+
+-- Format a dBFS number as JSON. astats reports -inf for digital silence and
+-- Lua cannot serialise NaN/inf, so those become null and the panel treats
+-- them as silence.
+local function json_number(value)
+    local n = tonumber(value)
+    if not n or n ~= n or n == math.huge or n == -math.huge then
+        return "null"
+    end
+    return string.format("%.2f", n)
+end
+
+local function audio_json()
+    if not is_audio_react(S.react) then
+        return nil
+    end
+    local meta = mp.get_property_native("af-metadata/wizstats")
+    if type(meta) ~= "table" then
+        return nil
+    end
+    local function field(name, fallback)
+        local value = tonumber(meta[name])
+        if value then
+            return value
+        end
+        return fallback
+    end
+    local rms = field("lavfi.astats.Overall.RMS_level")
+    local peak = field(
+        "lavfi.astats.Overall.Peak_level",
+        field("lavfi.astats.1.Peak_level")
+    )
+    local zcr = field(
+        "lavfi.astats.Overall.Zero_crossings_rate",
+        field("lavfi.astats.1.Zero_crossings_rate")
+    )
+    local left = field("lavfi.astats.1.RMS_level", rms)
+    local right = field("lavfi.astats.2.RMS_level", left)
+    if rms == nil and left == nil then
+        return nil
+    end
+    -- Derive the crest factor from the two dBFS levels. astats also publishes
+    -- a Crest_factor field, but it is scaled oddly across ffmpeg builds, while
+    -- peak minus RMS is the same number in dB and always comparable.
+    local crest = nil
+    if peak ~= nil then
+        crest = peak - (rms or left)
+    end
+    return ',"audio":{"rms":' .. json_number(rms or left)
+        .. ',"peak":' .. json_number(peak)
+        .. ',"crest":' .. json_number(crest)
+        .. ',"zcr":' .. json_number(zcr)
+        .. ',"l":' .. json_number(left)
+        .. ',"r":' .. json_number(right)
+        .. "}"
 end
 
 -- Write a state snapshot. `result` holds geometry and zone colors, it may be
@@ -177,6 +282,10 @@ local function emit(paused, eof, result, err)
             result.grid or 0,
             S.fps_now or S.fps
         )
+    end
+    local audio = audio_json()
+    if audio then
+        parts[#parts + 1] = audio
     end
     if err then
         parts[#parts + 1] = ',"error":' .. string.format("%q", err)
@@ -414,14 +523,22 @@ local function tick()
     local eof = mp.get_property_native("eof-reached") or false
     local idle = mp.get_property_native("idle-active") or false
     local has_video = mp.get_property_native("current-tracks/video") ~= nil
+    local has_audio = mp.get_property_native("current-tracks/audio") ~= nil
     local vo_ready = mp.get_property_native("vo-configured") or false
 
     S.paused = paused
 
     if paused or eof or idle or not has_video or not vo_ready or now < S.ready_at then
-        -- Keep a slow heartbeat so the daemon knows mpv is alive but idle.
-        if now - S.last_write >= 0.5 then
-            emit(paused, eof or not has_video, S.last_result)
+        -- Audio modes still need fresh levels while music plays without a
+        -- video track, so their heartbeat follows the capture rate instead of
+        -- the slow liveness beat used for a paused or closed player.
+        local audio_tick = S.active and is_audio_react(S.react) and has_audio
+            and not paused and not eof and not idle
+        local every = audio_tick
+            and (1.0 / math.max(1.0, S.fps_now or S.fps))
+            or 0.5
+        if now - S.last_write >= every then
+            emit(paused, eof or (not has_video and not has_audio), S.last_result)
         end
         return
     end
@@ -468,6 +585,7 @@ local function stop()
     S.active = false
     S.last_result = nil
     S.from_control = false
+    audio_stats_off()
 end
 
 local function apply_sampling(cfg, reset)
@@ -510,6 +628,10 @@ local function start(cfg, from_control)
         S.edge = math.max(0.02, math.min(0.45, tonumber(cfg.edge) or S.edge))
         S.bar_luma = tonumber(cfg.bar_luma) or S.bar_luma
         apply_sampling(cfg, false)
+        if cfg.react ~= nil then
+            S.react = tostring(cfg.react)
+        end
+        sync_audio_filter()
         return
     end
 
@@ -519,6 +641,9 @@ local function start(cfg, from_control)
     S.fps = math.max(1, math.min(30, tonumber(cfg.fps) or 10))
     S.edge = math.max(0.02, math.min(0.45, tonumber(cfg.edge) or 0.14))
     S.bar_luma = tonumber(cfg.bar_luma) or 16
+    if cfg.react ~= nil then
+        S.react = tostring(cfg.react)
+    end
     apply_sampling(cfg, true)
     S.from_control = from_control or false
     S.active = true
@@ -527,11 +652,13 @@ local function start(cfg, from_control)
     S.last_write = 0
     S.last_result = nil
     S.timer = mp.add_periodic_timer(1.0 / S.fps, tick)
+    sync_audio_filter()
     msg.info(string.format(
-        "active: %.1f fps, %s capture, %s sampling -> %s",
+        "active: %.1f fps, %s capture, %s sampling, %s reaction -> %s",
         S.fps,
         S.capture,
         S.sampling,
+        S.react,
         path
     ))
 end
@@ -577,6 +704,7 @@ if not env_started then
             grid_x = opt("grid"),
             sample = opt("sample"),
             capture = opt("capture"),
+            react = opt("react"),
         }, false)
     end
 end
@@ -618,6 +746,9 @@ end
 mp.register_event("file-loaded", function()
     S.last_result = nil
     S.ready_at = mp.get_time() + 0.25
+    -- The filter list survives a file change on most builds, but reloading it
+    -- here covers a track switch and costs nothing when it is already present.
+    sync_audio_filter()
 end)
 
 mp.register_event("shutdown", function()

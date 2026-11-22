@@ -382,6 +382,191 @@ class SmootherTests(unittest.TestCase):
         self.assertLess(value[0], 50)
 
 
+class ReactionMathTests(unittest.TestCase):
+    def test_scene_luma_uses_rec709_weights(self):
+        self.assertAlmostEqual(m.scene_luma((255, 255, 255)), 1.0)
+        self.assertAlmostEqual(m.scene_luma((0, 0, 0)), 0.0)
+        # Green carries most of the perceived brightness.
+        self.assertGreater(m.scene_luma((0, 255, 0)), m.scene_luma((255, 0, 0)))
+
+    def test_rgb_distance_is_normalised(self):
+        self.assertEqual(m.rgb_distance((0, 0, 0), (0, 0, 0)), 0.0)
+        self.assertAlmostEqual(m.rgb_distance((0, 0, 0), (255, 255, 255)), 1.0)
+        self.assertAlmostEqual(m.rgb_distance((0, 0, 0), (255, 0, 0)), 1 / 3)
+
+    def test_hue_shift_turns_red_into_cyan(self):
+        self.assertEqual(m.hue_shift((255, 0, 0), 180), (0, 255, 255))
+        self.assertEqual(m.hue_shift((255, 0, 0), 0), (255, 0, 0))
+        # A grey has no hue to rotate.
+        self.assertEqual(m.hue_shift((128, 128, 128), 180), (128, 128, 128))
+
+    def test_equalize_gain_dims_bright_and_lifts_dark(self):
+        self.assertAlmostEqual(m.equalize_gain(0.9, 0.45, 0.35, 0.35), 0.65)
+        self.assertAlmostEqual(m.equalize_gain(0.1, 0.45, 0.35, 0.35), 1.35)
+        self.assertAlmostEqual(m.equalize_gain(0.45, 0.45, 0.35, 0.35), 1.0)
+
+    def test_equalize_never_goes_below_the_floor(self):
+        self.assertGreaterEqual(m.equalize_gain(1.0, 0.95, 1.0, 0.35), 0.35)
+        self.assertLessEqual(m.equalize_gain(0.0, 0.05, 1.0, 0.35), 2.0)
+
+    def test_vu_level_maps_dbfs(self):
+        self.assertEqual(m.vu_level(-60), 0.0)
+        self.assertEqual(m.vu_level(-45), 0.0)
+        self.assertEqual(m.vu_level(-12), 1.0)
+        self.assertEqual(m.vu_level(0), 1.0)
+        self.assertAlmostEqual(m.vu_level(-28.5), 0.5)
+        self.assertEqual(m.vu_level(None), 0.0)
+
+    def test_beat_pulse_attacks_then_releases(self):
+        self.assertEqual(m.beat_pulse(-0.1), 0.0)
+        self.assertEqual(m.beat_pulse(0.0), 0.0)
+        self.assertAlmostEqual(m.beat_pulse(m.BEAT_ATTACK / 2), 0.5)
+        self.assertAlmostEqual(m.beat_pulse(m.BEAT_ATTACK), 1.0)
+        self.assertAlmostEqual(
+            m.beat_pulse(m.BEAT_ATTACK + m.BEAT_RELEASE / 2), 0.5
+        )
+        self.assertEqual(m.beat_pulse(m.BEAT_ATTACK + m.BEAT_RELEASE + 1), 0.0)
+
+    def test_cut_pulse_is_a_short_square(self):
+        self.assertEqual(m.cut_pulse(0.0), 1.0)
+        self.assertEqual(m.cut_pulse(m.CUT_SECONDS - 0.001), 1.0)
+        self.assertEqual(m.cut_pulse(m.CUT_SECONDS), 0.0)
+
+
+class ReactionModeTests(unittest.TestCase):
+    def update(
+        self,
+        reaction,
+        now,
+        zones=None,
+        audio=None,
+        raw=None,
+        lights=("a",),
+        names=("all",),
+    ):
+        raw = {} if raw is None else raw
+        state = {}
+        if zones is not None:
+            state["zones"] = zones
+        if audio is not None:
+            state["audio"] = audio
+        reaction.update(now, state, raw, list(lights), list(names))
+        return raw
+
+    def test_audio_modes_are_explicit(self):
+        self.assertEqual(set(m.AUDIO_REACTIONS), {"beat", "vu"})
+        self.assertEqual(m.REACTIONS["beat"]["group"], "audio")
+        self.assertEqual(m.REACTIONS["vu"]["group"], "audio")
+        for mode in ("color", "equalize", "cut", "motion", "duotone"):
+            self.assertEqual(m.REACTIONS[mode]["group"], "video")
+
+    def test_equalize_lowers_bright_scenes_and_lifts_dark_ones(self):
+        reaction = m.Reaction("equalize", 1.0, 0.45)
+        self.update(
+            reaction,
+            100.0,
+            zones={"all": [230, 230, 230]},
+            raw={"a": (230, 230, 230)},
+        )
+        self.assertLess(reaction.dimming("a", 80, 100.1, 0.05), 80)
+
+        for index in range(80):
+            self.update(
+                reaction,
+                100.1 + index * 0.1,
+                zones={"all": [10, 10, 10]},
+                raw={"a": (10, 10, 10)},
+            )
+        self.assertGreater(reaction.dimming("a", 80, 108.0, 0.05), 80)
+
+    def test_equalize_amount_zero_is_a_no_op(self):
+        reaction = m.Reaction("equalize", 0.0, 0.45)
+        self.update(
+            reaction,
+            100.0,
+            zones={"all": [255, 255, 255]},
+            raw={"a": (255, 255, 255)},
+        )
+        self.assertEqual(reaction.dimming("a", 73, 100.1, 0.05), 73)
+
+    def test_cut_flashes_then_reserves_headroom(self):
+        reaction = m.Reaction("cut", 1.0, 0.45)
+        self.update(
+            reaction, 100.0, zones={"all": [10, 10, 10]}, raw={"a": (10, 10, 10)}
+        )
+        self.update(
+            reaction, 100.1, zones={"all": [230, 20, 20]}, raw={"a": (230, 20, 20)}
+        )
+        self.assertEqual(reaction.dimming("a", 100, 100.12, 0.05), 100)
+        self.assertEqual(reaction.dimming("a", 100, 100.4, 0.05), 78)
+
+    def test_cut_rate_limit_is_six_per_minute(self):
+        reaction = m.Reaction("cut", 1.0, 0.45)
+        now = 100.0
+        colors = ((10, 10, 10), (220, 30, 30))
+        for index in range(12):
+            self.update(reaction, now, zones={"all": colors[index % 2]})
+            now += 2.0
+        self.assertEqual(len(reaction.cut_times), m.CUT_PER_MINUTE)
+
+    def test_duotone_shifts_every_second_bulb(self):
+        reaction = m.Reaction("duotone", 1.0, 0.45)
+        raw = {"a": (255, 0, 0), "b": (255, 0, 0)}
+        self.update(
+            reaction,
+            100.0,
+            zones={"all": [255, 0, 0], "left": (255, 0, 0), "right": (255, 0, 0)},
+            raw=raw,
+            lights=("a", "b"),
+            names=("left", "right"),
+        )
+        self.assertEqual(raw["a"], (255, 0, 0))
+        self.assertEqual(raw["b"], (0, 255, 255))
+
+    def test_motion_raises_saturation_while_the_scene_moves(self):
+        reaction = m.Reaction("motion", 1.0, 0.45)
+        now = 100.0
+        for index in range(12):
+            color = (255, 0, 0) if index % 2 == 0 else (0, 0, 255)
+            self.update(reaction, now, zones={"all": color}, raw={"a": color})
+            now += 0.2
+        self.assertGreater(reaction.motion["a"], 0.8)
+        self.assertGreater(reaction.saturation("a"), 1.0)
+        self.assertGreater(reaction.dimming("a", 80, now, 0.2), 60)
+
+    def test_beat_pulses_only_on_a_loud_transient(self):
+        reaction = m.Reaction("beat", 1.0, 0.45)
+        self.update(reaction, 100.0, audio={"rms": -40.0})
+        self.update(reaction, 100.2, audio={"rms": -38.0})
+        self.assertIsNone(reaction.beat_at)
+        self.update(reaction, 100.4, audio={"rms": -25.0})
+        self.assertEqual(reaction.beat_at, 100.4)
+        self.assertEqual(
+            reaction.dimming("a", 100, 100.4 + m.BEAT_ATTACK, 0.05), 100
+        )
+        self.assertEqual(reaction.dimming("a", 100, 101.2, 0.05), 75)
+
+    def test_vu_follows_the_left_and_right_channels(self):
+        reaction = m.Reaction("vu", 1.0, 0.45)
+        audio = {"rms": -20.0, "l": -12.0, "r": -45.0}
+        now = 100.0
+        for _ in range(40):
+            self.update(
+                reaction,
+                now,
+                audio=audio,
+                lights=("left-bulb", "right-bulb"),
+                names=("left", "right"),
+            )
+            now += 0.05
+        self.assertAlmostEqual(reaction.levels["left-bulb"], 1.0)
+        self.assertAlmostEqual(reaction.levels["right-bulb"], 0.0)
+        left = reaction.dimming("left-bulb", 100, now, 0.05)
+        right = reaction.dimming("right-bulb", 100, now, 0.05)
+        self.assertGreater(left, right)
+        self.assertEqual(right, 25)
+
+
 class DirectControlTests(unittest.TestCase):
     @staticmethod
     def args(**overrides):

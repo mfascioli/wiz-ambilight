@@ -36,7 +36,7 @@ without loading the server for normal playback.
 
 | Path | Written by | Purpose |
 | --- | --- | --- |
-| `$XDG_RUNTIME_DIR/wiz-ambilight/state-<pid>.json` | Lua | zone colors, capture rate, mpv pid |
+| `$XDG_RUNTIME_DIR/wiz-ambilight/state-<pid>.json` | Lua | zone colors, capture rate, mpv pid, and audio levels in audio modes |
 | `$XDG_RUNTIME_DIR/wiz-ambilight/stats-<pid>.json` | sync | UDP throughput, rewritten once a second |
 | `$XDG_RUNTIME_DIR/wiz-ambilight/control.json` | sync | makes the Lua script wake up in attach mode |
 | `$XDG_RUNTIME_DIR/wiz-ambilight/gui-daemon.json` | panel | the sync PID it started, for adoption |
@@ -56,6 +56,9 @@ or generate from a script:
 {
   "layout": "auto",
   "style": "hue",
+  "react": "color",
+  "react_amount": 0.8,
+  "react_target": 0.45,
   "brightness": 100,
   "mode": "attach",
   "media": "",
@@ -102,6 +105,74 @@ and every value is range-checked:
   }
 }
 ```
+
+## Reactions and audio
+
+`react` has seven values. `color` is the classic Ambilight; the rest add one
+layer and are scaled by `react_amount` (`0` is a no-op). Spans below are at
+`react_amount = 1`; the default `0.8` scales them, timings do not change:
+
+| value | group | source | notes |
+| --- | --- | --- | --- |
+| `color` | video | `zones.all` / per-zone | default |
+| `equalize` | video | `zones.all` luma | slow EMA (`EQUALIZE_TAU = 4 s`), target `react_target`, `±35 %`, 35 % floor |
+| `cut` | video | frame-to-frame distance | 120 ms flash, 1.5 s cooldown, 6 per minute, 22 % headroom |
+| `motion` | video | per-zone distance | 0.35 s release, brightness and saturation |
+| `duotone` | video | per-zone colour | odd bulbs get `hue_shift(rgb, 180° × amount)` |
+| `beat` | audio | overall RMS | 5 dB over the running average, 2 Hz max, 60 ms attack / 250 ms release |
+| `vu` | audio | per-channel RMS | −45…−12 dBFS → 25…100 %, left/right bulbs |
+
+The pure helpers are in `mpv_ambilight.py`: `scene_luma`, `rgb_distance`,
+`hue_shift`, `equalize_gain`, `vu_level`, `beat_pulse`, `cut_pulse` and the
+`Reaction` state class. `Reaction.update()` runs when Lua writes a state frame;
+`Reaction.dimming()` runs on every send tick so a 120 ms flash is not lost
+between frames. Colour changes happen before saturation/gamma; brightness is
+per bulb.
+
+### Audio path
+
+Audio modes use mpv's own `lavfi` bridge, so there is no new dependency and no
+external process. On activation the Lua script appends:
+
+```text
+@wizstats:lavfi=[astats=metadata=1:reset=1],@wiztail:lavfi=[anull]
+```
+
+`astats` is pass-through and injects `af-metadata/wizstats`; `anull` keeps the
+chain valid while the filters are removed one label at a time. The script adds
+the pair only when `react` is `beat` or `vu`, re-adds it after `file-loaded`,
+and removes both on a switch back to a video mode, on stop and on shutdown. A
+user's own `af` chain is left in place.
+
+While an audio mode is active the state snapshot gains:
+
+```json
+"audio": {"rms": -24.1, "peak": -18.0, "crest": 6.1, "zcr": 0.12,
+          "l": -24.1, "r": -25.0}
+```
+
+Levels are dBFS; `crest` is peak minus RMS in dB and `zcr` is the
+zero-crossing rate. Digital silence (`-inf`) and NaN become `null`; Python
+treats `null` as silence. Mono files expose only channel 1, so the VU falls
+back to the overall level. On an
+audio-only file the Lua script keeps emitting a heartbeat at the capture rate
+with `audio` and no `zones`; the sync holds a warm base color and drives only
+the brightness.
+
+## Light sensor design
+
+Not implemented yet. The planned hook is deliberately file-based, so it adds
+no port, daemon or dependency: a BH1750 (or any sensor) writes
+
+```json
+{"lux": 42.5}
+```
+
+to `$XDG_RUNTIME_DIR/wiz-ambilight/lux.json`. A future `--lux-file` would read
+it, reject a stale file, and make Equalize target measured lux instead of scene
+luma; without a fresh file it falls back to `zones.all` as today. The panel
+would show the reading next to the reaction hint. Do not add the flag until the
+hardware path exists and has a test.
 
 ## Tests and CI
 

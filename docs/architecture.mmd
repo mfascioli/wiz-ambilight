@@ -13,7 +13,7 @@ flowchart LR
   B <-->|"HTTP 127.0.0.1:8765<br/>per-run token + CSP"| P
   P <-->|"lights.json · scenes.json"| F
   P -->|"spawn / stop (argv)"| S
-  M -->|"state JSON (zone colors)"| S
+  M -->|"state JSON (zones + audio levels)"| S
   S <-->|"state read · control.json"| F
   S -->|"UDP 38899 setPilot"| W
   P -.->|"direct setPilot"| W

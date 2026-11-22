@@ -49,13 +49,27 @@ headings, and leave interface names, option values and file paths untranslated.
 - **Panel ergonomics.** Direct control and Activity are `<details>` cards and
   start closed; Lights, Session and Look start open. Zones are explained by the
   preview on each bulb row, never only with the raw name; do not add a separate
-  Zone map column. The status dot is the hidden five-second crazy trigger; do
+  Zone map column. Each bulb row also has identify, inclusion and a two-step
+  **Forget** action; forgetting removes the row and its room membership from
+  `lights.json`, never the bulb itself, and a later scan may add it back.
+  `--demo` uses only the three named fixtures and never merges them into the
+  saved bulb list. The status dot is the hidden five-second crazy trigger; do
   not turn it back into a visible button or document the gesture.
 - **Panel layout.** Session and Look share the left stack; Direct control gets
   its own right stack, so a short Session never stretches to match a tall card.
   Session is one compact row. Saved scenes are a small `<details>` submenu
   inside Direct control, not a card. **Look** is three equal hairline columns —
-  Preset / Sample / Send — with flat key/value rows, never nested boxes.
+  Preset / Sample / Send — with flat key/value rows, never nested boxes. The
+  **Reaction** dropdown sits inside **Preset**, under Style preset, with one
+  `<optgroup>` per source (Video / Audio); it never adds a column or a card.
+- **Reactions and audio.** `react` is one of `color`, `equalize`, `cut`,
+  `motion`, `duotone`, `beat`, `vu`; `color` stays the default. Every reaction
+  is scaled by `react_amount`, so `0` is a no-op. Audio modes are `beat` and
+  `vu` only: the Lua script adds a labelled `lavfi`/`astats` pass-through pair
+  while one is selected, removes it on exit and never touches a user's `af`
+  chain. No audio dependency, no separate process, no microphone. The
+  `lux.json` sensor is design-only; do not add its flag until the hardware path
+  is tested.
 - **Performance chart.** Activity holds one frame with three unit lanes —
   CPU %, RAM MB, UDP KB/s — and a series each for mpv and the panel. CPU is a
   share of the whole processor, said so in the legend tooltip; never merge the
@@ -76,9 +90,10 @@ headings, and leave interface names, option values and file paths untranslated.
 - **sync** — the process that samples, fades and sends. **panel** — the local
   web UI. **daemon** only for the background sync started with `--attach`.
 - **zone** — what one bulb shows; **layout** — the rule that assigns zones;
-  **style** — a preset for capture/fade/send; **scene** — a saved look, or a
-  WiZ scene id (say which); **room** — a named set of bulbs used as a direct
-  control target. Never call a room a group in the UI.
+  **style** — a preset for capture/fade/send; **reaction** — how the bulbs
+  react and to what (video or audio); **scene** — a saved look, or a WiZ scene
+  id (say which); **room** — a named set of bulbs used as a direct control
+  target. Never call a room a group in the UI.
 - **Ambilight** is the effect, capitalised as a proper-style name; `wiz-hack`
   is the upstream project, `mpv-config` the design source.
 
@@ -192,11 +207,11 @@ Before calling a change done:
 
 | Path | Purpose |
 | --- | --- |
-| `mpv_ambilight.py` | CLI, discovery, style/layout resolution, fade loop, UDP sender, `--discover`, `--set`, `--attach`, `--install-script` |
+| `mpv_ambilight.py` | CLI, discovery, style/layout/reaction resolution, fade loop, UDP sender, `--discover`, `--set`, `--attach`, `--install-script` |
 | `webui.py` | panel server, session control, bulb control, scenes, config, file picker |
 | `web/index.html` `web/style.css` `web/app.js` | panel UI, no build step |
 | `web/fonts/` | Merriweather Bold + SIL OFL licence, served to the panel |
-| `lua/wiz_ambilight.lua` | runs inside mpv, samples the frame and writes the state file, including mpv's pid |
+| `lua/wiz_ambilight.lua` | runs inside mpv, samples the frame, manages the optional audio analyser and writes the state file, including mpv's pid |
 | `tests/test_design.py` | pins the design tokens, the numbered order, the two stacks, the scenes submenu, the chart and the room controls |
 | `tests/test_security.py` | pins loopback, process and architecture-doc invariants |
 | `tests/test_mpv_ambilight.py` | CLI, parsing, colors, discovery helpers |

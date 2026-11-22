@@ -2,8 +2,22 @@
 
 Releases before 1.4.0 were never tagged; their history is in `git log`.
 
-## Unreleased
+## 1.8.0 — 2026-11-22
 
+- **Reactions:** six new modes on top of plain color — `equalize`, `cut`,
+  `motion` and `duotone` follow the video; `beat` and `vu` follow the audio.
+  One **Reaction** dropdown in **Look → Preset** groups Video and Audio, and
+  `--react`, `--react-amount` and `--react-target` expose the same choice on the
+  CLI. Audio modes add a labelled `astats` pass-through filter to mpv only
+  while selected and remove it when they end; no dependency is added. The
+  light-sensor `lux.json` path is documented for a future real-lux Equalize.
+- **Panel:** each light row has a two-step **Forget** action. It removes the
+  row from `lights.json` and from every room; **Scan network** can add a
+  reachable bulb back, so deleting is for stale addresses and duplicates,
+  while the inclusion switch keeps a bulb out of the sync.
+- **Panel:** demo mode now replaces the saved bulb list with three named
+  fixtures instead of merging into it. Real and demo addresses no longer
+  appear twice, once unnamed, when a real config exists.
 - **Panel:** Session and Look share the left stack, Direct control gets its own
   right stack, so a short Session no longer stretches to match a tall card.
   Below 1000 px the stacks flatten to 02 → 03 → 04.

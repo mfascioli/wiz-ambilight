@@ -37,7 +37,9 @@ decoration: they explain the path from choosing bulbs to watching the effect.
 
 - **01 Lights** spans the full width. Rooms sit directly above the bulb list;
   the separate Zone map column and its legend are gone, and each row keeps the
-  small zone preview where its zone is chosen.
+  small zone preview where its zone is chosen. Each row also has identify, an
+  inclusion switch and a two-step **Forget** action; forgetting removes the
+  row and its room membership, never the bulb itself.
 - **02–04** use two independent stacks: **02 Session** and **03 Look** on the
   left, **04 Direct control** on the right. Each column grows at its own pace,
   so a short Session never stretches to match a tall Direct control. A
@@ -52,7 +54,10 @@ decoration: they explain the path from choosing bulbs to watching the effect.
   performance chart, with video and capture resolution, read fps and process
   count visible above it.
 - **Look** is three equal hairline columns — **Preset / Sample / Send** — with
-  flat key/value rows, never nested boxes.
+  flat key/value rows, never nested boxes. **Preset** holds the style and the
+  Reaction dropdown under it; the dropdown groups **Video** and **Audio** with
+  an optgroup each and describes the selected mode in one hint line. Reactions
+  never add a fourth column or a second card.
 - Below `1000px` both stacks flatten to a single column in 01 → 05 order.
   `prefers-reduced-motion` disables transitions.
 

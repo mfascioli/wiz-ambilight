@@ -89,6 +89,33 @@ class NormalizeTests(unittest.TestCase):
                     webui.normalize_config({"sampling": profile}, m)["sampling"], profile
                 )
 
+    def test_reaction_defaults_and_normalization(self):
+        config = webui.normalize_config({}, m)
+        self.assertEqual(config["react"], "color")
+        self.assertEqual(config["react_amount"], 0.8)
+        self.assertEqual(config["react_target"], 0.45)
+
+        bad = webui.normalize_config(
+            {"react": "strobe", "react_amount": 9, "react_target": "x"}, m
+        )
+        self.assertEqual(bad["react"], "color")
+        self.assertEqual(bad["react_amount"], 1.0)
+        self.assertEqual(bad["react_target"], 0.45)
+
+        self.assertEqual(
+            webui.normalize_config({"react_amount": -3}, m)["react_amount"], 0.0
+        )
+        self.assertEqual(
+            webui.normalize_config({"react_target": 2}, m)["react_target"], 0.95
+        )
+
+    def test_every_reaction_survives_normalization(self):
+        for reaction in m.REACTIONS:
+            with self.subTest(reaction=reaction):
+                self.assertEqual(
+                    webui.normalize_config({"react": reaction}, m)["react"], reaction
+                )
+
     def test_rooms_and_saved_colors_are_normalized(self):
         config = webui.normalize_config(
             {
@@ -249,6 +276,21 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--sample-block") + 1], "3")
         self.assertEqual(argv[argv.index("--capture") + 1], "source")
 
+    def test_reaction_flags_are_passed_to_the_sync(self):
+        config = make_config(react="beat", react_amount=0.55, react_target=0.6)
+        config["lights"] = {"10.0.0.1": {"enabled": True}}
+        argv, _ips, _zones = webui.build_command(config, m)
+        self.assertEqual(argv[argv.index("--react") + 1], "beat")
+        self.assertEqual(argv[argv.index("--react-amount") + 1], "0.55")
+        self.assertEqual(argv[argv.index("--react-target") + 1], "0.6")
+
+    def test_missing_reaction_keys_fall_back_to_color(self):
+        config = make_config()
+        config.pop("react", None)
+        config["lights"] = {"10.0.0.1": {"enabled": True}}
+        argv, _ips, _zones = webui.build_command(config, m)
+        self.assertEqual(argv[argv.index("--react") + 1], "color")
+
     def test_launch_command_includes_media(self):
         config = make_config(mode="launch", media="/media/movie.mkv")
         config["lights"] = {"10.0.0.1": {"enabled": True}}
@@ -318,10 +360,19 @@ class DemoPanelTests(unittest.TestCase):
         self.assertTrue(snapshot["demo"])
         self.assertEqual(snapshot["version"], m.VERSION)
         self.assertEqual(len(snapshot["lights"]), len(webui.DEMO_LIGHTS))
+        self.assertTrue(all(row["name"] for row in snapshot["lights"]))
         self.assertIn("model", snapshot["lights"][0])
         self.assertEqual(snapshot["session"]["running"], False)
         self.assertIn("hue", snapshot["styles"])
         self.assertIn("fps", snapshot["style_details"]["hue"])
+        self.assertEqual(snapshot["config"]["react"], "color")
+        reactions = {reaction["id"]: reaction for reaction in snapshot["reactions"]}
+        self.assertEqual(len(reactions), len(m.REACTIONS))
+        self.assertEqual(reactions["beat"]["group"], "audio")
+        self.assertEqual(reactions["equalize"]["group"], "video")
+        self.assertEqual(
+            [group["id"] for group in snapshot["reaction_groups"]], ["video", "audio"]
+        )
         self.assertTrue(snapshot["config_path"].endswith("lights.json"))
         self.assertIsInstance(snapshot["network"], list)
         self.assertIn("active", snapshot["crazy"])
@@ -381,6 +432,21 @@ class DemoPanelTests(unittest.TestCase):
         self.assertEqual(panel.config["lights"]["192.0.2.11"]["name"], "Desk")
         self.assertEqual(panel.config["lights"]["192.0.2.11"]["zone"], "left")
         self.assertFalse(Path(os.environ["WIZ_AMBILIGHT_GUI_CONFIG"]).exists())
+
+    def test_delete_light_removes_row_and_room_membership(self):
+        panel = webui.Panel(m, demo=True)
+        first, second, _third = sorted(panel.config["lights"])[:3]
+        panel.set_group({"name": "Desk", "ips": [first, second]})
+        snapshot = panel.delete_light(first)
+        ips = [row["ip"] for row in snapshot["lights"]]
+        self.assertNotIn(first, ips)
+        self.assertNotIn(first, panel.live)
+        self.assertEqual(panel.config["groups"], {"Desk": [second]})
+        self.assertEqual(len(ips), len(webui.DEMO_LIGHTS) - 1)
+        panel.delete_light(second)
+        self.assertEqual(panel.config["groups"], {})
+        with self.assertRaises(ValueError):
+            panel.delete_light(first)
 
     def test_demo_is_dry_run(self):
         panel = webui.Panel(m, demo=True)
@@ -794,6 +860,18 @@ class HttpTests(unittest.TestCase):
         ) as response:
             snapshot = json.loads(response.read())
         self.assertEqual(snapshot["config"]["brightness"], 55)
+
+    def test_delete_light_endpoint(self):
+        ip = sorted(self.panel.config["lights"])[0]
+        with self.request(
+            "/api/light/delete", {"ip": ip}, self.auth_headers()
+        ) as response:
+            snapshot = json.loads(response.read())
+        self.assertNotIn(ip, [row["ip"] for row in snapshot["lights"]])
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request("/api/light/delete", {"ip": ip}, self.auth_headers())
+        caught.exception.close()
+        self.assertEqual(caught.exception.code, 400)
 
     def test_rejects_missing_token(self):
         headers = {"Content-Type": "application/json", "Origin": self.base}

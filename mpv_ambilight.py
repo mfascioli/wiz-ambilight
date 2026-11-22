@@ -51,9 +51,10 @@ import struct
 import subprocess
 import sys
 import time
+from collections import deque
 from pathlib import Path
 
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 DEFAULT_PORT = 38899
 ZONE_NAMES = {"all", "left", "right", "top", "bottom", "t1", "t2", "t3"}
 
@@ -519,6 +520,338 @@ class Smoother:
         self._values.clear()
 
 
+# --------------------------------------------------------------------------- #
+# Reactive modes
+# --------------------------------------------------------------------------- #
+
+# "color" is the classic ambilight. The other modes layer one reaction on top
+# of it; every one of them is scaled by --react-amount so `0` is a safe no-op.
+REACTIONS = {
+    "color": {
+        "group": "video",
+        "label": "Color — follow the picture",
+        "hint": "The classic ambilight: each bulb copies its own zone.",
+    },
+    "equalize": {
+        "group": "video",
+        "label": "Equalize — hold the room brightness",
+        "hint": "Bright scenes dim the bulbs and dark scenes lift them, slowly.",
+    },
+    "cut": {
+        "group": "video",
+        "label": "Cut flash — pulse on scene cuts",
+        "hint": "A short flash when the picture cuts, at most six per minute.",
+    },
+    "motion": {
+        "group": "video",
+        "label": "Motion — follow the action",
+        "hint": "Still shots stay calm; movement adds brightness and punch.",
+    },
+    "duotone": {
+        "group": "video",
+        "label": "Duotone — dominant and complement",
+        "hint": "Bulbs alternate the zone color and its opposite hue.",
+    },
+    "beat": {
+        "group": "audio",
+        "label": "Beat — pulse on the beat",
+        "hint": (
+            "Bass hits flash the bulbs; the audio analyser runs only in this mode."
+        ),
+    },
+    "vu": {
+        "group": "audio",
+        "label": "VU — follow the volume",
+        "hint": (
+            "Each bulb follows its channel level; the audio analyser runs only "
+            "in this mode."
+        ),
+    },
+}
+REACTION_GROUPS = ("video", "audio")
+AUDIO_REACTIONS = frozenset({"beat", "vu"})
+
+# Room and TV defaults. The living room is 3.6 x 3.3 m with a 2.40 m ceiling
+# (28.5 m3, 11.9 m2): two bulbs can dominate it, so every effect stays modest.
+REACTION_TARGET = 0.45
+REACTION_SPAN = 0.35
+REACTION_FLOOR = 0.35
+EQUALIZE_TAU = 4.0
+CUT_THRESHOLD = 0.22
+CUT_SECONDS = 0.12
+CUT_COOLDOWN = 1.5
+CUT_PER_MINUTE = 6
+CUT_SPAN = 0.22
+MOTION_SPAN = 0.28
+MOTION_TAU = 0.35
+MOTION_DISTANCE = 0.12
+BEAT_THRESHOLD_DB = 5.0
+BEAT_COOLDOWN = 0.5
+BEAT_SPAN = 0.25
+BEAT_ATTACK = 0.06
+BEAT_RELEASE = 0.25
+VU_LOW_DB = -45.0
+VU_HIGH_DB = -12.0
+VU_SPAN = 0.75
+REACTION_SMOOTH = 0.08
+# Audio-only files have no zone colour, so the bulbs hold this warm base while
+# the beat or the VU meter drives their brightness.
+REACTION_FALLBACK_RGB = (255, 190, 120)
+
+
+def scene_luma(rgb) -> float:
+    """Rec. 709 luma of an RGB triplet, normalised to 0..1.
+
+    The Lua script samples pixel colours; this mirrors the weights it uses for
+    letterbox detection so Equalize and the edge crop agree on "bright".
+    """
+    r, g, b = (float(channel) for channel in rgb)
+    return max(0.0, min(1.0, (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0))
+
+
+def rgb_distance(first, second) -> float:
+    """Mean absolute channel difference, 0..1. Used for cuts and motion."""
+    a = [float(channel) for channel in first]
+    b = [float(channel) for channel in second]
+    if len(a) != 3 or len(b) != 3:
+        return 0.0
+    return sum(abs(a[index] - b[index]) for index in range(3)) / 765.0
+
+
+def hue_shift(rgb, degrees: float):
+    """Rotate the hue of an RGB triplet, keeping saturation and value."""
+    r, g, b = (max(0.0, min(1.0, channel / 255.0)) for channel in rgb)
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+    h = (h + float(degrees) / 360.0) % 1.0
+    r, g, b = colorsys.hsv_to_rgb(h, s, v)
+    return (clamp8(r * 255), clamp8(g * 255), clamp8(b * 255))
+
+
+def equalize_gain(
+    luma: float,
+    target: float = REACTION_TARGET,
+    span: float = REACTION_SPAN,
+    floor: float = REACTION_FLOOR,
+) -> float:
+    """Brightness multiplier that pulls a scene luma toward `target`.
+
+    A bright scene (luma above target) returns a multiplier below 1 and a dark
+    scene returns one above 1. The correction is capped at `±span` and never
+    falls below `floor`, so the room cannot be driven to black.
+    """
+    target = max(0.05, min(0.95, float(target)))
+    span = max(0.0, min(1.0, float(span)))
+    floor = max(0.0, min(1.0, float(floor)))
+    gain = target / max(0.04, float(luma))
+    gain = max(1.0 - span, min(1.0 + span, gain))
+    return max(floor, gain)
+
+
+def vu_level(db, low: float = VU_LOW_DB, high: float = VU_HIGH_DB) -> float:
+    """Map a negative dBFS value onto 0..1; silence and `None` are zero."""
+    if db is None:
+        return 0.0
+    try:
+        value = float(db)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(value):
+        return 0.0
+    return max(0.0, min(1.0, (value - low) / (high - low)))
+
+
+def beat_pulse(
+    age: float, attack: float = BEAT_ATTACK, release: float = BEAT_RELEASE
+) -> float:
+    """Envelope of one beat: a short attack ramp and a linear decay."""
+    if age < 0.0:
+        return 0.0
+    if attack > 0.0 and age < attack:
+        return age / attack
+    if age <= attack + release:
+        return 1.0 - (age - attack) / release if release > 0.0 else 0.0
+    return 0.0
+
+
+def cut_pulse(age: float, seconds: float = CUT_SECONDS) -> float:
+    """A cut is a square flash: full brightness for `seconds`, then nothing."""
+    return 1.0 if 0.0 <= age < seconds else 0.0
+
+
+class Reaction:
+    """State for one reactive mode, updated per frame and sampled per send.
+
+    Video modes read `zones`; audio modes read the `audio` object the Lua
+    script adds only while `beat` or `vu` is selected. Colour changes are made
+    on the raw zone colours before saturation/gamma, brightness changes are
+    applied per bulb at send time so short pulses are not lost between frames.
+    """
+
+    def __init__(
+        self,
+        mode: str = "color",
+        amount: float = 0.8,
+        target: float = REACTION_TARGET,
+    ):
+        self.mode = mode if mode in REACTIONS else "color"
+        self.amount = max(0.0, min(1.0, float(amount)))
+        self.target = max(0.05, min(0.95, float(target)))
+        self.audio = self.mode in AUDIO_REACTIONS
+        self.last_frame_at = None
+        self.luma = None
+        self.gain = 1.0
+        self.prev_all = None
+        self.prev_zones = {}
+        self.motion = {}
+        self.cut_times = deque()
+        self.flash_at = None
+        self.last_cut_at = float("-inf")
+        self.beat_base = None
+        self.beat_at = None
+        self.levels = {}
+        self.smoothed = {}
+
+    def _elapsed(self, now: float) -> float:
+        if self.last_frame_at is None:
+            self.last_frame_at = now
+            return 0.0
+        dt = max(0.0, min(1.0, now - self.last_frame_at))
+        self.last_frame_at = now
+        return dt
+
+    def update(self, now: float, state: dict, raw_colors: dict, lights, zone_names):
+        """Fold one mpv state snapshot into the reaction.
+
+        `raw_colors` maps each bulb IP to the unadjusted zone colour and is
+        updated in place by Duotone.
+        """
+        dt = self._elapsed(now)
+        zones = state.get("zones") if isinstance(state.get("zones"), dict) else {}
+        all_rgb = zones.get("all")
+        if not isinstance(all_rgb, (list, tuple)):
+            all_rgb = None
+        audio = state.get("audio") if isinstance(state.get("audio"), dict) else {}
+
+        if self.mode == "equalize" and all_rgb is not None:
+            luma = scene_luma(all_rgb)
+            if self.luma is None:
+                self.luma = luma
+            else:
+                alpha = 1.0 - math.exp(-max(0.0, dt) / EQUALIZE_TAU)
+                self.luma += (luma - self.luma) * alpha
+            self.gain = equalize_gain(
+                self.luma, self.target, REACTION_SPAN * self.amount, REACTION_FLOOR
+            )
+
+        elif self.mode == "cut" and all_rgb is not None:
+            rgb = tuple(float(channel) for channel in all_rgb)
+            if self.prev_all is not None:
+                distance = rgb_distance(rgb, self.prev_all)
+                while self.cut_times and now - self.cut_times[0] > 60.0:
+                    self.cut_times.popleft()
+                if (
+                    distance >= CUT_THRESHOLD
+                    and now - self.last_cut_at >= CUT_COOLDOWN
+                    and len(self.cut_times) < CUT_PER_MINUTE
+                ):
+                    self.cut_times.append(now)
+                    self.last_cut_at = now
+                    self.flash_at = now
+            self.prev_all = rgb
+
+        elif self.mode == "motion":
+            alpha = 1.0 - math.exp(-max(0.0, dt) / MOTION_TAU)
+            for ip, zone in zip(lights, zone_names):
+                current = zone_color(zones, zone)
+                previous = self.prev_zones.get(ip)
+                distance = rgb_distance(current, previous) if previous else 0.0
+                energy = max(0.0, min(1.0, distance / MOTION_DISTANCE))
+                level = self.motion.get(ip, 0.0)
+                self.motion[ip] = level + (energy - level) * alpha
+                self.prev_zones[ip] = tuple(float(channel) for channel in current)
+
+        elif self.mode == "duotone":
+            for index, ip in enumerate(lights):
+                rgb = raw_colors.get(ip)
+                if rgb is not None and index % 2 == 1:
+                    raw_colors[ip] = hue_shift(rgb, 180.0 * self.amount)
+
+        elif self.mode == "beat":
+            self._read_beat(now, audio)
+
+        elif self.mode == "vu":
+            self._read_vu(audio, lights)
+
+    def _read_beat(self, now: float, audio: dict) -> None:
+        rms = audio.get("rms")
+        if rms is None:
+            rms = audio.get("l")
+        try:
+            rms = float(rms)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(rms):
+            return
+        if self.beat_base is None:
+            self.beat_base = rms
+            return
+        if (
+            rms >= -55.0
+            and rms - self.beat_base >= BEAT_THRESHOLD_DB
+            and (self.beat_at is None or now - self.beat_at >= BEAT_COOLDOWN)
+        ):
+            self.beat_at = now
+            # Re-seed the baseline so one loud hit does not retrigger by itself.
+            self.beat_base = rms
+        else:
+            self.beat_base += (rms - self.beat_base) * 0.18
+
+    def _read_vu(self, audio: dict, lights) -> None:
+        rms = audio.get("rms")
+        left = audio.get("l", rms)
+        right = audio.get("r", left)
+        if len(lights) == 1:
+            left = right = rms
+        for index, ip in enumerate(lights):
+            db = left if index % 2 == 0 else right
+            self.levels[ip] = vu_level(db)
+
+    def saturation(self, ip: str) -> float:
+        """Per-bulb saturation multiplier applied before the style's boost."""
+        if self.mode != "motion":
+            return 1.0
+        motion = self.motion.get(ip, 0.0)
+        return max(0.2, 1.0 + 0.35 * self.amount * (motion - 0.5))
+
+    def dimming(self, ip: str, base: int, now: float, dt: float) -> int:
+        """Per-bulb dimming for this send tick, including short pulses."""
+        if self.mode == "equalize":
+            mult = self.gain
+        elif self.mode == "cut":
+            steady = 1.0 - CUT_SPAN * self.amount
+            age = now - self.flash_at if self.flash_at is not None else float("inf")
+            mult = 1.0 if cut_pulse(age) else steady
+        elif self.mode == "motion":
+            span = MOTION_SPAN * self.amount
+            mult = 1.0 - span + span * self.motion.get(ip, 0.0)
+        elif self.mode == "beat":
+            steady = 1.0 - BEAT_SPAN * self.amount
+            age = now - self.beat_at if self.beat_at is not None else float("inf")
+            mult = steady + (1.0 - steady) * beat_pulse(age)
+        elif self.mode == "vu":
+            span = VU_SPAN * self.amount
+            mult = 1.0 - span + span * self.levels.get(ip, 0.0)
+        else:
+            mult = 1.0
+
+        if self.mode in ("motion", "vu"):
+            alpha = 1.0 - math.exp(-max(0.0, dt) / REACTION_SMOOTH)
+            previous = self.smoothed.get(ip, mult)
+            mult = previous + (mult - previous) * alpha
+            self.smoothed[ip] = mult
+        return max(10, min(100, int(round(base * mult))))
+
+
 LAYOUTS = {
     "all": ["all"],
     "left-right": ["left", "right"],
@@ -716,7 +1049,12 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
     """
     sender = WizSender(dry_run=args.dry_run)
     smoother = Smoother(args.smooth / 1000.0)
-    dimming = max(10, min(100, args.brightness))
+    base_dimming = max(10, min(100, args.brightness))
+    reaction = Reaction(
+        getattr(args, "react", "color"),
+        getattr(args, "react_amount", 0.8),
+        getattr(args, "react_target", REACTION_TARGET),
+    )
     send_interval = 1.0 / max(1.0, args.send_hz)
     pid = os.getpid()
     stats_path = runtime_dir() / f"stats-{pid}.json"
@@ -729,9 +1067,20 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
     print(
         f"style: {args.style} | capture: {args.fps:g} fps | edge {args.edge:.0%} | "
         f"smooth {args.smooth:g} ms | saturation {args.saturation:g}x | "
-        f"dimming {dimming} | send {args.send_hz:g} Hz",
+        f"dimming {base_dimming} | send {args.send_hz:g} Hz",
         file=sys.stderr,
     )
+    if reaction.mode != "color":
+        print(
+            f"reaction: {reaction.mode} ({reaction.amount:.0%} amount"
+            + (
+                f", target luma {reaction.target:.2f}"
+                if reaction.mode == "equalize"
+                else ""
+            )
+            + ")",
+            file=sys.stderr,
+        )
     if getattr(args, "sampling", "auto") == "auto":
         sampling = "auto (scaled, resolution-aware grid and fps)"
     elif getattr(args, "sampling", "auto") == "manual":
@@ -844,13 +1193,32 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
                         last_error = None
                     else:
                         zones = state.get("zones")
-                        if isinstance(zones, dict):
+                        audio = state.get("audio")
+                        has_zones = isinstance(zones, dict)
+                        # Audio-only files have no frame to sample, but their
+                        # heartbeat still carries the analyser levels.
+                        has_audio = reaction.audio and isinstance(audio, dict)
+                        if has_zones or has_audio:
                             last_error = None
-                            stats_frames += 1
-                            for ip, zone in zip(lights, zone_names):
-                                rgb = zone_color(zones, zone)
+                            if has_zones:
+                                stats_frames += 1
+                            raw = {}
+                            if has_zones:
+                                for ip, zone in zip(lights, zone_names):
+                                    raw[ip] = zone_color(zones, zone)
+                            reaction.update(now, state, raw, lights, zone_names)
+                            for ip in lights:
+                                rgb = raw.get(ip)
+                                if rgb is None:
+                                    # No frame to sample: hold the base color
+                                    # and let the audio reaction drive it.
+                                    if ip in targets:
+                                        continue
+                                    rgb = REACTION_FALLBACK_RGB
                                 targets[ip] = adjust_color(
-                                    rgb, args.saturation, args.gamma
+                                    rgb,
+                                    args.saturation * reaction.saturation(ip),
+                                    args.gamma,
                                 )
 
             # Advance every bulb toward its target using wall-clock time, not
@@ -873,7 +1241,7 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
                     sender.set_color(
                         ip,
                         (clamp8(cur[0]), clamp8(cur[1]), clamp8(cur[2])),
-                        dimming,
+                        reaction.dimming(ip, base_dimming, now, dt),
                     )
 
             if now - last_stats >= 1.0:
@@ -925,6 +1293,7 @@ def run_launcher(args, lights, zone_names, mpv_extra):
             "grid_x": args.sample_grid,
             "sample": args.sample_block,
             "capture": args.capture,
+            "react": args.react,
             # Only the instance we launch should autostart. If the Lua script
             # is also installed globally, that copy stays asleep.
             "script": link.stem,
@@ -1053,6 +1422,7 @@ def run_attach(args, lights, zone_names):
         "grid_x": args.sample_grid,
         "sample": args.sample_block,
         "capture": args.capture,
+        "react": args.react,
         "script": SCRIPT_NAME,
     }
 
@@ -1273,6 +1643,7 @@ def main(argv=None) -> int:
             "  ./mpv_ambilight.py movie.mkv\n"
             "  ./mpv_ambilight.py --lights 192.168.1.5,192.168.1.7 --layout left-right movie.mkv\n"
             "  ./mpv_ambilight.py --style cinema movie.mkv\n"
+            "  ./mpv_ambilight.py --react equalize movie.mkv\n"
             "  ./mpv_ambilight.py --layout all movie.mkv\n"
             "  ./mpv_ambilight.py --discover\n"
             "  ./mpv_ambilight.py --gui\n"
@@ -1302,6 +1673,27 @@ def main(argv=None) -> int:
         default="hue",
         choices=[*STYLES, "custom"],
         help="starting point for the tuning knobs (default: hue)",
+    )
+    parser.add_argument(
+        "--react",
+        default="color",
+        choices=[*REACTIONS],
+        help=(
+            "how the lights react: color, equalize, cut, motion, duotone, "
+            "beat or vu (default: color)"
+        ),
+    )
+    parser.add_argument(
+        "--react-amount",
+        type=float,
+        default=None,
+        help="strength of the reaction, 0-1 (default: 0.8; 0 keeps the source only)",
+    )
+    parser.add_argument(
+        "--react-target",
+        type=float,
+        default=None,
+        help="equalize only: target scene luma, 0.05-0.95 (default: 0.45)",
     )
     parser.add_argument(
         "--sampling",
@@ -1513,6 +1905,14 @@ def main(argv=None) -> int:
     args.gamma = max(0.2, min(3.0, args.gamma))
     args.smooth = max(0.0, min(2000.0, args.smooth))
     args.brightness = max(10, min(100, args.brightness))
+    if args.react not in REACTIONS:
+        args.react = "color"
+    args.react_amount = 0.8 if args.react_amount is None else args.react_amount
+    args.react_amount = max(0.0, min(1.0, float(args.react_amount)))
+    args.react_target = (
+        REACTION_TARGET if args.react_target is None else args.react_target
+    )
+    args.react_target = max(0.05, min(0.95, float(args.react_target)))
     resolve_sampling(args, explicit)
 
     if args.attach:

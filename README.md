@@ -4,7 +4,7 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python: 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
 
-![WIZ AMBILIGHT banner: amber title over a charcoal HUD grid, with tags for MPV frames, 18 Hz fade, UDP 38899 and zero dependencies](assets/banner.png?v=1.7.0)
+![WIZ AMBILIGHT banner: amber title over a charcoal HUD grid, with tags for MPV frames, 18 Hz fade, UDP 38899 and zero dependencies](assets/banner.png?v=1.8.0)
 
 `wiz-ambilight` reads the video frame mpv is already decoding and paints the
 edges of the picture onto WiZ bulbs over your local network. No capture card,
@@ -51,6 +51,10 @@ machine.
   colors, without starting Ambilight.
 - **Multi-bulb layouts.** Left/right, top/bottom, thirds, whole-frame, or
   explicitly chosen zones per bulb.
+- **Reactive modes.** Beyond plain color: equalize room brightness, flash on
+  cuts, follow motion, split into a duotone, pulse on the beat or meter the
+  volume. Audio analysis is opt-in and pass-through. See
+  [Reactions](#-reactions).
 - **Panel telemetry.** One chart in **Activity** shows mpv and the panel in
   three unit lanes: CPU %, RAM MB and WiZ UDP KB/s, above the video and
   capture resolution.
@@ -133,7 +137,10 @@ It opens `http://127.0.0.1:8765/` in your browser. The panel scans the LAN,
 lists every bulb it finds, and lets you:
 
 - choose and name bulbs (`Sofa`, `TV wall`, …), see their IP and online state,
-  and assign a zone per bulb or pick a layout, style and brightness;
+  and assign a zone per bulb or pick a layout, style, reaction and brightness;
+- forget a stale or duplicate row with the two-step **Forget** action; this
+  edits `lights.json` and leaves the bulb itself alone. **Scan network** can
+  add a reachable bulb back, and the inclusion switch keeps it out of the sync;
 - pick a **sampling profile** — auto adapts the grid and capture rate to the
   resolution; lean, balanced and quality trade CPU for detail; manual exposes
   every knob. See [Sampling](#-sampling);
@@ -154,8 +161,8 @@ lists every bulb it finds, and lets you:
 - collapse any section: **Direct control** and **Activity** start closed, so
   the first screen is just lights, session and look.
 
-![The panel in demo mode: three bulbs assigned to thirds, the auto sampling profile and the performance chart](docs/gui.png)
-<sub>Demo mode with three bulbs on thirds: Session and Look share the left stack, Direct control sits on the right with rooms and saved colors, and Activity holds the performance chart.</sub>
+![The panel in demo mode: three bulbs on thirds, the Reaction dropdown in Look and Direct control on the right](docs/gui.png)
+<sub>Demo mode with three bulbs on thirds: Session and Look share the left stack, Direct control sits on the right with rooms and saved colors, and Activity waits below.</sub>
 
 The visual language and the layout rules are documented in
 [`docs/design.md`](docs/design.md).
@@ -166,7 +173,7 @@ Useful flags:
 |---|---|
 | `--gui-port 9000` | listen somewhere else (default `8765`) |
 | `--no-browser` | do not open a browser automatically |
-| `--demo` | fake lights, never send UDP — good for trying the UI |
+| `--demo` | fake lights, never send UDP — the three named demo fixtures replace the saved bulbs, good for trying the UI |
 
 The panel is a standard-library `ThreadingHTTPServer` bound to `127.0.0.1`, and
 the sync runs as its child, so closing the tab leaves no daemon behind. PID
@@ -237,10 +244,11 @@ systemctl --user enable --now wiz-ambilight.service
 
 ![Configuration banner: layouts, styles and sampling](assets/configuration.png)
 
-A **style** is a coherent starting point, a **layout** assigns zones, and a
-**sampling profile** decides how much of each frame is copied. Individual flags
-override the style, and the panel stores your choice in `lights.json` so it
-applies on the next start.
+A **style** is a coherent starting point, a **layout** assigns zones, a
+**sampling profile** decides how much of each frame is copied, and a
+**reaction** decides what the bulbs do with it. Individual flags override the
+style, and the panel stores your choice in `lights.json` so it applies on the
+next start.
 
 ### 🎚️ Capture, fade and send
 
@@ -280,6 +288,58 @@ on the next frame, so scene cuts land immediately while camera moves fade.
 Use `--style reactive` when you want the snappiest response, or lower
 `--smooth` manually. Styles are independent of sampling: changing the profile
 never changes fade, edge, saturation or send rate.
+
+### 🎛️ Reactions
+
+A **reaction** is what the bulbs do with the colors: plain color, or one layer
+that reacts to the picture or to the audio. The default is still `color`, so
+nothing changes unless you ask. The panel shows one **Reaction** dropdown
+inside **Look → Preset**, split into **Video** and **Audio** groups, so the
+same control says how the lights react and what they react to.
+
+| reaction   | source | what it does | room defaults |
+|------------|--------|--------------|---------------|
+| `color`    | video  | Classic Ambilight: each bulb copies its zone. | — |
+| `equalize` | video  | Holds the perceived room brightness: bright scenes dim the bulbs, dark scenes lift them. | target luma `0.45`, ±35 %, 35 % floor, 4 s average |
+| `cut`      | video  | Fires a short flash when the picture cuts to a new scene. | 120 ms, at most 6 per minute, 22 % brightness headroom |
+| `motion`   | video  | Still shots stay calm; movement adds brightness and saturation. | 0.28 span, 0.35 s release |
+| `duotone`  | video  | Alternates each bulb between its zone color and the opposite hue. | 180° hue split |
+| `beat`     | audio  | Pulses the bulbs on bass hits above the running average. | 5 dB threshold, 2 Hz max, 25 % headroom |
+| `vu`       | audio  | Each bulb follows its channel (left/right) as a volume meter. | −45…−12 dBFS → 25…100 % |
+
+Ranges are at full strength (`--react-amount 1`); the default `0.8` scales the
+color and brightness spans, while timings and thresholds stay fixed.
+
+Pulse and meter modes reserve headroom: at **Brightness 100** the bulbs idle
+slightly below 100 so the flash has somewhere to go. Equalize is deliberately
+slow (4 s); it averages the scene instead of pumping with every cut. It can
+only lift a dark scene when the brightness ceiling leaves room, so set
+**Brightness** around 80 if you want both directions; at 100 it mostly dims.
+All six reactions scale with one knob, `--react-amount` (0–1, default `0.8`);
+`0` keeps the source color but disables the reaction.
+
+```bash
+# keep the room at a constant brightness
+./mpv_ambilight.py --react equalize movie.mkv
+
+# flash on cuts, but gently
+./mpv_ambilight.py --react cut --react-amount 0.5 movie.mkv
+
+# audio modes: music or any file with an audio track
+./mpv_ambilight.py --react vu concert.mkv
+./mpv_ambilight.py --react beat --react-amount 0.7 song.flac
+```
+
+Audio modes use mpv's built-in `lavfi`/`astats` bridge. The Lua script adds a
+labelled pass-through analyser only while `beat` or `vu` is selected, removes
+it when you switch back to a video mode, and never changes the samples that
+reach your speakers. No extra package is installed. An audio-only file has no
+frame to sample, so the bulbs hold a warm white base while the beat or the VU
+meter drives their brightness.
+
+`--react-target` (default `0.45`) sets the luma Equalize aims for; lower values
+keep the room dimmer, higher values brighter. The panel exposes the mode but
+keeps `react_amount` and `react_target` in `lights.json` for scripted setups.
 
 ### 🧩 Layouts and zones
 
@@ -548,7 +608,7 @@ recipes and the banner generator are documented in
 
 ![Roadmap banner: what is missing — Windows, measured transport and release scans](assets/roadmap.png)
 
-Three pieces are known to be missing, in the order they matter:
+Four pieces are known to be missing, in the order they matter:
 
 1. **Windows.** One resolver for the runtime directory (Python and Lua must
    agree, or attach mode fails silently), `%APPDATA%\mpv\scripts` for
@@ -560,6 +620,11 @@ Three pieces are known to be missing, in the order they matter:
    reconciling with `getPilot` are worth their complexity.
 3. **Release hygiene.** A `SECURITY.md` refresh and an antivirus scan of each
    release archive, recorded with its date.
+4. **A real light sensor.** Equalize estimates room brightness from the video
+   today. A BH1750 or similar writing `lux.json` in the runtime directory
+   would let it target a measured lux instead; the hook is designed but not
+   implemented. See
+   [`docs/development.md`](docs/development.md#light-sensor-design).
 
 ## 🙏 Credits & License
 

@@ -613,6 +613,12 @@ select:focus, input:focus {
   border-color: rgba(252, 190, 17, .4);
   background: rgba(252, 190, 17, .08);
 }
+.icon-btn.forget:hover:not(:disabled),
+.icon-btn.forget.armed {
+  color: var(--bad);
+  border-color: rgba(255, 107, 94, .45);
+  background: rgba(255, 107, 94, .08);
+}
 
 /* ----------------------------------------------------------------- controls */
 

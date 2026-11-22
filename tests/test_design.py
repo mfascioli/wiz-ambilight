@@ -198,6 +198,32 @@ class StructureTests(unittest.TestCase):
         self.assertIn("SAMPLING_PROFILES", CORE)
         self.assertIn("--sampling", CORE)
 
+    def test_reactions_are_grouped_by_source(self):
+        self.assertIn('id="reactSelect"', HTML)
+        self.assertIn('id="reactHint"', HTML)
+        js = (WEB / "app.js").read_text(encoding="utf-8")
+        self.assertIn("fillReactionSelect", js)
+        self.assertIn('"optgroup"', js)
+        self.assertIn("reactSelect", js)
+        self.assertIn("reaction_groups", js)
+        for mode in ("equalize", "cut", "motion", "duotone", "beat", "vu"):
+            with self.subTest(mode=mode):
+                self.assertIn(f'"{mode}"', CORE)
+        self.assertIn("AUDIO_REACTIONS", CORE)
+        self.assertIn("--react", CORE)
+        # The Reaction control lives inside Preset; the three-column contract
+        # itself must not grow a fourth column.
+        preset = HTML.index('class="look-col"')
+        self.assertLess(preset, HTML.index('id="reactSelect"'))
+        self.assertLess(HTML.index('id="reactSelect"'), HTML.index("sampleStage"))
+        self.assertEqual(HTML.count('class="look-col"'), 3)
+
+    def test_lights_can_be_forgotten(self):
+        js = (WEB / "app.js").read_text(encoding="utf-8")
+        self.assertIn("/api/light/delete", js)
+        self.assertIn("Forget this light", js)
+        self.assertIn("def delete_light", WEBUI)
+
     def test_look_reads_as_three_flat_columns(self):
         # Preset, sample and send share the width in three equal columns.
         # Values are flat key/value rows, not nested boxes.

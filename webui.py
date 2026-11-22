@@ -40,6 +40,9 @@ CRAZY_SECONDS = 5.0
 CONFIG_KEYS = (
     "layout",
     "style",
+    "react",
+    "react_amount",
+    "react_target",
     "brightness",
     "mode",
     "media",
@@ -55,6 +58,9 @@ CONFIG_KEYS = (
 DEFAULT_CONFIG = {
     "layout": "auto",
     "style": "hue",
+    "react": "color",
+    "react_amount": 0.8,
+    "react_target": 0.45,
     "brightness": 100,
     "mode": "attach",
     "media": "",
@@ -74,6 +80,7 @@ DEMO_LIGHTS = {
     "192.0.2.11": {
         "model": "ESP24_SHRGBC_01",
         "mac": "d8a01154f818",
+        "name": "Left wall",
         "state": True,
         "dimming": 62,
         "temp": 3012,
@@ -84,6 +91,7 @@ DEMO_LIGHTS = {
     "192.0.2.12": {
         "model": "ESP24_SHRGBC_01",
         "mac": "d8a01154fba8",
+        "name": "Middle wall",
         "state": True,
         "dimming": 48,
         "temp": 3012,
@@ -94,6 +102,7 @@ DEMO_LIGHTS = {
     "192.0.2.13": {
         "model": "ESP15_SHTW_01",
         "mac": "d8a01154a1c2",
+        "name": "Right shelf",
         "state": False,
         "dimming": 100,
         "temp": 2700,
@@ -174,6 +183,16 @@ def normalize_config(raw, core) -> dict:
         config["layout"] = "auto"
     if config["style"] not in core.STYLES:
         config["style"] = "hue"
+    if config["react"] not in core.REACTIONS:
+        config["react"] = "color"
+    try:
+        config["react_amount"] = max(0.0, min(1.0, float(config["react_amount"])))
+    except (TypeError, ValueError):
+        config["react_amount"] = 0.8
+    try:
+        config["react_target"] = max(0.05, min(0.95, float(config["react_target"])))
+    except (TypeError, ValueError):
+        config["react_target"] = 0.45
     try:
         config["brightness"] = max(10, min(100, int(config["brightness"])))
     except (TypeError, ValueError):
@@ -410,6 +429,12 @@ def build_command(config: dict, core, demo: bool = False):
         ",".join(zones),
         "--style",
         config["style"],
+        "--react",
+        config.get("react", "color"),
+        "--react-amount",
+        f"{config.get('react_amount', 0.8):g}",
+        "--react-target",
+        f"{config.get('react_target', 0.45):g}",
         "--brightness",
         str(config["brightness"]),
         "--sampling",
@@ -841,21 +866,25 @@ class Panel:
             self.config["dry_run"] = True
             self.live = json.loads(json.dumps(DEMO_LIGHTS))
             self.reachable = set(self.live)
+            # Demo fixtures replace the saved bulbs instead of being merged
+            # into them. Mixing both lists made the same hardware appear twice
+            # (a real IP and a 192.0.2.x fixture) with blank names.
+            self.config["lights"] = {}
+            groups = {}
+            for name, members in self.config["groups"].items():
+                keep = [ip for ip in members if ip in self.live]
+                if keep:
+                    groups[name] = keep
+            self.config["groups"] = groups
             for ip, info in self.live.items():
-                self.config["lights"].setdefault(
-                    ip,
-                    {
-                        "name": "",
-                        "enabled": True,
-                        "zone": "",
-                        "model": "",
-                        "mac": "",
-                        "firmware": "",
-                    },
-                )
-                entry = self.config["lights"][ip]
-                entry["model"] = info.get("model") or entry.get("model")
-                entry["mac"] = info.get("mac") or entry.get("mac")
+                self.config["lights"][ip] = {
+                    "name": info.get("name") or "",
+                    "enabled": True,
+                    "zone": info.get("zone") or "",
+                    "model": info.get("model") or "",
+                    "mac": info.get("mac") or "",
+                    "firmware": info.get("firmware") or "",
+                }
 
     # -- discovery -------------------------------------------------------- #
 
@@ -1110,6 +1139,22 @@ class Panel:
             "style_details": {
                 name: dict(values) for name, values in self.core.STYLES.items()
             },
+            "reactions": [
+                {
+                    "id": key,
+                    "group": details["group"],
+                    "label": details["label"],
+                    "hint": details["hint"],
+                }
+                for key, details in self.core.REACTIONS.items()
+            ],
+            "reaction_groups": [
+                {
+                    "id": group,
+                    "label": group.capitalize(),
+                }
+                for group in self.core.REACTION_GROUPS
+            ],
             "scenes": scenes,
             "wiz_scenes": [
                 {"id": scene_id, "name": name}
@@ -1167,6 +1212,34 @@ class Panel:
                 if field in fields:
                     self.config["lights"][ip][field] = fields[field]
             self._persist()
+        if self.session.running():
+            self.restart()
+        return self.snapshot()
+
+    def delete_light(self, ip: str) -> dict:
+        """Forget one bulb: remove the row and any room membership.
+
+        This only edits `lights.json`; the bulb itself keeps its current
+        colour. A later **Scan network** adds a reachable bulb back, so
+        deleting is for stale addresses and duplicates, while the inclusion
+        switch is the way to keep a bulb out of the sync.
+        """
+        ip = str(ip or "").strip()
+        with self.lock:
+            if ip not in self.config["lights"]:
+                raise ValueError("unknown light")
+            entry = self.config["lights"].pop(ip)
+            groups = {}
+            for name, members in self.config["groups"].items():
+                keep = [member for member in members if member != ip]
+                if keep:
+                    groups[name] = keep
+            self.config["groups"] = groups
+            self.live.pop(ip, None)
+            self.reachable.discard(ip)
+            self._persist()
+        label = entry.get("name") or ip
+        self.session.write_log(f"forgot light {label} ({ip})")
         if self.session.running():
             self.restart()
         return self.snapshot()
@@ -1764,6 +1837,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(
                     self.panel.set_light(str(payload.get("ip") or ""), payload)
                 )
+            elif path == "/api/light/delete":
+                self._json(self.panel.delete_light(str(payload.get("ip") or "")))
             elif path == "/api/group":
                 self._json(self.panel.set_group(payload))
             elif path == "/api/color":
