@@ -2,7 +2,7 @@
 
 Releases before 1.4.0 were never tagged; their history is in `git log`.
 
-## Unreleased
+## 1.10.0 — 2026-11-22
 
 - **Audio:** `beat` and `vu` now react on the first transient instead of
   waiting for a smoothed RMS window. Beats have an instant attack, a 3 dB
