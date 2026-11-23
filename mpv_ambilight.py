@@ -640,14 +640,37 @@ CUT_SPAN = 0.22
 MOTION_SPAN = 0.28
 MOTION_TAU = 0.35
 MOTION_DISTANCE = 0.12
-BEAT_THRESHOLD_DB = 5.0
-BEAT_COOLDOWN = 0.5
-BEAT_SPAN = 0.25
-BEAT_ATTACK = 0.06
-BEAT_RELEASE = 0.25
+BEAT_THRESHOLD_DB = 3.0
+BEAT_COOLDOWN = 0.12
+# `span` is the headroom kept between hits: 0.55 means the bulbs idle at 45 %
+# of the configured brightness and the flash covers the rest. That gap is what
+# makes the pulse read as a flash instead of a small tremble.
+BEAT_SPAN = 0.55
+BEAT_ATTACK = 0.0
+BEAT_RELEASE = 0.10
 VU_LOW_DB = -45.0
 VU_HIGH_DB = -12.0
-VU_SPAN = 0.75
+VU_SPAN = 1.0
+VU_ATTACK = 0.008
+VU_RELEASE = 0.11
+# A linear dB scale leaves most music in the top of the meter, where a few
+# percent of brightness are easy to miss. Raising the normalised level to this
+# power darkens the quiet passages and widens the gap before a hit.
+VU_CURVE = 1.4
+
+# Audio follows a faster clock than the video capture. The analyser metadata
+# changes on every audio frame, so a 30 Hz state file keeps kicks and meter
+# movements from being rounded down to the frame rate. Video analysis still
+# obeys the sampling profile; only the heartbeat is faster.
+AUDIO_FPS = 30.0
+# A sample peak this many dB above the RMS is treated as the current level.
+# Pure RMS sounds smooth but hides the attack of a kick; pure peak saturates
+# on every mastered track. Taking the hotter of the two keeps the punch.
+AUDIO_PEAK_DB = 8.0
+
+# Motion still uses the shared low-pass below. VU uses the asymmetric envelope
+# in `Reaction.dimming`, so a hit reaches the bulb on the next send tick while
+# the fall-back stays visible.
 REACTION_SMOOTH = 0.08
 # Audio-only files have no zone colour, so the bulbs hold this warm base while
 # the beat or the VU meter drives their brightness.
@@ -725,12 +748,12 @@ REACTION_PROFILES = {
     },
     "beat": {
         "soft": {
-            "threshold": 7.0,
-            "cooldown": 0.7,
-            "span": 0.15,
-            "attack": 0.08,
-            "release": 0.35,
-            "hint": "Only strong hits; long, soft flashes.",
+            "threshold": 4.5,
+            "cooldown": 0.28,
+            "span": 0.35,
+            "attack": 0.010,
+            "release": 0.18,
+            "hint": "Only clear hits; short flashes with some headroom.",
         },
         "balanced": {
             "threshold": BEAT_THRESHOLD_DB,
@@ -738,35 +761,41 @@ REACTION_PROFILES = {
             "span": BEAT_SPAN,
             "attack": BEAT_ATTACK,
             "release": BEAT_RELEASE,
-            "hint": "The default: hits above the running average.",
+            "hint": "The default: instant flashes on the beat.",
         },
         "strong": {
-            "threshold": 3.0,
-            "cooldown": 0.3,
-            "span": 0.40,
-            "attack": 0.04,
-            "release": 0.18,
-            "hint": "Sensitive, short flashes on most beats.",
+            "threshold": 1.5,
+            "cooldown": 0.09,
+            "span": 0.80,
+            "attack": 0.0,
+            "release": 0.07,
+            "hint": "Sensitive, deep flashes on most hits.",
         },
     },
     "vu": {
         "soft": {
             "low": -50.0,
             "high": -14.0,
-            "span": 0.45,
-            "hint": "Narrow range; the meter stays near the middle.",
+            "span": 0.70,
+            "attack": 0.020,
+            "release": 0.18,
+            "hint": "Narrow range; a slower, smoother meter.",
         },
         "balanced": {
             "low": VU_LOW_DB,
             "high": VU_HIGH_DB,
             "span": VU_SPAN,
+            "attack": VU_ATTACK,
+            "release": VU_RELEASE,
             "hint": "The default −45…−12 dBFS range.",
         },
         "strong": {
             "low": -40.0,
             "high": -10.0,
             "span": 1.0,
-            "hint": "Wide range; quiet parts go dark, loud parts go full.",
+            "attack": 0.004,
+            "release": 0.07,
+            "hint": "Wide, fast range; quiet parts go dark, hits jump.",
         },
     },
 }
@@ -888,6 +917,35 @@ def vu_level(db, low: float = VU_LOW_DB, high: float = VU_HIGH_DB) -> float:
     return max(0.0, min(1.0, (value - low) / (high - low)))
 
 
+def vu_curve(level, curve: float = VU_CURVE) -> float:
+    """Darken the quiet part of the meter so hits stand out.
+
+    The dB window already fits music, but most of a track sits in its top
+    half. Raising the normalised level to `curve` lowers the idle brightness
+    without touching full scale, which is the difference between a gentle
+    breathing and a visible flash.
+    """
+    value = max(0.0, min(1.0, float(level)))
+    return value**max(0.1, float(curve))
+
+
+def hot_db(rms, peak, peak_db: float = AUDIO_PEAK_DB):
+    """The hotter of RMS and sample peak, with a fixed peak headroom.
+
+    RMS is the level people hear over a moment; the sample peak carries the
+    attack of a kick or a snare. Subtracting `peak_db` before the comparison
+    keeps a mastered track from sitting at full scale all the time.
+    """
+    rms = finite_float(rms)
+    peak = finite_float(peak)
+    values = []
+    if rms is not None:
+        values.append(rms)
+    if peak is not None:
+        values.append(peak - peak_db)
+    return max(values) if values else None
+
+
 def beat_pulse(
     age: float, attack: float = BEAT_ATTACK, release: float = BEAT_RELEASE
 ) -> float:
@@ -949,6 +1007,8 @@ class Reaction:
         self.vu_low = float(values.get("low", VU_LOW_DB))
         self.vu_high = float(values.get("high", VU_HIGH_DB))
         self.vu_span = float(values.get("span", VU_SPAN))
+        self.vu_attack = float(values.get("attack", VU_ATTACK))
+        self.vu_release = float(values.get("release", VU_RELEASE))
         self.last_frame_at = None
         self.luma = None
         self.gain = 1.0
@@ -961,6 +1021,7 @@ class Reaction:
         self.beat_base = None
         self.beat_at = None
         self.band_db = [None] * len(BANDS)
+        self.band_peak_db = [None] * len(BANDS)
         self.band_levels = [0.0] * len(BANDS)
         self.band_bases = [None] * len(BANDS)
         self.band_at = [None] * len(BANDS)
@@ -968,6 +1029,7 @@ class Reaction:
         self.assignments = {}
         self.levels = {}
         self.smoothed = {}
+        self.vu_env = {}
 
     def _elapsed(self, now: float) -> float:
         if self.last_frame_at is None:
@@ -1045,41 +1107,66 @@ class Reaction:
                 self._read_audio(now, audio, raw_colors, lights, beat=False)
 
     def _read_audio(self, now, audio, raw_colors, lights, beat):
-        """Read the five band levels, assign bands to bulbs and set colours."""
+        """Read the five band levels, assign bands to bulbs and set colours.
+
+        Both RMS and sample peak drive the meter and the detector. Peak is
+        what makes a kick visible on the first state update instead of after
+        the RMS window has filled; RMS keeps the level stable in between.
+        """
         rms = finite_float(audio.get("rms"))
         if rms is None:
             rms = finite_float(audio.get("l"))
+        peak = finite_float(audio.get("peak"))
         raw_bands = audio.get("bands")
+        raw_peaks = audio.get("band_peaks")
         values = []
-        if isinstance(raw_bands, (list, tuple)):
-            values = [
-                finite_float(value) for value in list(raw_bands)[: len(BANDS)]
-            ]
-        while len(values) < len(BANDS):
-            values.append(None)
-        if rms is None and all(value is None for value in values):
+        peaks = []
+        for source, target in ((raw_bands, values), (raw_peaks, peaks)):
+            if isinstance(source, (list, tuple)):
+                target.extend(
+                    finite_float(value) for value in list(source)[: len(BANDS)]
+                )
+            while len(target) < len(BANDS):
+                target.append(None)
+
+        combined = [hot_db(value, band_peak) for value, band_peak in zip(values, peaks)]
+        if (
+            rms is None
+            and peak is None
+            and all(value is None for value in combined)
+        ):
             return
-        self.band_db = values
+        self.band_db = combined
+        self.band_peak_db = peaks
         self.band_levels = [
-            vu_level(value, self.vu_low, self.vu_high) for value in values
+            vu_curve(vu_level(value, self.vu_low, self.vu_high))
+            for value in combined
         ]
         count = len(lights)
         self.assignments = {
             ip: band_for(index, count) for index, ip in enumerate(lights)
         }
+        band_hot = max((value for value in combined if value is not None), default=None)
+        overall_db = hot_db(rms, peak)
+        if overall_db is None:
+            overall_db = band_hot
+        elif peak is None and band_hot is not None:
+            # Older state files carry only per-band peaks. Let the loudest band
+            # stand in for the missing overall peak instead of holding still.
+            overall_db = max(overall_db, band_hot)
         overall = (
-            vu_level(rms, self.vu_low, self.vu_high)
-            if rms is not None
+            vu_curve(vu_level(overall_db, self.vu_low, self.vu_high))
+            if overall_db is not None
             else max(self.band_levels)
         )
         dominant = max(range(len(BANDS)), key=lambda index: self.band_levels[index])
         if beat:
-            for index, value in enumerate(values):
+            for index, value in enumerate(combined):
                 self.band_bases[index], self.band_at[index] = self._transient(
                     now, value, self.band_bases[index], self.band_at[index]
                 )
             self.beat_base, self.beat_at = self._transient(
-                now, rms, self.beat_base, self.beat_at
+                now, overall_db, self.beat_base, self.beat_at
             )
         for index, ip in enumerate(lights):
             band = self.assignments[ip]
@@ -1100,13 +1187,13 @@ class Reaction:
         if base is None:
             return value, at
         if (
-            value >= -55.0
+            value >= -60.0
             and value - base >= self.beat_threshold
             and (at is None or now - at >= self.beat_cooldown)
         ):
             # Re-seed the baseline so one loud hit does not retrigger itself.
             return value, now
-        return base + (value - base) * 0.18, at
+        return base + (value - base) * 0.35, at
 
     def saturation(self, ip: str) -> float:
         """Per-bulb saturation multiplier applied before the style's boost."""
@@ -1135,11 +1222,16 @@ class Reaction:
             )
         elif self.mode == "vu":
             span = self.vu_span * self.amount
-            mult = 1.0 - span + span * self.levels.get(ip, 0.0)
+            target = 1.0 - span + span * self.levels.get(ip, 0.0)
+            previous = self.vu_env.get(ip, target)
+            tau = self.vu_attack if target >= previous else self.vu_release
+            alpha = 1.0 - math.exp(-max(0.0, dt) / max(0.001, tau))
+            mult = previous + (target - previous) * alpha
+            self.vu_env[ip] = mult
         else:
             mult = 1.0
 
-        if self.mode in ("motion", "vu"):
+        if self.mode == "motion":
             alpha = 1.0 - math.exp(-max(0.0, dt) / REACTION_SMOOTH)
             previous = self.smoothed.get(ip, mult)
             mult = previous + (mult - previous) * alpha
@@ -1352,7 +1444,11 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
         getattr(args, "react_profile", "balanced"),
         getattr(args, "react_bands", None),
     )
-    send_interval = 1.0 / max(1.0, args.send_hz)
+    # Audio envelopes are short: a 120 ms pulse at an 18 Hz send rate can be
+    # missed between datagrams. Audio modes always push at 30 Hz, like the
+    # `raw` style, while the style still controls the video-only rate.
+    audio_send_hz = max(args.send_hz, AUDIO_FPS) if reaction.audio else args.send_hz
+    send_interval = 1.0 / max(1.0, audio_send_hz)
     pid = os.getpid()
     stats_path = runtime_dir() / f"stats-{pid}.json"
 
@@ -1535,6 +1631,11 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
                     moving = True
 
             if now - last_send >= send_interval:
+                # The reaction envelope must advance with the send tick, not
+                # with the 3-6 ms polling loop: dimming() only runs when a
+                # datagram is built, so the loop's dt would stretch a 140 ms
+                # release into almost a second.
+                send_dt = min(0.25, max(0.0, now - last_send))
                 last_send = now
                 for ip in lights:
                     cur = current.get(ip)
@@ -1543,7 +1644,7 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
                     sender.set_color(
                         ip,
                         (clamp8(cur[0]), clamp8(cur[1]), clamp8(cur[2])),
-                        reaction.dimming(ip, base_dimming, now, dt),
+                        reaction.dimming(ip, base_dimming, now, send_dt),
                     )
 
             if now - last_stats >= 1.0:
@@ -2058,6 +2159,12 @@ def main(argv=None) -> int:
         "--saturation", type=float, default=None, help="saturation boost"
     )
     parser.add_argument(
+        "--vibrance",
+        type=float,
+        default=None,
+        help="multiply the style's saturation, 0-2 (1 = unchanged)",
+    )
+    parser.add_argument(
         "--gamma", type=float, default=None, help="output gamma (>1 brightens midtones)"
     )
     parser.add_argument(
@@ -2220,7 +2327,8 @@ def main(argv=None) -> int:
     args.fps = max(1.0, min(30.0, args.fps))
     args.edge = max(0.02, min(0.45, args.edge))
     args.send_hz = max(1.0, min(30.0, args.send_hz))
-    args.saturation = max(0.0, min(4.0, args.saturation))
+    args.vibrance = 1.0 if args.vibrance is None else max(0.0, min(2.0, args.vibrance))
+    args.saturation = max(0.0, min(4.0, args.saturation * args.vibrance))
     args.gamma = max(0.2, min(3.0, args.gamma))
     args.smooth = max(0.0, min(2000.0, args.smooth))
     args.brightness = max(10, min(100, args.brightness))

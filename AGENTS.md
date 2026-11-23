@@ -59,11 +59,13 @@ headings, and leave interface names, option values and file paths untranslated.
   its own right stack, so a short Session never stretches to match a tall card.
   Session is one compact row. Saved scenes are a small `<details>` submenu
   inside Direct control, not a card. **Look** is three equal hairline columns —
-  Preset / Sample / Send — with flat key/value rows, never nested boxes. The
-  **Reaction** dropdown sits inside **Preset**, under Style preset, with one
-  `<optgroup>` per source (Video / Audio); reaction strength, the profile
-  select, the Equalize target and the five band color swatches are flat rows
-  under it, shown only when they apply. It never adds a column or a card.
+  Preset / Sample / Send — with flat key/value rows, never nested boxes.
+  **Preset** leads with the Reaction group: the dropdown, with one
+  `<optgroup>` per source (Video / Audio), then reaction strength, the profile
+  select, the Equalize target and the five band color swatches as flat rows
+  under it, shown only when they apply. The **Capture & fade preset** select
+  follows the reaction group, then Brightness and the **Vibrance** slider;
+  those three are always visible and flat. It never adds a column or a card.
 - **Reactions and audio.** `react` is one of `color`, `equalize`, `cut`,
   `motion`, `duotone`, `beat`, `vu`; `color` stays the default. Every reaction
   is scaled by `react_amount`, so `0` is a no-op. The reactive modes share

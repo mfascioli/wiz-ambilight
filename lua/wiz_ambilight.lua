@@ -129,6 +129,12 @@ local function is_audio_react(name)
     return name == "beat" or name == "vu"
 end
 
+-- Audio changes faster than video. The state file therefore beats at 30 Hz
+-- while an audio reaction is selected; analyze() still obeys the sampling
+-- profile, so these extra ticks only re-read the analyser metadata and reuse
+-- the cached zones.
+local AUDIO_FPS = 30.0
+
 -- The analyser is a chain of labelled libavfilter filters. astats injects the
 -- RMS/peak metadata, acrossover splits the mix into five bands for the meter,
 -- and anull keeps the chain valid while the labels are removed one by one.
@@ -196,7 +202,7 @@ local function audio_json()
     end
     local meta = mp.get_property_native("af-metadata/wizstats")
     if type(meta) ~= "table" then
-        return nil
+        meta = {}
     end
     local function meta_field(source, name, fallback)
         local value = tonumber(source[name])
@@ -219,45 +225,79 @@ local function audio_json()
     )
     local left = field("lavfi.astats.1.RMS_level", rms)
     local right = field("lavfi.astats.2.RMS_level", left)
-    if rms == nil and left == nil then
-        return nil
-    end
-    -- Derive the crest factor from the two dBFS levels. astats also publishes
-    -- a Crest_factor field, but it is scaled oddly across ffmpeg builds, while
-    -- peak minus RMS is the same number in dB and always comparable.
-    local crest = nil
-    if peak ~= nil then
-        crest = peak - (rms or left)
-    end
     -- The band graph exposes ten channels: five stereo bands, two channels
     -- each. Take the louder channel per band so a one-sided mix still shows.
+    -- Peak travels beside RMS: the meter uses both so attacks are not
+    -- averaged away, and the beat detector can see a transient in its band.
     local band_meta = mp.get_property_native("af-metadata/wizbands")
-    local band_parts = {}
+    local band_rms = {}
+    local band_peaks = {}
     if type(band_meta) == "table" then
-        for index = 0, 4 do
+        local function band_stat(index, suffix)
             local band_left = tonumber(
-                band_meta["lavfi.astats." .. (index * 2 + 1) .. ".RMS_level"]
+                band_meta["lavfi.astats." .. (index * 2 + 1) .. "." .. suffix]
             )
             local band_right = tonumber(
-                band_meta["lavfi.astats." .. (index * 2 + 2) .. ".RMS_level"]
+                band_meta["lavfi.astats." .. (index * 2 + 2) .. "." .. suffix]
             )
             local value = band_left
             if band_right ~= nil and (value == nil or band_right > value) then
                 value = band_right
             end
-            band_parts[#band_parts + 1] = json_number(value)
+            return value
+        end
+        for index = 0, 4 do
+            band_rms[#band_rms + 1] = band_stat(index, "RMS_level")
+            band_peaks[#band_peaks + 1] = band_stat(index, "Peak_level")
         end
     end
-    local bands_json = ""
-    if #band_parts == 5 then
-        bands_json = ',"bands":[' .. table.concat(band_parts, ",") .. "]"
+
+    -- `af-metadata` only exposes the last astats instance on some mpv builds,
+    -- so wizstats can be empty even while the bands are live. Rebuild the
+    -- overall level from the band powers in that case: the crossover slices
+    -- are the same signal, so their powers add back up.
+    local function sum_db(values)
+        local power, found = 0.0, false
+        for _, db in ipairs(values) do
+            if db ~= nil then
+                found = true
+                power = power + 10.0 ^ (db / 10.0)
+            end
+        end
+        if not found then
+            return nil
+        end
+        return 10.0 * math.log(power, 10)
     end
-    return ',"audio":{"rms":' .. json_number(rms or left)
-        .. ',"peak":' .. json_number(peak)
+    local overall_rms = rms or left or sum_db(band_rms)
+    local overall_peak = peak or sum_db(band_peaks)
+    if overall_rms == nil and overall_peak == nil then
+        return nil
+    end
+
+    local function db_array(values)
+        local parts = {}
+        for index = 1, 5 do
+            parts[#parts + 1] = json_number(values[index])
+        end
+        return "[" .. table.concat(parts, ",") .. "]"
+    end
+    local bands_json = ',"bands":' .. db_array(band_rms)
+        .. ',"band_peaks":' .. db_array(band_peaks)
+
+    -- Derive the crest factor from the two dBFS levels. astats also publishes
+    -- a Crest_factor field, but it is scaled oddly across ffmpeg builds, while
+    -- peak minus RMS is the same number in dB and always comparable.
+    local crest = nil
+    if overall_peak ~= nil and overall_rms ~= nil then
+        crest = overall_peak - overall_rms
+    end
+    return ',"audio":{"rms":' .. json_number(overall_rms)
+        .. ',"peak":' .. json_number(overall_peak)
         .. ',"crest":' .. json_number(crest)
         .. ',"zcr":' .. json_number(zcr)
-        .. ',"l":' .. json_number(left)
-        .. ',"r":' .. json_number(right)
+        .. ',"l":' .. json_number(left or overall_rms)
+        .. ',"r":' .. json_number(right or left or overall_rms)
         .. bands_json
         .. "}"
 end
@@ -575,9 +615,7 @@ local function tick()
         -- the slow liveness beat used for a paused or closed player.
         local audio_tick = S.active and is_audio_react(S.react) and has_audio
             and not paused and not eof and not idle
-        local every = audio_tick
-            and (1.0 / math.max(1.0, S.fps_now or S.fps))
-            or 0.5
+        local every = audio_tick and (1.0 / AUDIO_FPS) or 0.5
         if now - S.last_write >= every then
             emit(paused, eof or (not has_video and not has_audio), S.last_result)
         end
@@ -588,9 +626,18 @@ local function tick()
         return
     end
 
-    -- The timer runs at the style's fps so a profile change takes effect
-    -- without recreating it; this gate enforces the resolution-aware cap.
-    if S.next_due > 0 and now < S.next_due then
+    -- A video frame is only sampled when due, but the audio meter and beat
+    -- need every analyser update. Emit the cached zones at the faster audio
+    -- rate and leave the picture untouched. When a frame is due, analyze()
+    -- below already writes fresh audio with it, so only one write happens.
+    local video_due = S.next_due <= 0 or now >= S.next_due
+    if not video_due then
+        local audio_tick = is_audio_react(S.react) and has_audio
+        if audio_tick and S.last_result
+            and now - S.last_write >= 1.0 / AUDIO_FPS
+        then
+            emit(false, false, S.last_result)
+        end
         return
     end
 
@@ -692,7 +739,7 @@ local function start(cfg, from_control)
     S.cooldown_until = 0
     S.last_write = 0
     S.last_result = nil
-    S.timer = mp.add_periodic_timer(1.0 / S.fps, tick)
+    S.timer = mp.add_periodic_timer(1.0 / math.max(S.fps, AUDIO_FPS), tick)
     sync_audio_filter()
     msg.info(string.format(
         "active: %.1f fps, %s capture, %s sampling, %s reaction -> %s",

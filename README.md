@@ -161,7 +161,7 @@ lists every bulb it finds, and lets you:
 - collapse any section: **Direct control** and **Activity** start closed, so
   the first screen is just lights, session and look.
 
-![The panel in demo mode: three bulbs on thirds, the VU reaction with strength, profile and five band colors in Look, and Direct control on the right](docs/gui.png)
+![The panel in demo mode: three bulbs on thirds, the VU reaction with strength, profile, five band colors and the Vibrance slider in Look, and Direct control on the right](docs/gui.png)
 <sub>Demo mode with three bulbs on thirds: Session and Look share the left stack, Direct control sits on the right with rooms and saved colors, and Activity waits below.</sub>
 
 The visual language and the layout rules are documented in
@@ -285,6 +285,12 @@ on the next frame, so scene cuts land immediately while camera moves fade.
 ./mpv_ambilight.py --smooth 150 --saturation 1.5 --send-hz 15 movie.mkv
 ```
 
+**Vibrance.** The **Vibrance** slider in **Look → Preset** (or
+`--vibrance 1.4`) multiplies the style's saturation: `100 %` is the preset,
+`200 %` is deliberately loud, and `50 %` mutes the room. It leaves fade, edge
+and send rate alone, so it composes with any style and any reaction.
+`--saturation` still sets the base value directly.
+
 Use `--style reactive` when you want the snappiest response, or lower
 `--smooth` manually. Styles are independent of sampling: changing the profile
 never changes fade, edge, saturation or send rate.
@@ -304,8 +310,8 @@ same control says how the lights react and what they react to.
 | `cut`      | video  | A cut is one hard edit, not camera motion. When the whole frame jumps to a new scene, the bulbs flash at full brightness for a moment; between cuts they sit slightly dimmer so the flash reads as a pulse. Rate-limited. |
 | `motion`   | video  | Compares each zone with the previous frame. Still shots stay calm and slightly dim; movement adds brightness and saturation to the bulbs watching the action. |
 | `duotone`  | video  | Even bulbs keep the sampled color, odd bulbs get the opposite hue. Two bulbs become a complementary pair; more bulbs become a striped duotone. |
-| `beat`     | audio  | Listens to five frequency bands. Each bulb owns one band and flashes its chosen color when that band jumps above its recent average. With one bulb it pulses on the overall beat. |
-| `vu`       | audio  | A five-band level meter: each bulb follows its band from silence to full, in that band's color. With one bulb it follows the overall volume and takes the color of the loudest band. |
+| `beat`     | audio  | Listens to five frequency bands. Each bulb owns one band and flashes its chosen color when that band's peak jumps above its recent average. The attack is immediate; with one bulb it pulses on the overall beat. |
+| `vu`       | audio  | A five-band level meter: each bulb follows its band from silence to full, in that band's color. It follows RMS plus sample peaks, with a fast attack. With one bulb it meters the overall volume and takes the color of the loudest band. |
 
 **Strength.** Every reaction scales with `--react-amount` (0–1, default `0.8`);
 `0` keeps the source color and disables the reaction. The panel's **Reaction
@@ -322,8 +328,8 @@ The profile and the strength slider compose.
 | `equalize` | ±20 %, 6 s average, 55 % floor | ±35 %, 4 s average, 35 % floor | ±55 %, 2 s average, 20 % floor |
 | `cut`      | 30 % jump, 3/min, 15 % headroom | 22 % jump, 6/min, 22 % headroom | 14 % jump, 12/min, 35 % headroom |
 | `motion`   | 0.18 span, 0.55 s release | 0.28 span, 0.35 s release | 0.40 span, 0.20 s release |
-| `beat`     | 7 dB above average, soft long pulses | 5 dB, 25 % headroom, 2 Hz max | 3 dB, 40 % headroom, short pulses |
-| `vu`       | −50…−14 dBFS | −45…−12 dBFS | −40…−10 dBFS, full range |
+| `beat`     | 4.5 dB, 0.28 s minimum gap, 10 ms attack, 180 ms release | 3 dB, 0.12 s gap, instant attack, 100 ms release | 1.5 dB, 0.09 s gap, instant attack, 70 ms release |
+| `vu`       | −50…−14 dBFS, 70 % swing, 20 ms attack, 180 ms release | −45…−12 dBFS, full swing, 8 ms attack, 110 ms release | −40…−10 dBFS, full swing, 4 ms attack, 70 ms release |
 
 **Band colors.** Audio modes split the mix into five bands:
 `sub` (<60 Hz), `low` (60–250 Hz), `low-mid` (250–800 Hz), `mid` (800–2500 Hz)
@@ -334,6 +340,12 @@ With one bulb the meter follows the overall volume (0–100 %) and takes the
 loudest band's color. With 2–5 bulbs the bands are spread from sub to high:
 two bulbs get sub/high, three get sub/low-mid/high, four get sub/low/mid/high
 and five get one each; more than five repeat the cycle.
+
+Audio modes keep a 30 Hz state heartbeat even when the video is sampled at
+12–20 fps: the picture still follows the sampling profile, but the meter and
+the beat do not wait for the next frame. Both read RMS and sample peak, so the
+first hit is not averaged away. Audio modes also send at 30 Hz, so a 120 ms
+flash is not dropped between datagrams.
 
 Pulse and meter modes reserve headroom: at **Brightness 100** the bulbs idle
 slightly below 100 so the flash has somewhere to go. Equalize is deliberately
@@ -430,8 +442,9 @@ runs at 24 fps. A 4K capture drops to 8 fps instead of melting the CPU.
 
 An explicit `--fps` or `--capture` wins over the profile, so
 `--sampling lean --fps 15` keeps lean's 48 columns and raises its cap. In the
-panel, **Sampling** sits next to **Style preset**; both are saved in
-`lights.json` and apply on the next start.
+panel, **Sampling** sits in the Sample column while **Capture & fade preset**
+opens the Preset column under Reaction; both are saved in `lights.json` and
+apply on the next start.
 
 ### 🌱 Environment
 
@@ -535,29 +548,41 @@ process and network surface.
 
 ![Performance banner: fps is the cost — use --fps 8 for 4K](assets/performance.png)
 
-The expensive part is `screenshot-raw`: mpv copies a frame into Lua for every
-capture. That is why capture rate, not `--send-hz`, is the knob that matters.
-The sampling profile decides how much is copied and the style sets the starting
-rate; see [Sampling](#-sampling) for the table and the resolution rules.
+The cost is `screenshot-raw`: mpv copies a frame into Lua on every capture,
+then Lua averages a fixed grid. Capture rate is the knob; `--send-hz` only
+changes the packet rate. See [Sampling](#-sampling) for the profile table.
 
-`scaled` capture is the main saving: asking for the window-size frame instead
-of the decoded source means a 4K movie in a 1280×720 window copies one ninth of
-the pixels. The bulbs cannot resolve the difference, and the fallback to the
-source frame costs one capture if a video output refuses.
+`scaled` copies the window; `source` and the `quality` profile copy the decoded
+frame, roughly nine times the pixels for 4K in a 1280×720 window. Everything
+after the copy — grid sampling, colour math and UDP — is cheap.
 
-Everything else — grid sampling, color math and UDP sends — is cheap. If mpv
-stutters, pick `lean` or lower `--fps`. `--send-hz` only affects network
-traffic, not decode. A hard cut still lands on the next frame because large
-jumps bypass the fade.
+Measured on a Ryzen 5 3600X (6C/12T), GTX 1660 Ti with NVDEC, 16 GB and
+Wayland: a looping H.264 4K60 clip in a 1280×720 window, three bulbs on
+loopback, median of three 15 s runs after a 6 s warm-up. CPU is a share of the
+whole machine, as in Activity.
 
-**Activity** holds what the service costs: one chart, three unit lanes. CPU is
-a share of the whole processor — two saturated cores on an eight-core machine
-read 25 % — RAM is resident memory in MB, and UDP is the WiZ rate in KB/s. mpv
-and the panel each get their own line, so a heavy filter in the panel is
-visible next to the player. CPU and RSS come from `/proc` and are unavailable
-elsewhere; the UDP rate comes from `stats-<pid>.json`, so dry runs and demo
-mode stay at zero. The Lua script writes mpv's pid into its state file, which
-is how attach mode attributes a player it did not launch.
+| case | capture | mpv | sync | sync RAM | WiZ UDP |
+| --- | --- | --- | --- | --- | --- |
+| mpv alone | — | 0.3 % | — | — | — |
+| `hue` + `auto` (default) | 1280×720, 15 fps | 1.5 % (0.2 cores) | 0.07 % | 23 MB | 2 KB/s |
+| `reactive` + `quality` | 3840×2160, 15 fps | 13 % (1.6 cores) | 0.1 % | 23 MB | 2 KB/s |
+| `reactive` + manual max¹ | 3840×2160, 20 fps | 15 % (1.8 cores) | 0.1 % | 23 MB | 1.4 KB/s |
+
+¹ `--sampling manual --fps 30 --sample-grid 240 --sample-block 4 --capture source`.
+
+The sync is never the cost: 0.1 % of the machine and 23 MB in the worst case.
+The copy in mpv is, and it self-limits — the manual case asked for 30 fps and
+delivered about 20. On a 4K screen the default automatic sampling caps the
+source copy at 8 fps and widens the grid. If mpv drops frames, lower `--fps`
+or pick `lean`. A hard cut still snaps because large colour jumps bypass the
+fade. UDP stays at a few KB/s: an unchanged colour is not re-sent for 2 s.
+
+**Activity** plots the same numbers live — CPU %, RAM MB and UDP KB/s, one line
+each for mpv and the panel. CPU is a share of the whole processor; CPU and RSS
+read `/proc`, so the chart is Linux-only for those lanes. The UDP rate comes
+from `stats-<pid>.json`, so demo and dry-run stay at zero. mpv is attributed
+by the pid the Lua script writes into its state file, which is how attach mode
+works without a parent link.
 
 ## 🔒 Privacy & Security
 

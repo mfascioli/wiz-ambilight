@@ -121,8 +121,8 @@ layer and are scaled by `react_amount` (`0` is a no-op). Spans below are at
 | `cut` | video | frame-to-frame distance | one hard edit, 120 ms flash, 1.5 s cooldown, 6 per minute, 22 % headroom |
 | `motion` | video | per-zone distance | 0.35 s release, brightness and saturation |
 | `duotone` | video | per-zone colour | odd bulbs get `hue_shift(rgb, 180° × amount)` |
-| `beat` | audio | per-band transient | each band 5 dB over its running average; 2 Hz max, 60 ms attack / 250 ms release |
-| `vu` | audio | per-band RMS | −45…−12 dBFS per band; one bulb uses overall RMS |
+| `beat` | audio | per-band RMS + peak transient | each band 3 dB over a fast running average; 0.12 s minimum gap, instant attack / 100 ms release |
+| `vu` | audio | per-band RMS + sample peak | −45…−12 dBFS per band, 8 ms attack / 110 ms release, level raised to the 1.4 power; one bulb uses the overall level |
 
 `react_profile` (`soft`, `balanced`, `strong`) selects a row from
 `REACTION_PROFILES` for `equalize`, `cut`, `motion`, `beat` and `vu`. The
@@ -140,7 +140,7 @@ overall level, 2–5 map to `[0,4]`, `[0,2,4]`, `[0,1,3,4]` and `[0,1,2,3,4]`,
 and more than five repeat. With one bulb the colour is the loudest band's.
 
 The pure helpers are in `mpv_ambilight.py`: `scene_luma`, `rgb_distance`,
-`hue_shift`, `equalize_gain`, `vu_level`, `beat_pulse`, `cut_pulse`,
+`hue_shift`, `equalize_gain`, `vu_level`, `hot_db`, `beat_pulse`, `cut_pulse`,
 `finite_float`, `band_for`, `normalize_band_colors`, `parse_band_colors` and
 the `Reaction` state class. `Reaction.update()` runs when Lua writes a state frame;
 `Reaction.dimming()` runs on every send tick so a 120 ms flash is not lost
@@ -163,32 +163,53 @@ external process. On activation the Lua script appends:
 
 `astats` injects `af-metadata/wizstats` with the overall levels. `acrossover`
 splits the stereo downmix into five bands, `amerge` stacks them into ten
-channels and a second `astats` exposes `af-metadata/wizbands`, one RMS pair per
-band. `pan` recombines the ten channels into the stereo output. The crossover
-keeps the magnitude flat (measured within 0.6 dB with white noise) but adds an
-all-pass phase shift, so the output is not sample-identical; it is not a
-pass-through. `anull` keeps the chain valid while the labels are removed.
-The script adds the chain only when `react` is `beat` or `vu`, re-adds it after
-`file-loaded`, and removes `@wizbands`, `@wizstats` and `@wiztail` in any order
-on a switch back to a video mode, on stop and on shutdown. A user's own `af`
-chain is left in place.
+channels and a second `astats` exposes `af-metadata/wizbands`, one RMS and one
+peak pair per band. `pan` recombines the ten channels into the stereo output.
+The crossover keeps the magnitude flat (measured within 0.6 dB with white
+noise) but adds an all-pass phase shift, so the output is not sample-identical;
+it is not a pass-through. `anull` keeps the chain valid while the labels are
+removed. The script adds the chain only when `react` is `beat` or `vu`,
+re-adds it after `file-loaded`, and removes `@wizbands`, `@wizstats` and
+`@wiztail` in any order on a switch back to a video mode, on stop and on
+shutdown. A user's own `af` chain is left in place.
+
+Some mpv builds only expose the metadata of the last `astats` in a chain, so
+`wizstats` can be empty while `wizbands` is live. In that case the Lua script
+rebuilds the overall RMS and peak by summing the five band powers. That also
+means audio still works on builds where only the band graph is readable; the
+Python parser accepts either shape.
 
 While an audio mode is active the state snapshot gains:
 
 ```json
 "audio": {"rms": -24.1, "peak": -18.0, "crest": 6.1, "zcr": 0.12,
           "l": -24.1, "r": -25.0,
-          "bands": [-41.2, -33.8, -27.0, -24.1, -30.5]}
+          "bands": [-41.2, -33.8, -27.0, -24.1, -30.5],
+          "band_peaks": [-36.0, -28.1, -21.4, -18.0, -24.2]}
 ```
 
 Levels are dBFS; `crest` is peak minus RMS in dB and `zcr` is the
-zero-crossing rate. `bands` is present only when the band graph is active; the
-louder channel of each stereo band pair is used, so a one-sided mix still
-registers. Digital silence (`-inf`) and NaN become `null`; Python treats
-`null` as silence. Mono files expose only channel 1, so the meter falls back to
-the overall level. On an audio-only file the Lua script keeps emitting a
-heartbeat at the capture rate with `audio` and no `zones`; the sync holds a warm
-base color and drives only the brightness.
+zero-crossing rate. The louder channel of each stereo band pair is used, so a
+one-sided mix still registers. Digital silence (`-inf`) and NaN become
+`null`; Python treats `null` as silence. The VU meter uses
+`hot_db(rms, peak)`: the hotter of RMS and peak minus 8 dB, so a kick is
+visible on the first update without a mastered track sitting at full scale.
+`vu_curve()` then raises the normalised level to `VU_CURVE` (1.4), which
+darkens the quiet half of the scale so the jump reads as a flash. The beat
+detector runs on the same combined level and compares it with a fast running
+baseline.
+
+`Reaction.dimming()` is called only when the send loop builds a datagram, so
+`run_sync()` passes the time since the previous send, not the 3–6 ms polling
+step. The VU attack/release constants are therefore wall-clock values; using
+the polling delta would stretch a 110 ms release into almost a second.
+
+The Lua timer beats at 30 Hz (`AUDIO_FPS`) even when the sampling profile caps
+video analysis lower. `analyze()` is still gated by `fps_now`, so the extra
+ticks only reuse the cached zones and re-read `af-metadata`. `run_sync()`
+likewise raises the send rate to 30 Hz for audio modes. On an audio-only file
+the Lua script keeps emitting a heartbeat with `audio` and no `zones`; the sync
+holds a warm base color and drives only the brightness.
 
 ## Light sensor design
 

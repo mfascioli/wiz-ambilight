@@ -133,12 +133,8 @@
             <section class="look-col">
               <header class="look-col-head">
                 <span class="look-col-title">Preset</span>
-                <span class="look-col-src">style</span>
+                <span class="look-col-src">reaction + style</span>
               </header>
-              <div class="field">
-                <label for="styleSelect">Style preset</label>
-                <select id="styleSelect"></select>
-              </div>
               <div class="field">
                 <label for="reactSelect">Reaction</label>
                 <select id="reactSelect"></select>
@@ -165,8 +161,20 @@
                 </p>
               </div>
               <div class="field">
+                <label for="styleSelect">Capture &amp; fade preset</label>
+                <select id="styleSelect"></select>
+                <p class="hint tight">
+                  One coherent starting point for capture, fade, edge, color and send.
+                </p>
+              </div>
+              <div class="field">
                 <label for="brightness">Brightness <output id="brightnessOut">100</output></label>
                 <input id="brightness" type="range" min="10" max="100" step="1" value="100">
+              </div>
+              <div class="field">
+                <label for="vibrance">Vibrance <output id="vibranceOut">100</output></label>
+                <input id="vibrance" type="range" min="50" max="200" step="5" value="100">
+                <p class="hint tight">Multiplies the style's saturation; 100% is the preset.</p>
               </div>
               <dl class="kv" id="colorStage"></dl>
             </section>
@@ -227,7 +235,8 @@
           </div>
           <p class="hint tight look-note">
             A sampling preset can only lower the read rate; manual sets it
-            directly. Fade, saturation and the send rate come from the style.
+            directly. Fade and send rate come from the style; Vibrance
+            multiplies its saturation.
           </p>
         </div>
       </details>

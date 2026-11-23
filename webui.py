@@ -45,6 +45,7 @@ CONFIG_KEYS = (
     "react_target",
     "react_profile",
     "react_bands",
+    "vibrance",
     "brightness",
     "mode",
     "media",
@@ -65,6 +66,7 @@ DEFAULT_CONFIG = {
     "react_target": 0.45,
     "react_profile": "balanced",
     "react_bands": [],
+    "vibrance": 1.0,
     "brightness": 100,
     "mode": "attach",
     "media": "",
@@ -203,6 +205,10 @@ def normalize_config(raw, core) -> dict:
         core.rgb_to_hex(color)
         for color in core.normalize_band_colors(config.get("react_bands"))
     ]
+    try:
+        config["vibrance"] = max(0.0, min(2.0, float(config["vibrance"])))
+    except (TypeError, ValueError):
+        config["vibrance"] = 1.0
     try:
         config["brightness"] = max(10, min(100, int(config["brightness"])))
     except (TypeError, ValueError):
@@ -449,6 +455,8 @@ def build_command(config: dict, core, demo: bool = False):
         config.get("react_profile", "balanced"),
         "--react-bands",
         ",".join(config.get("react_bands") or core.DEFAULT_BAND_COLORS),
+        "--vibrance",
+        f"{config.get('vibrance', 1.0):g}",
         "--brightness",
         str(config["brightness"]),
         "--sampling",

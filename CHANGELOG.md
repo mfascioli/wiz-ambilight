@@ -2,6 +2,26 @@
 
 Releases before 1.4.0 were never tagged; their history is in `git log`.
 
+## Unreleased
+
+- **Audio:** `beat` and `vu` now react on the first transient instead of
+  waiting for a smoothed RMS window. Beats have an instant attack, a 3 dB
+  threshold over a fast baseline and twice the headroom, so the flash is a
+  visible jump rather than a tremble. The VU meter follows RMS plus sample
+  peaks with an 8 ms attack and a 110 ms release, raises the level to the 1.4
+  power to darken quiet passages, and uses the full brightness range. The
+  envelope is now timed by the send tick instead of the polling loop, which
+  was stretching its release by roughly six times. The Lua analyser exposes
+  per-band peaks, and audio state updates and sends run at 30 Hz even when
+  video capture stays at 12–20 fps. Some mpv builds only expose the last
+  `astats`; the Lua script rebuilds the overall level from the band powers
+  instead of going silent.
+- **Panel:** **Preset** now leads with the reaction group; the style bundle is
+  called **Capture & fade preset** and explains what it sets. A new
+  **Vibrance** slider multiplies the style's saturation from 50 % to 200 %
+  (`--vibrance` on the CLI). It composes with the style and every reaction
+  without changing fade, edge or send rate.
+
 ## 1.9.0 — 2026-11-22
 
 - **Reactions:** `equalize`, `cut`, `motion`, `beat` and `vu` now share three

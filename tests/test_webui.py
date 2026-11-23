@@ -58,6 +58,13 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(webui.normalize_config({"brightness": 2}, m)["brightness"], 10)
         self.assertEqual(webui.normalize_config({"brightness": 900}, m)["brightness"], 100)
 
+    def test_vibrance_defaults_and_clamps(self):
+        self.assertEqual(webui.normalize_config({}, m)["vibrance"], 1.0)
+        self.assertEqual(webui.normalize_config({"vibrance": 0.5}, m)["vibrance"], 0.5)
+        self.assertEqual(webui.normalize_config({"vibrance": 9}, m)["vibrance"], 2.0)
+        self.assertEqual(webui.normalize_config({"vibrance": -1}, m)["vibrance"], 0.0)
+        self.assertEqual(webui.normalize_config({"vibrance": "x"}, m)["vibrance"], 1.0)
+
     def test_sampling_defaults_and_normalization(self):
         config = webui.normalize_config({}, m)
         self.assertEqual(config["sampling"], "auto")
@@ -306,6 +313,18 @@ class CommandTests(unittest.TestCase):
             argv[argv.index("--react-bands") + 1],
             "#010203,#040506,#070809,#0a0b0c,#0d0e0f",
         )
+
+    def test_vibrance_is_passed_to_the_sync(self):
+        config = make_config(vibrance=1.5)
+        config["lights"] = {"10.0.0.1": {"enabled": True}}
+        argv, _ips, _zones = webui.build_command(config, m)
+        self.assertEqual(argv[argv.index("--vibrance") + 1], "1.5")
+
+        old = make_config()
+        old.pop("vibrance", None)
+        old["lights"] = {"10.0.0.1": {"enabled": True}}
+        argv, _ips, _zones = webui.build_command(old, m)
+        self.assertEqual(argv[argv.index("--vibrance") + 1], "1")
 
     def test_reaction_flags_use_defaults_for_old_configs(self):
         config = make_config()

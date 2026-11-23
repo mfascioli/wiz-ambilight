@@ -218,6 +218,23 @@ class StructureTests(unittest.TestCase):
         self.assertLess(HTML.index('id="reactSelect"'), HTML.index("sampleStage"))
         self.assertEqual(HTML.count('class="look-col"'), 3)
 
+    def test_reaction_leads_and_the_style_bundle_is_named_for_what_it_does(self):
+        # The reaction (what the bulbs do) opens the column. The style bundle
+        # follows the whole reaction group, and its label names capture/fade
+        # instead of repeating the column title.
+        self.assertLess(HTML.index('id="reactSelect"'), HTML.index('id="reactBands"'))
+        self.assertLess(HTML.index('id="reactBands"'), HTML.index('id="styleSelect"'))
+        self.assertLess(HTML.index('id="styleSelect"'), HTML.index('id="brightness"'))
+        self.assertIn("Capture &amp; fade preset", HTML)
+        self.assertIn(
+            "One coherent starting point for capture, fade, edge, color and send.",
+            HTML,
+        )
+        self.assertNotIn("Style preset", HTML)
+        self.assertIn(
+            '<span class="look-col-src">reaction + style</span>', HTML
+        )
+
     def test_reaction_granularity_stays_inside_preset(self):
         js = (WEB / "app.js").read_text(encoding="utf-8")
         # Strength, profile, target and five band swatches are Preset fields,
@@ -238,6 +255,18 @@ class StructureTests(unittest.TestCase):
         self.assertIn("buildBandInputs", js)
         self.assertIn("react_profile", js)
         self.assertIn("react_bands", js)
+        self.assertEqual(HTML.count('class="look-col"'), 3)
+
+    def test_vibrance_stays_inside_preset(self):
+        js = (WEB / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="vibrance"', HTML)
+        self.assertIn('id="vibranceOut"', HTML)
+        self.assertLess(HTML.index('id="brightness"'), HTML.index('id="vibrance"'))
+        self.assertLess(HTML.index('id="vibrance"'), HTML.index("sampleStage"))
+        self.assertIn("config.vibrance", js)
+        self.assertIn("vibrance: value", js)
+        self.assertIn('"vibrance"', WEBUI)
+        self.assertIn("--vibrance", CORE)
         self.assertEqual(HTML.count('class="look-col"'), 3)
 
     def test_band_color_swatches_keep_the_hairline_language(self):

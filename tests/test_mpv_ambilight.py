@@ -419,13 +419,20 @@ class ReactionMathTests(unittest.TestCase):
 
     def test_beat_pulse_attacks_then_releases(self):
         self.assertEqual(m.beat_pulse(-0.1), 0.0)
-        self.assertEqual(m.beat_pulse(0.0), 0.0)
-        self.assertAlmostEqual(m.beat_pulse(m.BEAT_ATTACK / 2), 0.5)
-        self.assertAlmostEqual(m.beat_pulse(m.BEAT_ATTACK), 1.0)
-        self.assertAlmostEqual(
-            m.beat_pulse(m.BEAT_ATTACK + m.BEAT_RELEASE / 2), 0.5
-        )
-        self.assertEqual(m.beat_pulse(m.BEAT_ATTACK + m.BEAT_RELEASE + 1), 0.0)
+        # The default beat has no attack ramp: the next send tick is already
+        # at full brightness.
+        self.assertEqual(m.beat_pulse(0.0), 1.0)
+        self.assertAlmostEqual(m.beat_pulse(m.BEAT_RELEASE / 2), 0.5)
+        self.assertEqual(m.beat_pulse(m.BEAT_RELEASE), 0.0)
+        # A profile can still opt into a short ramp.
+        self.assertAlmostEqual(m.beat_pulse(0.025, 0.05, 0.1), 0.5)
+
+    def test_hot_db_prefers_the_sample_peak_only_when_it_is_hotter(self):
+        self.assertAlmostEqual(m.hot_db(-30.0, -12.0), -20.0)
+        self.assertEqual(m.hot_db(-30.0, -45.0), -30.0)
+        self.assertEqual(m.hot_db(None, -5.0), -13.0)
+        self.assertEqual(m.hot_db(-30.0, None), -30.0)
+        self.assertIsNone(m.hot_db(None, None))
 
     def test_cut_pulse_is_a_short_square(self):
         self.assertEqual(m.cut_pulse(0.0), 1.0)
@@ -630,7 +637,15 @@ class ReactionModeTests(unittest.TestCase):
         self.assertEqual(
             reaction.dimming("a", 100, 100.4 + m.BEAT_ATTACK, 0.05), 100
         )
-        self.assertEqual(reaction.dimming("a", 100, 101.2, 0.05), 75)
+        # The steady level keeps most of the range as headroom, so the flash
+        # is a visible jump instead of a small tremble.
+        self.assertEqual(reaction.dimming("a", 100, 101.2, 0.05), 45)
+
+    def test_vu_curve_widens_the_gap_around_the_middle(self):
+        self.assertEqual(m.vu_curve(0.0), 0.0)
+        self.assertEqual(m.vu_curve(1.0), 1.0)
+        self.assertLess(m.vu_curve(0.5), 0.5)
+        self.assertAlmostEqual(m.vu_curve(0.5, 2.0), 0.25)
 
     def test_vu_with_one_bulb_uses_overall_volume_and_dominant_color(self):
         reaction = m.Reaction("vu", 1.0, 0.45)
@@ -714,6 +729,74 @@ class ReactionModeTests(unittest.TestCase):
         self.assertIsNone(reaction.band_at[0])
         self.assertEqual(reaction.band_at[4], 100.2)
 
+    def test_vu_uses_band_peaks_to_catch_the_attack(self):
+        reaction = m.Reaction("vu", 1.0, 0.45)
+        self.update(
+            reaction,
+            100.0,
+            audio={"rms": -40.0, "bands": [-40.0] * 5, "band_peaks": [-60.0] * 5},
+        )
+        quiet = reaction.levels["a"]
+        self.update(
+            reaction,
+            100.1,
+            audio={"rms": -40.0, "bands": [-40.0] * 5, "band_peaks": [-20.0] * 5},
+        )
+        self.assertGreater(reaction.levels["a"], quiet + 0.25)
+        self.assertGreater(reaction.band_levels[0], quiet + 0.25)
+
+    def test_vu_attack_is_faster_than_its_release(self):
+        reaction = m.Reaction("vu", 1.0, 0.45)
+        self.update(
+            reaction,
+            100.0,
+            audio={"rms": -60.0, "bands": [-60.0] * 5},
+        )
+        self.assertEqual(reaction.dimming("a", 100, 100.0, 0.05), 10)
+        self.update(
+            reaction,
+            100.05,
+            audio={"rms": -12.0, "bands": [-12.0] * 5},
+        )
+        attacked = reaction.dimming("a", 100, 100.06, 0.01)
+        self.assertGreaterEqual(attacked, 55)
+        self.update(
+            reaction,
+            100.20,
+            audio={"rms": -60.0, "bands": [-60.0] * 5},
+        )
+        released = reaction.dimming("a", 100, 100.21, 0.01)
+        self.assertGreater(released, 45)
+        self.assertLess(attacked - released, 15)
+
+    def test_beat_detects_a_peak_transient_without_an_rms_jump(self):
+        reaction = m.Reaction("beat", 1.0, 0.45)
+        self.update(
+            reaction,
+            100.0,
+            audio={"rms": -40.0, "bands": [-40.0] * 5, "band_peaks": [-60.0] * 5},
+        )
+        self.assertIsNone(reaction.beat_at)
+        self.update(
+            reaction,
+            100.2,
+            audio={"rms": -40.0, "bands": [-40.0] * 5, "band_peaks": [-20.0] * 5},
+        )
+        self.assertEqual(reaction.band_at[0], 100.2)
+        self.assertEqual(reaction.beat_at, 100.2)
+
+    def test_audio_works_with_only_band_metadata(self):
+        # Some mpv builds expose only the last labelled astats, so wizstats can
+        # be empty while the five bands are live.
+        reaction = m.Reaction("vu", 1.0, 0.45)
+        raw = self.update(
+            reaction,
+            100.0,
+            audio={"bands": [-12.0] * 5, "band_peaks": [-8.0] * 5},
+        )
+        self.assertAlmostEqual(reaction.levels["a"], 1.0)
+        self.assertEqual(raw["a"], m.hex_to_rgb(m.DEFAULT_BAND_COLORS[0]))
+
     def test_audio_modes_still_work_without_band_metadata(self):
         # Older state files and audio-only edge cases carry only the overall
         # RMS; the meter must not go dark just because `bands` is missing.
@@ -762,7 +845,15 @@ class LuaAudioContractTests(unittest.TestCase):
         self.assertIn("@wiztail", source)
         self.assertIn("acrossover=split=60 250 800 2500", source)
         self.assertIn("amerge=inputs=5", source)
-        self.assertIn('"bands":[', source)
+        # RMS and peak travel together, and the overall level can be rebuilt
+        # from the band powers when wizstats is empty.
+        self.assertIn('"bands":', source)
+        self.assertIn('"band_peaks":', source)
+        self.assertIn("sum_db(band_rms)", source)
+        self.assertIn("sum_db(band_peaks)", source)
+        # Audio heartbeats at 30 Hz without raising the video capture rate.
+        self.assertIn("local AUDIO_FPS = 30.0", source)
+        self.assertIn("math.max(S.fps, AUDIO_FPS)", source)
         # The removal path must tear the whole analyser down, in any order.
         self.assertIn("{ \"@wizbands\", \"@wizstats\", \"@wiztail\" }", source)
 

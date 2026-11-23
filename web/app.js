@@ -90,6 +90,8 @@ const refs = {
   layoutHint: document.getElementById("layoutHint"),
   brightness: document.getElementById("brightness"),
   brightnessOut: document.getElementById("brightnessOut"),
+  vibrance: document.getElementById("vibrance"),
+  vibranceOut: document.getElementById("vibranceOut"),
   dryRun: document.getElementById("dryRun"),
   controlCard: document.getElementById("controlCard"),
   log: document.getElementById("log"),
@@ -759,6 +761,8 @@ function syncReactionFields(snapshot, config) {
 
 function renderSettings(snapshot) {
   const config = snapshot.config;
+  const vibrance = Number.isFinite(Number(config.vibrance))
+    ? Number(config.vibrance) : 1;
   fillSelect(refs.styleSelect, snapshot.styles);
   fillSelect(refs.layoutSelect, snapshot.layouts);
   fillSamplingSelect();
@@ -774,6 +778,12 @@ function renderSettings(snapshot) {
     refs.brightness.value = String(config.brightness);
     refs.brightnessOut.value = String(config.brightness);
     paintRange(refs.brightness);
+  }
+  if (document.activeElement !== refs.vibrance) {
+    const percent = Math.round(vibrance * 100);
+    refs.vibrance.value = String(percent);
+    refs.vibranceOut.value = String(percent);
+    paintRange(refs.vibrance);
   }
   refs.dryRun.checked = Boolean(config.dry_run);
   refs.lookPill.textContent = config.style;
@@ -820,8 +830,9 @@ function renderSettings(snapshot) {
   renderStage(refs.colorStage, [
     ["Fade", Number.isFinite(smooth) ? (smooth > 0 ? `${Math.round(smooth)} ms` : "off") : "—",
       "Time to blend from the previous color to the new one; off means instant jumps"],
-    ["Saturation", Number.isFinite(saturation) ? `${saturation.toFixed(2)}×` : "—",
-      "Color boost applied to each sample; 1× leaves it unchanged"],
+    ["Saturation", Number.isFinite(saturation)
+      ? `${(saturation * vibrance).toFixed(2)}×` : "—",
+      "Style saturation times the Vibrance slider; 1× leaves colors unchanged"],
   ]);
 
   renderStage(refs.sendStage, [
@@ -1720,6 +1731,13 @@ refs.brightness.addEventListener("change", () => {
   const value = Number(refs.brightness.value);
   if (value !== state.snapshot?.config.brightness) saveConfig({ brightness: value });
 });
+refs.vibrance.addEventListener("input", () => {
+  refs.vibranceOut.value = refs.vibrance.value;
+});
+refs.vibrance.addEventListener("change", () => {
+  const value = Number(refs.vibrance.value) / 100;
+  if (value !== state.snapshot?.config.vibrance) saveConfig({ vibrance: value });
+});
 refs.dryRun.addEventListener("change", () => {
   if (refs.dryRun.checked !== Boolean(state.snapshot?.config.dry_run)) {
     saveConfig({ dry_run: refs.dryRun.checked });
@@ -1918,6 +1936,7 @@ async function refresh() {
 async function boot() {
   const sliders = [
     refs.brightness,
+    refs.vibrance,
     refs.controlBrightness,
     refs.controlTemp,
     refs.controlSpeed,
