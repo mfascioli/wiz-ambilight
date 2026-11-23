@@ -20,6 +20,110 @@ mkdir -p ~/.local/bin
 ln -s "$PWD/mpv_ambilight.py" ~/.local/bin/mpv-ambilight
 ```
 
+## Flags
+
+`./mpv_ambilight.py --help` prints the same list. Values marked **style** come
+from `--style`; the style table is in the [README](../README.md#-styles).
+
+### Modes, panel and setup
+
+| Flag | Default | Values | Effect |
+| --- | --- | --- | --- |
+| `media` | — | files, URLs, mpv arguments | Positional. Everything after a bare `--` goes to mpv. |
+| `--version` | — | — | Print the version and exit. |
+| `--gui` | off | flag | Start the local panel and open a browser. |
+| `--gui-port` | `8765` | port | Panel port. |
+| `--no-browser` | off | flag | With `--gui`: do not open a browser. |
+| `--demo` | off | flag | With `--gui`: fake bulbs, never send UDP. |
+| `--attach` | off | flag | Follow a running mpv (needs the installed Lua script). |
+| `--install-script` | off | flag | Copy `lua/wiz_ambilight.lua` into mpv's scripts folder. |
+| `--force` | off | flag | With `--install-script`: replace a different existing copy. |
+| `--discover` | off | flag | List bulbs and exit. |
+| `--json` | off | flag | With `--discover`: machine-readable output. |
+| `--set` | off | flag | Send direct controls and exit; no mpv needed. |
+
+### Bulbs, layouts and zones
+
+| Flag | Default | Values | Effect |
+| --- | --- | --- | --- |
+| `--lights` | `$WIZ_LIGHTS`, then `$WIZ_LIGHT_IPS`, then discovery | IPs separated by commas or spaces | Bulb set and order. Duplicates are removed; the order defines the zones. |
+| `--layout` | `auto` | `auto`, `all`, `left-right`, `top-bottom`, `thirds`, `cycle` | How zones are spread over the bulbs. |
+| `--zones` | from `--layout` | `all`, `left`, `right`, `top`, `bottom`, `t1`, `t2`, `t3` | Explicit zone per bulb. Repeats if there are fewer zones than bulbs; wins over `--layout`. |
+
+`auto` means 1 bulb → `all`, 2 → `left-right`, 3 → `thirds`, 4 or more →
+`cycle`. With exactly two bulbs, `thirds` uses the outer thirds (`t1`, `t3`).
+
+### Look, styles and capture
+
+| Flag | Default | Values | Effect |
+| --- | --- | --- | --- |
+| `--style` | `hue` | `hue`, `cinema`, `fast`, `reactive`, `raw`, `custom` | Starting point for the knobs below. `custom` starts from the built-in values. |
+| `--fps` | style (12–24) | 1–30 | Captures per second. A sampling profile caps it when `--fps` is not explicit. |
+| `--edge` | style (0.12–0.20) | 0.02–0.45 | Edge band size. |
+| `--smooth` | style (0–220) | 0–2000 ms | Fade constant; `0` disables interpolation. |
+| `--saturation` | style (1.15–1.45) | 0–4 after vibrance | Base saturation. |
+| `--vibrance` | `1.0` | 0–2 | Multiplies the style's saturation; `1` is unchanged. |
+| `--gamma` | style (`1.0`) | 0.2–3 | Output gamma. |
+| `--brightness` | style (80–100) | 10–100 | Bulb dimming. |
+| `--send-hz` | style (15–30) | 1–30 | Maximum `setPilot` updates per second. Audio modes send at 30 Hz. |
+| `--on-exit` | `leave` | `leave`, `off` | Keep the last color, or turn the bulbs off when mpv exits. |
+
+### Reactions
+
+| Flag | Default | Values | Effect |
+| --- | --- | --- | --- |
+| `--react` | `color` | `color`, `equalize`, `cut`, `motion`, `duotone`, `beat`, `vu` | What the bulbs react to and how. |
+| `--react-amount` | `0.8` | 0–1 | Reaction strength; `0` keeps the source color only. |
+| `--react-target` | `0.45` | 0.05–0.95 | `equalize` only: target scene luma. |
+| `--react-profile` | `balanced` | `soft`, `balanced`, `strong` | Intensity profile. In audio modes it bundles gate, ceiling, envelope and punch. |
+| `--react-bands` | [five defaults](../README.md#-band-colors) | exactly five `#rrggbb` | Colors for sub, low, low-mid, mid and high, in that order. |
+| `--react-threshold` | profile (`-22` dBFS on `balanced`) | −60–0 dBFS | Audio gate where the bulbs start to open. |
+| `--react-attack` | profile (`1` ms on `balanced`) | 0–200 ms | Envelope attack. |
+| `--react-release` | profile (`55` ms on `balanced`) | 20–1000 ms | Envelope release. |
+| `--react-punch` | profile (`3.0` on `balanced`) | 1–4 | How hard levels above the gate drive brightness. |
+
+The audio profile values are `soft` −30 dBFS / 12 ms / 200 ms / 1.4, `balanced`
+−22 / 1 / 55 / 3.0 and `strong` −18 / 0 / 30 / 4.0 (threshold / attack /
+release / punch). The four named presets are in the
+[README](../README.md#-audio-dynamics).
+
+### Sampling
+
+| Flag | Default | Values | Effect |
+| --- | --- | --- | --- |
+| `--sampling` | `auto` | `auto`, `lean`, `balanced`, `quality`, `manual` | Capture budget. The profile table is in the [README](../README.md#-sampling). |
+| `--sample-grid` | `auto`: Lua decides; `manual`: `80` | 24–240 | Sample columns. Profiles use 48 (`lean`), 80 (`balanced`) or 120 (`quality`). |
+| `--sample-block` | `auto`: Lua decides; `manual`: `1` | 1–4 | Average an N×N block per cell. Profiles use 1, 2 or 3. |
+| `--capture` | `scaled` (`quality`: `source`) | `auto`, `scaled`, `source` | `scaled` copies the window; `source` copies the decoded frame. An explicit value wins over the profile. |
+
+### Direct control
+
+| Flag | Default | Values | Effect |
+| --- | --- | --- | --- |
+| `--hex` | — | `#rgb` or `#rrggbb` | RGB color. Mutually exclusive with `--temp`. |
+| `--temp` | — | 2200–6500 K | White temperature. Mutually exclusive with `--hex`. |
+| `--scene` | — | 1–999 | WiZ scene id. |
+| `--speed` | — | 20–200 | Scene speed; requires `--scene`. |
+| `--power` | — | `on`, `off`, `toggle` | Power state. `off` cannot be combined with any other control. |
+| `--dry-run` | off | flag | Print the colors or payloads instead of sending them. Applies to the sync and to `--set`. |
+
+### Debugging
+
+| Flag | Default | Values | Effect |
+| --- | --- | --- | --- |
+| `--state` | launch: `state-<pid>.json`; attach: `state.json` (both under `$XDG_RUNTIME_DIR/wiz-ambilight/`) | path | Read and write an explicit state file. |
+| `--no-bars` | off | flag | Disable automatic letterbox/pillarbox cropping. |
+| `--mpv` | `mpv` | path | mpv binary to launch. |
+| `--verbose`, `-v` | off | flag | Print the mpv command line. |
+
+### Exit status
+
+| Status | Meaning |
+| --- | --- |
+| `0` | Success. |
+| `1` | Missing Lua script, a different script already installed without `--force`, no bulbs found, or a discovery/network failure. |
+| `2` | Invalid arguments, values out of range, an invalid `--set` combination or an invalid bulb address. |
+
 ## Discovery
 
 ```bash
@@ -96,9 +200,10 @@ followed; the control file is global. In the panel, the same install is the
 
 ## Styles, reactions and sampling
 
-A style is a starting point for capture, fade and send. The tables, defaults
-and reaction descriptions live in the README under
-[Configuration](../README.md#-configuration); these are the flags.
+A style is a starting point for capture, fade and send. The style and sampling
+tables and the reaction descriptions live in the README under
+[Configuration](../README.md#-configuration); the flags, defaults and ranges are
+in [Flags](#flags). These are the flags in use:
 
 ```bash
 # styles
@@ -169,8 +274,9 @@ uses `--lights`, then `WIZ_LIGHTS` / `WIZ_LIGHT_IPS`, then discovery.
 ```
 
 `--hex` and `--temp` are mutually exclusive, `--speed` requires `--scene`, and
-`--power off` cannot be combined with a color or brightness. Invalid input exits
-with status `2`; a network/discovery failure exits with `1`.
+`--power off` cannot be combined with any other control (color, brightness,
+temperature or scene). Invalid input exits with status `2`; a network/discovery
+failure exits with `1`.
 
 Common scene ids are `1` Ocean, `3` Sunset, `4` Party, `5` Fireplace, `10`
 Bedtime, `12` Daylight, `16` Relax and `18` TV time; firmware may expose more.
@@ -250,4 +356,4 @@ The panel writes `lights.json` and `scenes.json`; the CLI reads the same values
 from flags and environment variables. Paths, overrides and the JSON schemas are
 in [`development.md`](development.md#config-format). The panel's server flags
 (`--gui`, `--gui-port`, `--no-browser`, `--demo`) are in the README under
-[Web Panel](../README.md#-web-panel).
+[Web Panel & Operating Modes](../README.md#-web-panel--operating-modes).

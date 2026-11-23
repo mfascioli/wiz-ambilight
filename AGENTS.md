@@ -45,14 +45,14 @@ headings, and leave interface names, option values and file paths untranslated.
   the panel (`./mpv_ambilight.py --gui`) and, as a name in a table, the flags
   that change how the panel starts (`--gui-port`, `--no-browser`, `--demo`).
   Every other flag, command, headless mode and automation recipe belongs in
-  `docs/cli.md`; the README links it from **Installation** and **Command
+  `docs/cli.md`; the README links it from **Getting Started** and **Command
   Line**, and may mention a flag inline as a name, never as a command block.
 - **The Lua install is optional and attach-only.** A clone installs nothing
   into mpv. Launch mode passes `--script=<checkout>/lua/wiz_ambilight.lua` to
   the mpv it starts; attach mode needs a one-time copy in mpv's scripts folder
   because mpv is already running when the panel appears. The panel's **Install
   script** button and `--install-script` do that copy. Never imply
-  **Installation** performs it, and never write "install the Lua script once"
+  **Getting Started** performs it, and never write "install the Lua script once"
   without saying that it is for attach mode.
 - **Panel invariants.** Bind to `127.0.0.1`; check `Host` and `Origin`; require
   the per-run `X-Wiz-Token`; keep the CSP at `default-src 'none'` with only
@@ -136,41 +136,46 @@ headings, and leave interface names, option values and file paths untranslated.
 1. `# wiz-ambilight`, badges, hero banner, one-paragraph summary, the
    `mpv → Lua → Python → WiZ` line.
 2. **Overview** → **Features** → **Requirements & Compatibility** →
-   **Installation** → **Quick Start** → **Web Panel** → **Operating Modes**
-   (with **Attach to your own mpv** under it) → **Configuration** (with
-   **Capture, fade and send**, **Styles**, **Reactions**, **Layouts and
-   zones**, **Sampling** and **Environment** under it) → **Command Line** →
-   **Architecture & How It Works** → **Performance** → **Privacy & Security** →
-   **Troubleshooting** → **Development** → **Roadmap** → **Credits & License**
-   → **Related Projects**.
+   **Getting Started** (installation, first run, Launch vs Attach) →
+   **Web Panel & Operating Modes** (with **Attach to your own mpv** under it)
+   → **Configuration** (with **Capture, Fade & Send**, **Styles**,
+   **Sampling**, **Layouts & Zones**, **Reactions**, **Audio Dynamics**,
+   **Band Colors** and **Audio Processing** under it) → **Performance** →
+   **Architecture** → **Privacy & Security** → **Environment** →
+   **Command Line** → **Troubleshooting** → **Development** → **Roadmap** →
+   **Credits & License** → **Related Projects**.
 
-- The page follows the user's path: what it is, what it needs, how to install
-  it, how to use it from the panel, how to configure it, then how it works
-  inside, what it costs, and what it guarantees. Development notes and the
-  roadmap close the technical part.
-- **Installation** is one clone plus `--gui`. It must say that the clone does
-  not copy the Lua script into mpv, that launch mode needs no install at all,
-  and link **Attach to your own mpv** for the attach-only copy.
-- **Quick Start** is a numbered panel walkthrough (scan, choose, launch), not a
-  list of commands.
-- **Operating Modes** is panel-first: **Launch a video**, **Attach to mpv**, and
-  one row pointing to **Command Line**. **Attach** explains why the Lua copy
-  exists, uses the panel's **Install script** button and mentions reinstalling
-  after an update. The systemd user service lives in `docs/cli.md`.
+- The page follows the user's path: what it is, what it needs, how to start,
+  how to use it from the panel, how to configure it, then how it works inside,
+  what it costs, and what it guarantees. Environment has its own top-level
+  table after the security section; it is not repeated under Configuration.
+- **Getting Started** is one clone plus `--gui`. It must say that the clone
+  does not copy the Lua script into mpv, that launch mode needs no install at
+  all, and link **Attach to your own mpv** for the attach-only copy. Its
+  **First run** subsection is a numbered panel walkthrough (scan, choose,
+  launch), not a list of commands.
+- **Web Panel & Operating Modes** explains the panel first and keeps **Launch
+  a video**, **Attach to mpv**, direct control and one row pointing to
+  **Command Line**. **Attach** explains why the Lua copy exists, uses the
+  panel's **Install script** button and mentions reinstalling after an update.
+  The systemd user service lives in `docs/cli.md`.
 - **Command Line** is a short pointer to `docs/cli.md` with the `control.png`
   strip. No command blocks in the README except `--gui` (and `--gui-port`);
   everything else — discovery, launch and attach, `--set`, style, reaction and
   sampling flags, the systemd service and scripted looks — is in
-  `docs/cli.md`.
-- One strip per `##` heading, directly under it; Styles, Layouts and Attach
-  keep their own strips under Configuration / Operating Modes. The overview
-  answers "what is this" before Features.
-- Exactly **one** UI screenshot: `docs/gui.png`, under **Web Panel**. Do not
-  add more screenshots; a strip per heading replaces them.
+  `docs/cli.md`. `docs/cli.md` must stay exhaustive: every flag, its default
+  and its range, because the README no longer duplicates that catalogue.
+- **Environment** is a single table for every environment variable; other
+  sections refer to it instead of repeating paths.
+- One strip per `##` heading, directly under it; Styles and Layouts keep their
+  own strips under Configuration, and Attach keeps its strip under Operating
+  Modes. The overview answers "what is this" before Features.
+- Exactly **one** UI screenshot: `docs/gui.png`, under **Web Panel & Operating
+  Modes**. Do not add more screenshots; a strip per heading replaces them.
 - Tables over prose, bold lead-ins, no marketing tone, no repetition between
   the summary, Features, Performance, Architecture and Security.
 - Keep capture fps, fade ms and send Hz distinct: they are explained once in
-  **Capture, fade and send** and only referenced elsewhere.
+  **Capture, Fade & Send** and only referenced elsewhere.
 - Aesthetic and layout detail lives in `docs/design.md`; repository structure,
   runtime files, config schemas and the audio path live in
   `docs/development.md`. The README links both and summarises only what a user
@@ -240,7 +245,8 @@ Before calling a change done:
 - the panel still refuses a foreign `Host`, a foreign `Origin` and a wrong
   token;
 - the README shows only the panel start command and links `docs/cli.md` for the
-  rest; installation never claims to install the Lua script;
+  rest; installation never claims to install the Lua script, and `docs/cli.md`
+  lists every flag with its default and range;
 - `python assets/banner.py` reproduces the committed PNGs byte for byte.
 
 ## Git
