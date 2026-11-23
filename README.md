@@ -11,8 +11,9 @@ edges of the picture onto WiZ bulbs over your local network. No capture card,
 no re-encoding, no cloud, no extra Python packages.
 
 It is two small pieces: a Lua script inside mpv that samples the frame, and a
-Python process that fades the colors and sends `setPilot` datagrams over UDP.
-An optional local panel drives the same pipeline by hand.
+Python process that fades the colors and sends `setPilot` datagrams over UDP. A
+local web panel is the main interface; the same program also runs from the
+terminal.
 
 <p align="center">
   <em>mpv → Lua frame sampler → Python fade loop → WiZ UDP bulbs</em>
@@ -43,9 +44,10 @@ machine.
   [Performance](#-performance).
 - **Actually local.** Plain UDP on port `38899`; nothing leaves your LAN.
 - **No dependencies.** Standard library Python plus one Lua script.
-- **Three ways to run it.** Launch mpv from the tool, attach to an mpv you
-  started normally, or use the local panel. See
-  [Operating Modes](#-operating-modes).
+- **Two sources, one panel.** Launch a video from the panel, or attach it to an
+  mpv you started normally. Both modes are driven from **Session**; the
+  terminal equivalents are in the
+  [command line reference](docs/cli.md).
 - **The bulbs are yours.** The panel is also a small WiZ remote: power,
   brightness, white temperature, RGB/hex colors, WiZ scenes, rooms and saved
   colors, without starting Ambilight.
@@ -76,58 +78,50 @@ machine.
 
 ## 📦 Installation
 
-![Install banner: one clone, --discover names every bulb](assets/install.png)
+![Install banner: one clone, then --gui](assets/install.png)
 
 ```bash
 git clone https://github.com/mfascioli/wiz-ambilight.git
 cd wiz-ambilight
-./mpv_ambilight.py --discover
+./mpv_ambilight.py --gui
 ```
 
-`--discover` shows each bulb's IP, model, firmware and state:
+The panel opens at `http://127.0.0.1:8765/`. There is nothing else to install:
+Python needs no packages, and the panel loads the Lua script from the checkout
+when it launches mpv.
 
-```text
-192.168.1.5      ESP24_SHRGBC_01    fw=1.38.0   mac=d8a01154f818 state=on  dimming=100 rssi=-54
-192.168.1.7      ESP24_SHRGBC_01    fw=1.38.0   mac=d8a01154fba8 state=on  dimming=100 rssi=-58
-```
+Attach mode is the only exception, because mpv is already running when the
+panel appears. It needs the Lua script copied into mpv's scripts folder once;
+the panel shows an **Install script** banner when that copy is missing or
+outdated. The step is explained in
+[Attach to your own mpv](#-attach-to-your-own-mpv).
 
-> WiZ does **not** expose the name you assigned in the app over the local UDP
-> API, so this tool identifies bulbs by IP and MAC. `--discover --json` gives
-> the same data in machine-readable form.
+> WiZ does not expose app-assigned names over UDP, so the panel identifies
+> bulbs by IP and MAC and stores your names locally.
 
-Optional — run it from anywhere:
-
-```bash
-mkdir -p ~/.local/bin
-ln -s "$PWD/mpv_ambilight.py" ~/.local/bin/mpv-ambilight
-```
+The terminal equivalents — discovery, launch and attach commands, direct
+control and scripting — are in [`docs/cli.md`](docs/cli.md).
 
 ## ⚡ Quick Start
 
-![Quick start banner: one command, six styles and six layouts](assets/quickstart.png)
+![Quick start banner: panel first — scan, pick, play](assets/quickstart.png)
 
-```bash
-# auto-discover the bulbs, bulb 1 = left edge, bulb 2 = right edge
-./mpv_ambilight.py movie.mkv
+1. Start the panel with `./mpv_ambilight.py --gui` and leave the terminal open.
+2. Press **Scan network**, tick the bulbs you want, and name them.
+3. In **Look**, pick a layout, a style (the default `hue` is a good start) and a
+   reaction (the default `color` is classic Ambilight). Leave **Sampling** on
+   `auto`.
+4. In **Session**, choose **Launch a video** and pick a file — or **Attach to
+   mpv** after the one-time script install — then press **Start Ambilight**.
 
-# choose the bulbs yourself
-./mpv_ambilight.py --lights 192.168.1.5,192.168.1.7 movie.mkv
-
-# both bulbs follow the whole picture (great when they sit above the TV)
-./mpv_ambilight.py --layout all movie.mkv
-
-# pass normal mpv options after a bare "--"
-./mpv_ambilight.py movie.mkv -- --fullscreen --sub-file=es.srt
-```
-
-When mpv exits, the bulbs keep their last color. Use `--on-exit off` if you
-want them to turn off instead.
+The bulbs keep the last color when playback ends. To switch them off instead,
+use `--on-exit off` from the [command line reference](docs/cli.md).
 
 ## 🖥️ Web Panel
 
 ![Panel banner: local only — 127.0.0.1, a per-run token and a strict CSP](assets/panel.png)
 
-If you would rather click than type:
+The panel is the normal interface. Start it with:
 
 ```bash
 ./mpv_ambilight.py --gui
@@ -189,56 +183,35 @@ files are plain JSON and validated on load; the schemas are in
 
 ## 🔀 Operating Modes
 
-![Operating modes banner: launch, attach or drive from the panel](assets/modes.png)
+![Operating modes banner: two sources, one panel](assets/modes.png)
 
-| Mode | Command | What runs |
+| Mode | Where | What runs |
 | --- | --- | --- |
-| **Launch** | `./mpv_ambilight.py movie.mkv` | The sync starts mpv with the file and stops when mpv exits. |
-| **Attach** | `./mpv_ambilight.py --attach` | The sync waits for an mpv you start yourself and follows it. |
-| **Panel** | `./mpv_ambilight.py --gui` | The browser starts, stops or inspects either mode. |
+| **Launch a video** | Session → Launch a video | The panel starts mpv with the chosen file and stops when mpv exits. |
+| **Attach to mpv** | Session → Attach to mpv | The panel follows an mpv you started yourself. |
+| **Command line** | [docs/cli.md](docs/cli.md) | The same modes without the browser, for scripts and headless machines. |
 
-Direct control (`--set`) is separate: it sends one command and exits without
-starting a sync. See [Direct WiZ Control](#-direct-wiz-control).
+Direct control is separate: it sends a command to the selected bulb, room or all
+bulbs without starting a sync.
 
-### 🔗 Attach to a running mpv
+### 🔗 Attach to your own mpv
 
 ![Attach banner: your own mpv — install once, idles until live](assets/attach.png)
 
-Install the Lua script once:
+Attach is the only mode that needs the Lua script copied into mpv, because mpv
+is already running when the panel appears. Launch mode passes the script to the
+mpv it starts, so it needs nothing.
 
-```bash
-./mpv_ambilight.py --install-script
-```
+1. Start the panel. If the banner says the script is missing or outdated, press
+   **Install script**. It is a local copy, never a download.
+2. Start mpv the way you normally do — desktop launcher, file manager, shell.
+3. In **Session**, choose **Attach to mpv** and press **Start Ambilight**.
 
-Start mpv the way you normally do — desktop launcher, file manager, shell —
-then run:
-
-```bash
-./mpv_ambilight.py --attach
-```
-
-The Lua script idles unless a live control file exists in
-`$XDG_RUNTIME_DIR/wiz-ambilight/`, so installing it globally is safe. `Ctrl+C`
-stops the daemon and the script goes back to sleep. If you are already running
-a daemon, updating the checkout requires
-`./mpv_ambilight.py --install-script --force` and an mpv restart.
-
-### 🔌 Run it as a user service (optional)
-
-This needs the `~/.local/bin/mpv-ambilight` symlink from the installation
-section. The service starts with your session and waits for mpv on its own —
-no window or terminal is needed.
-
-```bash
-mkdir -p ~/.config/wiz-ambilight
-cp contrib/wiz-ambilight.env.example ~/.config/wiz-ambilight/env
-$EDITOR ~/.config/wiz-ambilight/env
-
-mkdir -p ~/.config/systemd/user
-cp contrib/wiz-ambilight.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now wiz-ambilight.service
-```
+The installed script idles unless a live control file exists in
+`$XDG_RUNTIME_DIR/wiz-ambilight/`, so installing it once is safe. After
+updating the checkout, reinstall it and restart mpv; the panel shows the same
+banner when the copy is stale. The command-line equivalents and the optional
+systemd user service are in [`docs/cli.md`](docs/cli.md).
 
 ## ⚙️ Configuration
 
@@ -246,9 +219,9 @@ systemctl --user enable --now wiz-ambilight.service
 
 A **style** is a coherent starting point, a **layout** assigns zones, a
 **sampling profile** decides how much of each frame is copied, and a
-**reaction** decides what the bulbs do with it. Individual flags override the
-style, and the panel stores your choice in `lights.json` so it applies on the
-next start.
+**reaction** decides what the bulbs do with it. The panel stores your choice in
+`lights.json` so it applies on the next start; the same values are command-line
+flags, listed in the [command line reference](docs/cli.md).
 
 ### 🎚️ Capture, fade and send
 
@@ -279,21 +252,15 @@ on the next frame, so scene cuts land immediately while camera moves fade.
 | `raw`    | 24 fps  | 0 ms   | 30 Hz  | 12%       | 1.30×      | 100     | no interpolation, twitchy     |
 | `custom` | —       | —      | —      | —         | —          | —       | start from the built-in values |
 
-```bash
-./mpv_ambilight.py --style cinema movie.mkv
-./mpv_ambilight.py --style fast --brightness 70 movie.mkv
-./mpv_ambilight.py --smooth 150 --saturation 1.5 --send-hz 15 movie.mkv
-```
+**Vibrance.** The **Vibrance** slider in **Look → Preset** multiplies the
+style's saturation: `100 %` is the preset, `200 %` is deliberately loud, and
+`50 %` mutes the room. It leaves fade, edge and send rate alone, so it composes
+with any style and any reaction. `--saturation` still sets the base value
+directly.
 
-**Vibrance.** The **Vibrance** slider in **Look → Preset** (or
-`--vibrance 1.4`) multiplies the style's saturation: `100 %` is the preset,
-`200 %` is deliberately loud, and `50 %` mutes the room. It leaves fade, edge
-and send rate alone, so it composes with any style and any reaction.
-`--saturation` still sets the base value directly.
-
-Use `--style reactive` when you want the snappiest response, or lower
-`--smooth` manually. Styles are independent of sampling: changing the profile
-never changes fade, edge, saturation or send rate.
+Pick `reactive` when you want the snappiest response; `custom` starts from the
+built-in values. Styles are independent of sampling: changing the profile never
+changes fade, edge, saturation or send rate.
 
 ### 🎛️ Reactions
 
@@ -380,24 +347,9 @@ slow; it averages the scene instead of pumping with every cut. It can only lift
 a dark scene when the brightness ceiling leaves room, so set **Brightness**
 around 80 if you want both directions; at 100 it mostly dims.
 
-```bash
-# keep the room at a constant brightness
-./mpv_ambilight.py --react equalize movie.mkv
-
-# flash on cuts, but gently
-./mpv_ambilight.py --react cut --react-amount 0.5 movie.mkv
-
-# sharper reactions across the board
-./mpv_ambilight.py --react motion --react-profile strong --react-amount 0.7 movie.mkv
-
-# audio modes: music or any file with an audio track
-./mpv_ambilight.py --react vu concert.mkv
-./mpv_ambilight.py --react beat --react-profile soft song.flac
-./mpv_ambilight.py --react vu --react-threshold -24 --react-punch 4 \
-  --react-release 30 concert.mkv
-./mpv_ambilight.py --react vu \
-  --react-bands '#ff3b30,#ff9500,#ffcc00,#34c759,#5ac8fa' concert.mkv
-```
+The panel exposes every reaction in **Look → Preset**, with the strength,
+profile or dynamics that apply. The matching flags and command examples are in
+the [command line reference](docs/cli.md#styles-reactions-and-sampling).
 
 Audio modes use mpv's built-in `lavfi`/`astats` bridge. The Lua script adds a
 labelled five-band analyser only while `beat` or `vu` is selected, removes it
@@ -419,7 +371,9 @@ for scripted setups. The four dynamics values also have CLI flags:
 
 ![Layouts banner: edge to edge — sides, thirds and the whole frame](assets/layouts.png)
 
-The order of `--lights` is the order of the zones.
+The order of the bulbs is the order of the zones. In the panel you assign a
+zone per bulb or pick a layout; from the terminal, `--lights` sets the order and
+`--zones` overrides it (see the [command line reference](docs/cli.md)).
 
 | layout       | what each bulb shows                              |
 |--------------|---------------------------------------------------|
@@ -430,8 +384,8 @@ The order of `--lights` is the order of the zones.
 | `all`        | average of the whole frame                        |
 | `cycle`      | left, right, top, bottom, then repeat             |
 
-> Auto-discovery sorts bulbs by IP. If the sides come out swapped, list the
-> IPs in the order you want (`--lights right-ip,left-ip`) or use `--zones`.
+> Auto-discovery sorts bulbs by IP. If the sides come out swapped, reorder the
+> bulbs in the panel or list the IPs in the order you want from the terminal.
 
 ### 🔬 Sampling
 
@@ -458,24 +412,11 @@ a 1080p window it keeps the original 80-column, 1×1 sampling and the style's
 own rate, so nothing gets softer on a normal desktop and `--style raw` still
 runs at 24 fps. A 4K capture drops to 8 fps instead of melting the CPU.
 
-```bash
-# the default: adapt to the captured resolution
-./mpv_ambilight.py movie.mkv
-
-# explicit presets
-./mpv_ambilight.py --sampling lean movie.mkv
-./mpv_ambilight.py --sampling quality --style cinema movie.mkv
-
-# every knob by hand
-./mpv_ambilight.py --sampling manual --fps 12 --sample-grid 96 \
-  --sample-block 2 --capture source movie.mkv
-```
-
-An explicit `--fps` or `--capture` wins over the profile, so
-`--sampling lean --fps 15` keeps lean's 48 columns and raises its cap. In the
-panel, **Sampling** sits in the Sample column while **Capture & fade preset**
-opens the Preset column under Reaction; both are saved in `lights.json` and
-apply on the next start.
+An explicit `--fps` or `--capture` wins over the profile; the panel writes the
+same values. **Sampling** sits in the Sample column while **Capture & fade
+preset** opens the Preset column under Reaction; both are saved in
+`lights.json` and apply on the next start. Flags and precedence are in the
+[command line reference](docs/cli.md#styles-reactions-and-sampling).
 
 ### 🌱 Environment
 
@@ -486,43 +427,16 @@ apply on the next start.
 | `WIZ_AMBILIGHT_GUI_CONFIG` | Path to `lights.json`. |
 | `WIZ_AMBILIGHT_SCENES_CONFIG` | Path to `scenes.json`. |
 
-## 🔆 Direct WiZ Control
+## ⌨️ Command Line
 
-![Direct control banner: no browser needed — --set, --hex and --scene](assets/control.png)
+![Command line banner: terminal, too — launch, attach and direct WiZ control](assets/control.png)
 
-The same controls are available without the browser, which makes them easy to
-use from shell scripts, cron jobs or desktop shortcuts:
+The panel covers daily use. Everything it does is also available from the
+terminal: discovery, launch and attach modes, direct WiZ control with `--set`,
+styles, reactions, sampling, the optional systemd user service and scripted
+looks.
 
-```bash
-# turn everything on/off (or one bulb with --lights)
-./mpv_ambilight.py --set --power on
-./mpv_ambilight.py --set --lights 192.168.1.5 --power off
-
-# RGB as hex (3- or 6-digit), with optional brightness
-./mpv_ambilight.py --set --lights 192.168.1.5,192.168.1.7 --hex '#ff8800' --brightness 60
-
-# white temperature instead of color
-./mpv_ambilight.py --set --temp 3000
-
-# a WiZ scene, with optional speed
-./mpv_ambilight.py --set --scene 4 --speed 120
-
-# preview the UDP payloads without sending anything
-./mpv_ambilight.py --set --hex '#00ff7f' --dry-run
-```
-
-`--set` uses `--lights`, then `WIZ_LIGHTS` / `WIZ_LIGHT_IPS`, then discovery.
-`--hex` and `--temp` are mutually exclusive, `--speed` requires `--scene`, and
-`--power off` cannot be combined with a color or brightness. Invalid input
-exits with status `2`; a network/discovery failure exits with `1`.
-
-The panel lists every scene it knows about. Common ids are `1` Ocean, `3`
-Sunset, `4` Party, `5` Fireplace, `10` Bedtime, `12` Daylight, `16` Relax and
-`18` TV time; firmware may expose more.
-
-Because each command exits, `--set` composes with cron, systemd timers and
-media-server hooks without a daemon. Recipes for sequencing several looks are
-in [`docs/development.md`](docs/development.md#scripted-control-recipes).
+The full reference is in [`docs/cli.md`](docs/cli.md).
 
 ## 🔍 Architecture & How It Works
 
@@ -657,39 +571,35 @@ works without a parent link.
 
 | symptom | fix |
 |---|---|
-| **No lights found** | `./mpv_ambilight.py --discover`; check that the bulbs and computer are on the same VLAN and that client isolation / guest Wi-Fi is off. Pin them with `--lights ip1,ip2` or `WIZ_LIGHTS`. |
-| **Only some bulbs are found** | Press **Scan network** again: a manual scan probes every address on the local `/24` and the broadcast three times, which finds bulbs that ignore broadcast. If one is still missing, it is probably on another VLAN/guest network or outside that subnet; pin it with `--lights ip1,ip2`. |
+| **No lights found** | Press **Scan network**; check that the bulbs and computer are on the same VLAN and that client isolation / guest Wi-Fi is off. If a bulb is on another subnet, pin it with `--lights` / `WIZ_LIGHTS` from the [command line](docs/cli.md). |
+| **Only some bulbs are found** | Press **Scan network** again: a manual scan probes every address on the local `/24` and the broadcast three times, which finds bulbs that ignore broadcast. If one is still missing, it is probably on another VLAN/guest network or outside that subnet; pin it from the [command line](docs/cli.md). |
 | **Buttons do nothing / “No reply from …”** | The panel names the bulbs that did not answer. Compare **Panel network** in the panel with the bulb IPs: if it says `192.168.1.5 outside this subnet`, the computer is on a different network (hotspot, VPN, Ethernet bridge down). Join the bulbs' Wi-Fi, or check `ip -brief addr` and the router's client list. |
-| **`mpv could not grab frames`** | Your VO does not support raw screenshots. Try `-- --vo=gpu` or `-- --screenshot-sw=yes`. Do not use `--vo=null` or `--no-video`. |
-| **Colors look wrong / sides swapped** | Reinstall the Lua script (`./mpv_ambilight.py --install-script --force`), restart mpv, and check the order of `--lights` / `--zones`. |
-| **Stutter on 4K** | Use `--sampling lean`, or lower `--fps` (e.g. `--fps 6`). |
-| **Bulbs lag behind the picture** | Use `--style reactive` (or `--style fast`) and `--smooth 40 --send-hz 24`. If your bulbs still lag, try `--send-hz 15`; some firmware coalesces very fast updates. |
-| **Cuts feel soft** | Use `--style reactive`; large jumps snap automatically, but a lower `--smooth` makes small transitions faster too. |
-| **Bulbs keep the last color after quitting** | Expected. Use `--on-exit off` if you want them off. |
-| **`--attach` does nothing** | Run `--install-script`, restart mpv, then `--attach`. Check that only one mpv instance is playing (the control file is global). |
+| **`mpv could not grab frames`** | Your VO does not support raw screenshots. Launch the file from the [command line](docs/cli.md) with `-- --vo=gpu` or `-- --screenshot-sw=yes`; do not use `--vo=null` or `--no-video`. |
+| **Colors look wrong / sides swapped** | Press **Install script** in the panel to replace the copy, restart mpv, and check the zone assigned to each bulb in **Lights**. |
+| **Stutter on 4K** | Pick `lean` in **Sampling**; lower the capture rate from the [command line](docs/cli.md) if needed. |
+| **Bulbs lag behind the picture** | Pick `reactive` in **Capture & fade preset**; the finer fade and send values are in the [command line reference](docs/cli.md). |
+| **Cuts feel soft** | Pick `reactive`; lower the fade value from the [command line](docs/cli.md) for smaller transitions too. |
+| **Bulbs keep the last color after quitting** | Expected. `--on-exit off` from the [command line](docs/cli.md) turns them off instead. |
+| **Attach does nothing** | Press **Install script** in the panel, restart mpv, choose **Attach to mpv** and press **Start Ambilight**. Check that only one mpv instance is playing (the control file is global). |
 | **Panel says “already running”** | A sync child is still alive. Press **Stop**, or use the PID from `sessionPill` / `$XDG_RUNTIME_DIR/wiz-ambilight/gui-daemon.json`. |
 | **Port 8765 is taken** | `./mpv_ambilight.py --gui --gui-port 9000`. |
-| **Bulb names** | Not available over UDP. Use `--discover` to map IP ↔ model ↔ MAC, or name them in the panel (stored locally). |
+| **Bulb names** | Not available over UDP. Name them in the panel; `--discover` maps IP ↔ model ↔ MAC from the [command line](docs/cli.md). |
 
 ## 🧪 Development
 
 ![Development banner: no dependencies — unittest, py_compile and lua](assets/development.png)
 
-```bash
-python -m unittest discover -s tests -v
-python -m py_compile mpv_ambilight.py webui.py
-lua5.4 -e 'assert(loadfile("lua/wiz_ambilight.lua"))'
-```
+The suite is plain `unittest`: no extra package, no live bulb. The CI workflow
+runs it on Python 3.9, 3.11 and 3.13 and checks that the Lua script compiles;
+the exact commands are in
+[`docs/development.md`](docs/development.md#tests-and-ci). Tests never touch a
+real bulb: the panel, the fade loop and discovery are exercised in-process, and
+`--demo` keeps the sender off the network.
 
-The CI workflow runs the unit tests on Python 3.9, 3.11 and 3.13 and checks
-that the Lua script compiles. Tests never touch a real bulb: the panel, the
-fade loop and discovery are exercised in-process, and `--demo` keeps the sender
-off the network.
-
-Repository layout, the runtime files and config schemas, the scripted control
-recipes and the banner generator are documented in
-[`docs/development.md`](docs/development.md). The panel design contract is in
-[`docs/design.md`](docs/design.md).
+The user-facing terminal reference is [`docs/cli.md`](docs/cli.md). Repository
+layout, the runtime files and config schemas, the audio path and the banner
+generator are in [`docs/development.md`](docs/development.md); the panel design
+contract is in [`docs/design.md`](docs/design.md).
 
 ## 🗺️ Roadmap
 

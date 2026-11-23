@@ -29,6 +29,13 @@ Releases before 1.4.0 were never tagged; their history is in `git log`.
 - **Docs:** README, `docs/development.md`, `docs/design.md` and `AGENTS.md`
   describe the dynamics stage, the timeline and the knobs. The roadmap now
   includes the UI/UX redesign as item 5.
+- **Docs:** the README now teaches the panel first. **Installation** is one
+  clone plus `--gui`; cloning never copies the Lua script into mpv, and only
+  attach mode needs that one-time copy because mpv is already running. The
+  terminal reference — discovery, launch and attach, `--set`, style, reaction
+  and sampling flags, the systemd service and scripted looks — moved to
+  `docs/cli.md`, linked from **Installation** and the new **Command Line**
+  section. `AGENTS.md` records the GUI-first and attach-only install rules.
 
 ## 1.10.0 — 2026-11-22
 

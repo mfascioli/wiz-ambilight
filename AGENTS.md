@@ -11,6 +11,10 @@ samples the frame, a Python process fades the colors and sends them to WiZ
 bulbs over the local network with plain UDP. A local web panel does the same by
 hand and can start or stop the sync.
 
+- **The panel is the primary interface.** The README teaches the GUI first. The
+  command line is a supported alternative for scripts and headless machines,
+  documented in [`docs/cli.md`](docs/cli.md), and the README points there
+  instead of repeating commands.
 - Python **3.9+**, standard library only. One Lua script inside mpv, one web
   panel with no build step.
 - Linux and macOS are the supported targets. Windows is roadmap work (see the
@@ -37,6 +41,19 @@ headings, and leave interface names, option values and file paths untranslated.
   account, no telemetry, no update check.
 - **Nothing downloads and runs.** `--install-script` copies a file from the
   checkout into mpv's scripts folder. Do not add a self-updater.
+- **GUI first in the docs.** The README may show only the command that starts
+  the panel (`./mpv_ambilight.py --gui`) and, as a name in a table, the flags
+  that change how the panel starts (`--gui-port`, `--no-browser`, `--demo`).
+  Every other flag, command, headless mode and automation recipe belongs in
+  `docs/cli.md`; the README links it from **Installation** and **Command
+  Line**, and may mention a flag inline as a name, never as a command block.
+- **The Lua install is optional and attach-only.** A clone installs nothing
+  into mpv. Launch mode passes `--script=<checkout>/lua/wiz_ambilight.lua` to
+  the mpv it starts; attach mode needs a one-time copy in mpv's scripts folder
+  because mpv is already running when the panel appears. The panel's **Install
+  script** button and `--install-script` do that copy. Never imply
+  **Installation** performs it, and never write "install the Lua script once"
+  without saying that it is for attach mode.
 - **Panel invariants.** Bind to `127.0.0.1`; check `Host` and `Origin`; require
   the per-run `X-Wiz-Token`; keep the CSP at `default-src 'none'` with only
   its own sources; never use a shell string or interpolate a path into a
@@ -120,17 +137,31 @@ headings, and leave interface names, option values and file paths untranslated.
    `mpv → Lua → Python → WiZ` line.
 2. **Overview** → **Features** → **Requirements & Compatibility** →
    **Installation** → **Quick Start** → **Web Panel** → **Operating Modes**
-   (with **Attach** and the optional user service under it) →
-   **Configuration** (with **Capture, fade and send**, **Styles**, **Layouts
-   and zones**, **Sampling** and **Environment** under it) → **Direct WiZ
-   Control** → **Architecture & How It Works** → **Performance** → **Privacy &
-   Security** → **Troubleshooting** → **Development** → **Roadmap** →
-   **Credits & License** → **Related Projects**.
+   (with **Attach to your own mpv** under it) → **Configuration** (with
+   **Capture, fade and send**, **Styles**, **Reactions**, **Layouts and
+   zones**, **Sampling** and **Environment** under it) → **Command Line** →
+   **Architecture & How It Works** → **Performance** → **Privacy & Security** →
+   **Troubleshooting** → **Development** → **Roadmap** → **Credits & License**
+   → **Related Projects**.
 
 - The page follows the user's path: what it is, what it needs, how to install
-  it, how to use it, how to configure it, then how it works inside, what it
-  costs, and what it guarantees. Development notes and the roadmap close the
-  technical part.
+  it, how to use it from the panel, how to configure it, then how it works
+  inside, what it costs, and what it guarantees. Development notes and the
+  roadmap close the technical part.
+- **Installation** is one clone plus `--gui`. It must say that the clone does
+  not copy the Lua script into mpv, that launch mode needs no install at all,
+  and link **Attach to your own mpv** for the attach-only copy.
+- **Quick Start** is a numbered panel walkthrough (scan, choose, launch), not a
+  list of commands.
+- **Operating Modes** is panel-first: **Launch a video**, **Attach to mpv**, and
+  one row pointing to **Command Line**. **Attach** explains why the Lua copy
+  exists, uses the panel's **Install script** button and mentions reinstalling
+  after an update. The systemd user service lives in `docs/cli.md`.
+- **Command Line** is a short pointer to `docs/cli.md` with the `control.png`
+  strip. No command blocks in the README except `--gui` (and `--gui-port`);
+  everything else — discovery, launch and attach, `--set`, style, reaction and
+  sampling flags, the systemd service and scripted looks — is in
+  `docs/cli.md`.
 - One strip per `##` heading, directly under it; Styles, Layouts and Attach
   keep their own strips under Configuration / Operating Modes. The overview
   answers "what is this" before Features.
@@ -141,7 +172,7 @@ headings, and leave interface names, option values and file paths untranslated.
 - Keep capture fps, fade ms and send Hz distinct: they are explained once in
   **Capture, fade and send** and only referenced elsewhere.
 - Aesthetic and layout detail lives in `docs/design.md`; repository structure,
-  runtime files, config schemas and scripted recipes live in
+  runtime files, config schemas and the audio path live in
   `docs/development.md`. The README links both and summarises only what a user
   needs.
 - Emojis only as section markers, one per `##` heading, never in body text.
@@ -208,6 +239,8 @@ Before calling a change done:
 - `--install-script` is idempotent and needs `--force` to replace;
 - the panel still refuses a foreign `Host`, a foreign `Origin` and a wrong
   token;
+- the README shows only the panel start command and links `docs/cli.md` for the
+  rest; installation never claims to install the Lua script;
 - `python assets/banner.py` reproduces the committed PNGs byte for byte.
 
 ## Git
@@ -238,8 +271,9 @@ Before calling a change done:
 | `assets/*.png` | hero, one strip per section, `mpv-config.png` reference crop |
 | `docs/architecture.mmd` | architecture source, kept next to the render |
 | `docs/architecture.svg` | architecture diagram linked from README and SECURITY |
+| `docs/cli.md` | user-facing command line reference: discovery, launch/attach, `--set`, flags, service, scripts |
 | `docs/design.md` | panel design language, layout and chart contract |
-| `docs/development.md` | repository layout, runtime/config files, scripted recipes |
+| `docs/development.md` | repository layout, runtime/config files, reactions and audio internals |
 | `docs/gui.png` | the one panel screenshot in the README |
 | `contrib/` | optional systemd user service and its env example |
 | `upstream/` | original wiz-hack toolkit, reference only, never imported |

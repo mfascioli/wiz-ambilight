@@ -1,8 +1,9 @@
 # Development
 
 Notes for working on `wiz-ambilight` itself: repository layout, the files the
-runtime creates, the test setup and the scripted recipes that do not belong in
-the user-facing README.
+runtime creates, the config schemas, the reaction and audio pipeline, and the
+test setup. The user-facing command line lives in [`cli.md`](cli.md); the panel
+design lives in [`design.md`](design.md).
 
 ## Repository layout
 
@@ -21,6 +22,7 @@ the user-facing README.
 ├── docs/
 │   ├── architecture.mmd    # architecture source (Mermaid)
 │   ├── architecture.svg    # rendered architecture diagram
+│   ├── cli.md              # user-facing command line reference
 │   ├── design.md           # panel design language and layout
 │   └── gui.png             # the one panel screenshot in the README
 ├── contrib/                # optional systemd user service
@@ -42,7 +44,7 @@ without loading the server for normal playback.
 | `$XDG_RUNTIME_DIR/wiz-ambilight/gui-daemon.json` | panel | the sync PID it started, for adoption |
 | `~/.config/wiz-ambilight/lights.json` | panel | bulbs, names, zones, rooms, saved colors |
 | `~/.config/wiz-ambilight/scenes.json` | panel | saved looks |
-| mpv's `scripts/wiz_ambilight.lua` | `--install-script` | a copy of the Lua script |
+| mpv's `scripts/wiz_ambilight.lua` | panel **Install script** / `--install-script` | a copy of the Lua script for attach mode; launch mode passes the checkout copy directly |
 
 The runtime directory is `0700`; the two config files are written `0600`. When
 `XDG_RUNTIME_DIR` is unset the runtime files go to `/tmp/wiz-ambilight`.
@@ -282,57 +284,6 @@ byte. The hero carries the version chip, so bump the `?v=` query in the README
 when `VERSION` changes. The architecture source and render live next to each
 other in `docs/`; edit the `.mmd`, re-render the `.svg` and update the
 exposed-interface callout together.
-
-## Scripted control recipes
-
-`--set` is a normal command, so it composes with cron, systemd timers, desktop
-shortcuts and media-server hooks without a dependency or a cloud account. For
-example, a two-step look:
-
-```sh
-#!/bin/sh
-# sunset.sh — warm the room, then settle into a scene
-LIGHTS=192.168.1.5,192.168.1.7
-cd /path/to/wiz-ambilight
-./mpv_ambilight.py --set --lights "$LIGHTS" --hex '#ff8a3d' --brightness 70
-sleep 3
-./mpv_ambilight.py --set --lights "$LIGHTS" --scene 3 --speed 60
-```
-
-A systemd user timer for the same command:
-
-```ini
-# ~/.config/systemd/user/wiz-sunset.service
-[Unit]
-Description=Warm the room with WiZ
-
-[Service]
-Type=oneshot
-ExecStart=%h/.local/bin/mpv-ambilight --set --lights 192.168.1.5,192.168.1.7 --scene 3 --speed 60
-```
-
-```ini
-# ~/.config/systemd/user/wiz-sunset.timer
-[Unit]
-Description=Daily sunset look
-
-[Timer]
-OnCalendar=*-*-* 18:30:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
-
-`systemctl --user enable --now wiz-sunset.timer` schedules it. On systems
-without user timers, the same command works from `crontab`:
-
-```cron
-30 18 * * * /home/you/.local/bin/mpv-ambilight --set --lights 192.168.1.5,192.168.1.7 --hex '#ff8a3d' --brightness 70
-```
-
-Both run at a fixed local time. A true sunset lookup needs its own scheduler
-or an external helper; the project does not add one.
 
 ## Design contract
 
