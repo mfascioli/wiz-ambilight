@@ -61,15 +61,23 @@ headings, and leave interface names, option values and file paths untranslated.
   inside Direct control, not a card. **Look** is three equal hairline columns —
   Preset / Sample / Send — with flat key/value rows, never nested boxes.
   **Preset** leads with the Reaction group: the dropdown, with one
-  `<optgroup>` per source (Video / Audio), then reaction strength, the profile
-  select, the Equalize target and the five band color swatches as flat rows
-  under it, shown only when they apply. The **Capture & fade preset** select
+  `<optgroup>` per source (Video / Audio), then reaction strength. Audio modes
+  add a full-width dynamics strip inside Look, below the three columns: a
+  scrolling Signal timeline with a draggable amber threshold line, a Dynamics
+  preset and four round knobs (Threshold, Attack, Release, Punch) over hidden
+  range inputs. Video modes show the profile select instead. The strip is never
+  a fourth column and never a second card. The Equalize target and the five
+  band color swatches stay flat rows under the reaction group, shown only when
+  they apply. The **Capture & fade preset** select
   follows the reaction group, then Brightness and the **Vibrance** slider;
-  those three are always visible and flat. It never adds a column or a card.
+  those three are always visible and flat.
 - **Reactions and audio.** `react` is one of `color`, `equalize`, `cut`,
   `motion`, `duotone`, `beat`, `vu`; `color` stays the default. Every reaction
-  is scaled by `react_amount`, so `0` is a no-op. The reactive modes share
-  `react_profile` (`soft` / `balanced` / `strong`), and audio modes split the
+  is scaled by `react_amount`, so `0` is a no-op. Video reactive modes share
+  `react_profile` (`soft` / `balanced` / `strong`); audio modes use the same
+  profile as a starting bundle but are driven by explicit compressor-style
+  `react_threshold`, `react_attack`, `react_release` and `react_punch`
+  (`AUDIO_PRESETS` holds the four named points). Audio modes split the
   mix into five bands (`sub`, `low`, `low-mid`, `mid`, `high`) with one color
   each via `react_bands`; one bulb follows the overall volume, 2–5 bulbs spread
   the bands. Audio modes are `beat` and `vu` only: the Lua script adds a

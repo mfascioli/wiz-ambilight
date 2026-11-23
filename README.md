@@ -161,8 +161,8 @@ lists every bulb it finds, and lets you:
 - collapse any section: **Direct control** and **Activity** start closed, so
   the first screen is just lights, session and look.
 
-![The panel in demo mode: three bulbs on thirds, the VU reaction with strength, profile, five band colors and the Vibrance slider in Look, and Direct control on the right](docs/gui.png)
-<sub>Demo mode with three bulbs on thirds: Session and Look share the left stack, Direct control sits on the right with rooms and saved colors, and Activity waits below.</sub>
+![The panel in demo mode: three bulbs on thirds, the VU reaction with a scrolling signal timeline, draggable amber threshold and four round dynamics knobs, five band colors, the Vibrance slider in Look, and Direct control on the right](docs/gui.png)
+<sub>Demo mode with three bulbs on thirds: Session and Look share the left stack, the VU reaction shows its signal timeline and Dynamics controls, Direct control sits on the right with rooms and saved colors, and Activity waits below.</sub>
 
 The visual language and the layout rules are documented in
 [`docs/design.md`](docs/design.md).
@@ -310,26 +310,50 @@ same control says how the lights react and what they react to.
 | `cut`      | video  | A cut is one hard edit, not camera motion. When the whole frame jumps to a new scene, the bulbs flash at full brightness for a moment; between cuts they sit slightly dimmer so the flash reads as a pulse. Rate-limited. |
 | `motion`   | video  | Compares each zone with the previous frame. Still shots stay calm and slightly dim; movement adds brightness and saturation to the bulbs watching the action. |
 | `duotone`  | video  | Even bulbs keep the sampled color, odd bulbs get the opposite hue. Two bulbs become a complementary pair; more bulbs become a striped duotone. |
-| `beat`     | audio  | Listens to five frequency bands. Each bulb owns one band and flashes its chosen color when that band's peak jumps above its recent average. The attack is immediate; with one bulb it pulses on the overall beat. |
-| `vu`       | audio  | A five-band level meter: each bulb follows its band from silence to full, in that band's color. It follows RMS plus sample peaks, with a fast attack. With one bulb it meters the overall volume and takes the color of the loudest band. |
+| `beat`     | audio  | Listens to five frequency bands. Each bulb owns one band and slams to full brightness when that band jumps above its recent average. A threshold gates quiet ticks, and the 75 % flash span keeps the bulbs low between hits so every one reads as a flash. With one bulb it pulses on the overall beat. |
+| `vu`       | audio  | A five-band pulse meter: each bulb follows its band from the gate to full, in that band's color. A compressor-style curve lifts the middle of the range, so the bulbs pump with the music instead of drifting gently. With one bulb it meters the overall volume and takes the color of the loudest band. |
 
 **Strength.** Every reaction scales with `--react-amount` (0–1, default `0.8`);
 `0` keeps the source color and disables the reaction. The panel's **Reaction
 strength** slider writes the same value.
 
-**Profiles.** `equalize`, `cut`, `motion`, `beat` and `vu` also have a
-`soft` / `balanced` / `strong` profile (`--react-profile`), which moves span,
-speed, threshold and rate limit together. `balanced` is the default and matches
-the numbers below; `soft` is subtler and slower, `strong` is wider and faster.
-The profile and the strength slider compose.
+**Profiles.** `equalize`, `cut` and `motion` have a `soft` / `balanced` /
+`strong` profile (`--react-profile`), which moves span, speed, threshold and
+rate limit together. `balanced` is the default and matches the numbers below;
+`soft` is subtler and slower, `strong` is wider and faster. The profile and the
+strength slider compose.
+
+**Dynamics.** Audio modes replace the profile with four compressor-style
+controls, in the spirit of an SSL bus compressor. **Threshold** is the dBFS gate
+where the bulbs start to open, **Attack** and **Release** are the envelope in
+milliseconds, and **Punch** is how hard levels above the gate drive the
+brightness. The panel adds **Dynamics preset** with four starting points, four
+round knobs, and a live **Signal** timeline: a five-second dBFS trace whose
+amber threshold line can be dragged directly. Peaks above the line turn red, so
+the relation between the song and the gate is visible before the bulbs move.
+The same values are `lights.json` keys and CLI flags.
+
+| preset   | threshold | attack | release | punch | feel |
+|----------|-----------|--------|---------|-------|------|
+| `Mellow` | −30 dB | 12 ms | 200 ms | 1.4× | slow, rounded fades; the meter breathes with the track |
+| `Glue`   | −26 dB | 6 ms | 120 ms | 2.0× | the SSL-style middle: firm, musical pulses without strobing |
+| `Punch`  | −22 dB | 1 ms | 55 ms | 3.0× | hard, short flashes on every hit; the default |
+| `Strobe` | −18 dB | 0 ms | 30 ms | 4.0× | instant full-scale hits and a fast drop; the most extreme |
+
+**Audio profiles.** `--react-profile` still works for audio modes and selects
+the gate, ceiling, envelope and punch as one bundle; choosing a Dynamics preset
+in the panel is equivalent to writing the four knobs. The numbers below are
+per profile and use the same window: gate…ceiling for the level, attack /
+release, punch and the share of the brightness range covered by the flash
+(`beat`) or swing (`vu`).
 
 | reaction   | soft | balanced | strong |
 |------------|------|----------|--------|
 | `equalize` | ±20 %, 6 s average, 55 % floor | ±35 %, 4 s average, 35 % floor | ±55 %, 2 s average, 20 % floor |
 | `cut`      | 30 % jump, 3/min, 15 % headroom | 22 % jump, 6/min, 22 % headroom | 14 % jump, 12/min, 35 % headroom |
 | `motion`   | 0.18 span, 0.55 s release | 0.28 span, 0.35 s release | 0.40 span, 0.20 s release |
-| `beat`     | 4.5 dB, 0.28 s minimum gap, 10 ms attack, 180 ms release | 3 dB, 0.12 s gap, instant attack, 100 ms release | 1.5 dB, 0.09 s gap, instant attack, 70 ms release |
-| `vu`       | −50…−14 dBFS, 70 % swing, 20 ms attack, 180 ms release | −45…−12 dBFS, full swing, 8 ms attack, 110 ms release | −40…−10 dBFS, full swing, 4 ms attack, 70 ms release |
+| `beat`     | 4.5 dB jump, −30…−12 dBFS, 12 / 200 ms, punch 1.4, 55 % flash | 3 dB jump, −22…−10 dBFS, 1 / 55 ms, punch 3.0, 75 % flash | 1.5 dB jump, −18…−8 dBFS, 0 / 30 ms, punch 4.0, 95 % flash |
+| `vu`       | −30…−12 dBFS, 12 / 200 ms, punch 1.4, 70 % swing | −22…−10 dBFS, 1 / 55 ms, punch 3.0, full swing | −18…−8 dBFS, 0 / 30 ms, punch 4.0, full swing |
 
 **Band colors.** Audio modes split the mix into five bands:
 `sub` (<60 Hz), `low` (60–250 Hz), `low-mid` (250–800 Hz), `mid` (800–2500 Hz)
@@ -344,11 +368,14 @@ and five get one each; more than five repeat the cycle.
 Audio modes keep a 30 Hz state heartbeat even when the video is sampled at
 12–20 fps: the picture still follows the sampling profile, but the meter and
 the beat do not wait for the next frame. Both read RMS and sample peak, so the
-first hit is not averaged away. Audio modes also send at 30 Hz, so a 120 ms
-flash is not dropped between datagrams.
+first hit is not averaged away. Audio modes also send at 30 Hz, so a 55 ms
+release is not dropped between datagrams.
 
-Pulse and meter modes reserve headroom: at **Brightness 100** the bulbs idle
-slightly below 100 so the flash has somewhere to go. Equalize is deliberately
+Pulse and meter modes reserve headroom so the flash has somewhere to go:
+`beat` covers 55–95 % of the range with the flash across its profiles, leaving
+the bulbs at roughly 56–24 % when idle at the default strength, and `vu`
+swings over 70–100 % of the range, so the level can fall much darker than a
+gentle meter. Equalize is deliberately
 slow; it averages the scene instead of pumping with every cut. It can only lift
 a dark scene when the brightness ceiling leaves room, so set **Brightness**
 around 80 if you want both directions; at 100 it mostly dims.
@@ -366,6 +393,8 @@ around 80 if you want both directions; at 100 it mostly dims.
 # audio modes: music or any file with an audio track
 ./mpv_ambilight.py --react vu concert.mkv
 ./mpv_ambilight.py --react beat --react-profile soft song.flac
+./mpv_ambilight.py --react vu --react-threshold -24 --react-punch 4 \
+  --react-release 30 concert.mkv
 ./mpv_ambilight.py --react vu \
   --react-bands '#ff3b30,#ff9500,#ffcc00,#34c759,#5ac8fa' concert.mkv
 ```
@@ -381,8 +410,10 @@ drives their brightness.
 
 `--react-target` (default `0.45`) sets the luma Equalize aims for; lower values
 keep the room dimmer, higher values brighter. The panel exposes the mode,
-strength, profile, target and band colors; the same values live in
-`lights.json` for scripted setups.
+strength, dynamics (presets, threshold, attack, release, punch), a draggable
+signal timeline, target and band colors; the same values live in `lights.json`
+for scripted setups. The four dynamics values also have CLI flags:
+`--react-threshold`, `--react-attack`, `--react-release` and `--react-punch`.
 
 ### 🧩 Layouts and zones
 
@@ -662,9 +693,9 @@ recipes and the banner generator are documented in
 
 ## 🗺️ Roadmap
 
-![Roadmap banner: what is missing — Windows, measured transport and release scans](assets/roadmap.png)
+![Roadmap banner: what is missing — Windows, measured transport and a clearer panel](assets/roadmap.png)
 
-Four pieces are known to be missing, in the order they matter:
+Five pieces are known to be missing, in the order they matter:
 
 1. **Windows.** One resolver for the runtime directory (Python and Lua must
    agree, or attach mode fails silently), `%APPDATA%\mpv\scripts` for
@@ -681,6 +712,13 @@ Four pieces are known to be missing, in the order they matter:
    would let it target a measured lux instead; the hook is designed but not
    implemented. See
    [`docs/development.md`](docs/development.md#light-sensor-design).
+5. **UI/UX redesign.** The panel has grown control by control and now asks the
+   reader to hold too much in their head. Rework it around Apple's design
+   principles — hierarchy, clarity, deference and depth — instead of adding
+   another row: one obvious primary action per card, progressive disclosure for
+   the tuning knobs, plain-language labels before technical detail, and the
+   live meter treated as feedback rather than another control. This is a
+   redesign, not a new feature; the Reaction and Dynamics model stays as it is.
 
 ## 🙏 Credits & License
 

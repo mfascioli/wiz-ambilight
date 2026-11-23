@@ -27,6 +27,7 @@
   --bad: #ff6b5e;
   --radius: 2px;
   --fill: 50%;
+  --turn: .5;               /* round knob sweep, 0..1 */
   --c: #fcbe11;              /* inline override: color chip or chart series */
   --shadow: 0 1px 0 #33000000;
   --font-display: "Merriweather", Georgia, "Times New Roman", serif;
@@ -941,6 +942,168 @@ input[type="range"]::-moz-range-thumb {
   text-align: right;
 }
 .look-col .field { margin-bottom: 2px; }
+
+/* --------------------------------------------------------------- dynamics */
+
+/* The audio panel spans the width under the three Look columns. It reads
+   left to right like a compressor: the live signal first, then the preset
+   and four knobs that shape it. It is not a fourth column. */
+.dynamics-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(250px, 1fr);
+  gap: 10px;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+}
+.scope-field { min-width: 0; }
+.scope-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: 3px;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: .04em;
+}
+.scope-title {
+  color: var(--amber);
+  letter-spacing: .13em;
+  text-transform: uppercase;
+}
+.scope-db {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  min-width: 4.2em;
+}
+.scope-over {
+  margin-left: auto;
+  color: #6f6b62;
+  text-align: right;
+  white-space: nowrap;
+}
+.scope-over.over { color: var(--bad); }
+#vuMeter {
+  display: block;
+  width: 100%;
+  height: 158px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #090909;
+  cursor: ns-resize;
+  touch-action: none;
+}
+#vuMeter.dragging { cursor: grabbing; }
+.scope-hint { color: #6f6b62; margin-top: 3px; }
+.dynamics-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.dynamics-controls .field { margin-bottom: 0; }
+.knob-bank {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  align-items: start;
+  margin-top: auto;
+  padding-top: 5px;
+  border-top: 1px solid rgba(255, 255, 255, .05);
+}
+.knob-field {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  text-align: center;
+}
+.knob {
+  --turn: .5;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  cursor: ns-resize;
+  touch-action: none;
+  border-radius: 50%;
+}
+.knob.dragging { cursor: grabbing; }
+.knob-dial {
+  position: relative;
+  display: block;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background:
+    conic-gradient(from 225deg,
+      var(--amber) 0deg calc(var(--turn) * 270deg),
+      #262626 calc(var(--turn) * 270deg) 270deg,
+      transparent 270deg 360deg);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .04);
+  transition: filter .12s ease;
+}
+.knob-dial::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 28%, #232323, #101010 62%, #0b0b0b);
+  border: 1px solid #262626;
+}
+.knob-marker {
+  position: absolute;
+  z-index: 1;
+  left: calc(50% - .75px);
+  bottom: 50%;
+  width: 1.5px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--amber);
+  transform-origin: 50% 100%;
+  transform: rotate(calc(-135deg + var(--turn) * 270deg));
+  pointer-events: none;
+}
+.knob:hover .knob-dial { filter: brightness(1.18); }
+.knob:has(.knob-input:focus-visible) .knob-dial {
+  box-shadow: 0 0 0 1px var(--amber);
+}
+.knob-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+  cursor: inherit;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+.knob-value {
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.knob-label {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  font-weight: 400;
+  letter-spacing: .08em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .band-colors {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1299,6 +1462,8 @@ input[type="range"]::-moz-range-thumb {
   .modes { min-width: 0; width: 100%; }
   .control-grid, .control-grid.second { grid-template-columns: 1fr 1fr; }
   .look-cols { grid-template-columns: 1fr; }
+  .dynamics-strip { grid-template-columns: 1fr; }
+  .knob-bank { max-width: 340px; }
   .look-col {
     border-left: 0;
     border-top: 1px solid var(--line);

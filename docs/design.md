@@ -56,15 +56,24 @@ decoration: they explain the path from choosing bulbs to watching the effect.
 - **Look** is three equal hairline columns — **Preset / Sample / Send** — with
   flat key/value rows, never nested boxes. **Preset** leads with the Reaction
   group: the dropdown (with a **Video** / **Audio** optgroup each and one hint
-  line for the selected mode), Reaction strength, a **Reaction profile** select
-  with its own hint, the Equalize target luma slider and five band color
-  swatches. The **Capture & fade preset** select follows the reaction group,
-  with a hint naming what it bundles, then Brightness and the **Vibrance**
-  slider that multiplies the style's saturation. The profile select, target
-  and band row appear only for the reactions that use them, while the capture
-  preset, Brightness and Vibrance are always visible; the band swatches are
-  one hairline row of five equal `input[type="color"]` cells labelled Sub, Low,
-  Low-mid, Mid and High. Reactions never add a fourth column or a second card.
+  line for the selected mode), then Reaction strength. The Equalize target luma
+  slider and five band color swatches appear only for the reactions that use
+  them. The **Capture & fade preset** select follows the reaction group, with a
+  hint naming what it bundles, then Brightness and the **Vibrance** slider that
+  multiplies the style's saturation. The capture preset, Brightness and
+  Vibrance are always visible; the band swatches are one hairline row of five
+  equal `input[type="color"]` cells labelled Sub, Low, Low-mid, Mid and High.
+  Reactions never add a fourth column or a second card.
+- **Audio dynamics** are one full-width strip inside Look, below the three
+  columns: not a fourth column and not a second card. The left side is a
+  scrolling five-second **Signal** timeline on a canvas — dBFS grid, amber
+  trace, red segments above the threshold and an amber threshold line with a
+  drag handle. Dragging anywhere on it writes `react_threshold`. The right side
+  is **Dynamics preset** and four round knobs — Threshold, Attack, Release and
+  Punch — each an invisible range input over a conic dial. Vertical drag changes
+  the value; `Shift` is fine, arrows work when the input has focus, and the
+  amber value sits above a tracked uppercase label. Audio modes show the strip
+  instead of the profile select; video modes keep the profile.
 - Below `1000px` both stacks flatten to a single column in 01 → 05 order.
   `prefers-reduced-motion` disables transitions.
 

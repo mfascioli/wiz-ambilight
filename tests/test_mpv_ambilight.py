@@ -419,13 +419,30 @@ class ReactionMathTests(unittest.TestCase):
 
     def test_beat_pulse_attacks_then_releases(self):
         self.assertEqual(m.beat_pulse(-0.1), 0.0)
-        # The default beat has no attack ramp: the next send tick is already
-        # at full brightness.
-        self.assertEqual(m.beat_pulse(0.0), 1.0)
-        self.assertAlmostEqual(m.beat_pulse(m.BEAT_RELEASE / 2), 0.5)
-        self.assertEqual(m.beat_pulse(m.BEAT_RELEASE), 0.0)
-        # A profile can still opt into a short ramp.
+        # The 1 ms attack is already complete on the next send tick.
+        self.assertEqual(m.beat_pulse(0.0), 0.0)
+        self.assertEqual(m.beat_pulse(m.BEAT_ATTACK), 1.0)
+        self.assertAlmostEqual(
+            m.beat_pulse(m.BEAT_ATTACK + m.BEAT_RELEASE / 2), 0.5
+        )
+        self.assertEqual(m.beat_pulse(m.BEAT_ATTACK + m.BEAT_RELEASE), 0.0)
+        # A profile can still opt into a longer ramp.
         self.assertAlmostEqual(m.beat_pulse(0.025, 0.05, 0.1), 0.5)
+
+    def test_pulse_level_gates_and_punches(self):
+        self.assertEqual(m.pulse_level(-60.0), 0.0)
+        self.assertEqual(m.pulse_level(m.AUDIO_THRESHOLD_DB), 0.0)
+        self.assertEqual(m.pulse_level(m.AUDIO_CEILING_DB), 1.0)
+        # Halfway up the dB window is already far above half brightness.
+        mid = m.pulse_level(-20.0)
+        self.assertGreater(mid, 0.5)
+        self.assertLess(mid, 1.0)
+        # More punch lifts the same level closer to full.
+        self.assertGreater(
+            m.pulse_level(-20.0, punch=4.0),
+            m.pulse_level(-20.0, punch=1.0),
+        )
+        self.assertEqual(m.pulse_level(None), 0.0)
 
     def test_hot_db_prefers_the_sample_peak_only_when_it_is_hotter(self):
         self.assertAlmostEqual(m.hot_db(-30.0, -12.0), -20.0)
@@ -523,7 +540,7 @@ class ReactionMathTests(unittest.TestCase):
         # Cut and the audio modes are the ones that needed plain-language copy.
         self.assertIn("hard edit", m.REACTIONS["cut"]["detail"])
         self.assertIn("five frequency bands", m.REACTIONS["beat"]["detail"])
-        self.assertIn("five-band meter", m.REACTIONS["vu"]["detail"])
+        self.assertIn("five-band pulse meter", m.REACTIONS["vu"]["detail"])
 
 
 class ReactionModeTests(unittest.TestCase):
@@ -632,20 +649,14 @@ class ReactionModeTests(unittest.TestCase):
         self.update(reaction, 100.0, audio={"rms": -40.0})
         self.update(reaction, 100.2, audio={"rms": -38.0})
         self.assertIsNone(reaction.beat_at)
-        self.update(reaction, 100.4, audio={"rms": -25.0})
+        self.update(reaction, 100.4, audio={"rms": -12.0})
         self.assertEqual(reaction.beat_at, 100.4)
         self.assertEqual(
             reaction.dimming("a", 100, 100.4 + m.BEAT_ATTACK, 0.05), 100
         )
         # The steady level keeps most of the range as headroom, so the flash
         # is a visible jump instead of a small tremble.
-        self.assertEqual(reaction.dimming("a", 100, 101.2, 0.05), 45)
-
-    def test_vu_curve_widens_the_gap_around_the_middle(self):
-        self.assertEqual(m.vu_curve(0.0), 0.0)
-        self.assertEqual(m.vu_curve(1.0), 1.0)
-        self.assertLess(m.vu_curve(0.5), 0.5)
-        self.assertAlmostEqual(m.vu_curve(0.5, 2.0), 0.25)
+        self.assertEqual(reaction.dimming("a", 100, 101.2, 0.05), 25)
 
     def test_vu_with_one_bulb_uses_overall_volume_and_dominant_color(self):
         reaction = m.Reaction("vu", 1.0, 0.45)
@@ -657,7 +668,7 @@ class ReactionModeTests(unittest.TestCase):
                 "bands": [-60.0, -60.0, -12.0, -60.0, -60.0],
             },
         )
-        self.assertAlmostEqual(reaction.levels["a"], 1.0)
+        self.assertGreater(reaction.levels["a"], 0.9)
         self.assertEqual(reaction.assignments, {"a": None})
         self.assertEqual(raw["a"], m.hex_to_rgb(m.DEFAULT_BAND_COLORS[2]))
 
@@ -740,7 +751,7 @@ class ReactionModeTests(unittest.TestCase):
         self.update(
             reaction,
             100.1,
-            audio={"rms": -40.0, "bands": [-40.0] * 5, "band_peaks": [-20.0] * 5},
+            audio={"rms": -40.0, "bands": [-40.0] * 5, "band_peaks": [-12.0] * 5},
         )
         self.assertGreater(reaction.levels["a"], quiet + 0.25)
         self.assertGreater(reaction.band_levels[0], quiet + 0.25)
@@ -759,15 +770,15 @@ class ReactionModeTests(unittest.TestCase):
             audio={"rms": -12.0, "bands": [-12.0] * 5},
         )
         attacked = reaction.dimming("a", 100, 100.06, 0.01)
-        self.assertGreaterEqual(attacked, 55)
+        self.assertGreaterEqual(attacked, 90)
         self.update(
             reaction,
             100.20,
             audio={"rms": -60.0, "bands": [-60.0] * 5},
         )
         released = reaction.dimming("a", 100, 100.21, 0.01)
-        self.assertGreater(released, 45)
-        self.assertLess(attacked - released, 15)
+        self.assertGreater(released, 70)
+        self.assertLess(attacked - released, 25)
 
     def test_beat_detects_a_peak_transient_without_an_rms_jump(self):
         reaction = m.Reaction("beat", 1.0, 0.45)
@@ -780,7 +791,7 @@ class ReactionModeTests(unittest.TestCase):
         self.update(
             reaction,
             100.2,
-            audio={"rms": -40.0, "bands": [-40.0] * 5, "band_peaks": [-20.0] * 5},
+            audio={"rms": -40.0, "bands": [-40.0] * 5, "band_peaks": [-12.0] * 5},
         )
         self.assertEqual(reaction.band_at[0], 100.2)
         self.assertEqual(reaction.beat_at, 100.2)
@@ -794,7 +805,7 @@ class ReactionModeTests(unittest.TestCase):
             100.0,
             audio={"bands": [-12.0] * 5, "band_peaks": [-8.0] * 5},
         )
-        self.assertAlmostEqual(reaction.levels["a"], 1.0)
+        self.assertGreater(reaction.levels["a"], 0.9)
         self.assertEqual(raw["a"], m.hex_to_rgb(m.DEFAULT_BAND_COLORS[0]))
 
     def test_audio_modes_still_work_without_band_metadata(self):
@@ -802,12 +813,12 @@ class ReactionModeTests(unittest.TestCase):
         # RMS; the meter must not go dark just because `bands` is missing.
         reaction = m.Reaction("vu", 1.0, 0.45)
         raw = self.update(reaction, 100.0, audio={"rms": -12.0})
-        self.assertAlmostEqual(reaction.levels["a"], 1.0)
+        self.assertGreater(reaction.levels["a"], 0.9)
         self.assertEqual(raw["a"], m.hex_to_rgb(m.DEFAULT_BAND_COLORS[0]))
 
         beat = m.Reaction("beat", 1.0, 0.45)
         self.update(beat, 100.0, audio={"rms": -40.0})
-        self.update(beat, 100.2, audio={"rms": -25.0})
+        self.update(beat, 100.2, audio={"rms": -18.0})
         self.assertEqual(beat.beat_at, 100.2)
 
     def test_audio_modes_ignore_nan_and_infinite_levels(self):

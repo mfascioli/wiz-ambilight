@@ -2,6 +2,34 @@
 
 Releases before 1.4.0 were never tagged; their history is in `git log`.
 
+## Unreleased
+
+- **Audio:** `beat` and `vu` now share a compressor-style level stage.
+  `pulse_level` gates levels below a dBFS threshold, maps the window up to a
+  ceiling onto 0…1 and applies a punch curve, so a solid hit reaches full
+  brightness instead of drifting halfway. The default window is −22…−10 dBFS
+  with a 1 ms attack, 55 ms release and punch 3.0; `beat` covers 75 % of the
+  range with the flash and `vu` uses the full swing. Quiet ticks no longer
+  trigger beats, and a hit scales with its band level but any solid hit reaches
+  full scale.
+- **Panel:** a full-width dynamics strip under the three Look columns — not a
+  fourth column and not a second card — shows a scrolling five-second **Signal**
+  timeline with dBFS grid, amber trace and red peaks above the threshold. The
+  amber threshold line is draggable and writes `react_threshold`. A **Dynamics
+  preset** select and four round knobs — Threshold, Attack, Release and Punch —
+  replace the old sliders; each knob is a vertical drag (Shift for fine) over a
+  hidden, keyboard-accessible range input. Four presets ship: **Mellow**,
+  **Glue**, **Punch** (default) and **Strobe**. Audio modes show the strip
+  instead of the profile select; video modes keep the profile. Both the timeline
+  and the readouts use `GET /api/meter`, which samples the live Lua state at
+  40 ms without restarting the sync.
+- **CLI:** `--react-threshold`, `--react-attack`, `--react-release` and
+  `--react-punch` expose the same four values; `--react-profile` still works as
+  a starting bundle for audio modes.
+- **Docs:** README, `docs/development.md`, `docs/design.md` and `AGENTS.md`
+  describe the dynamics stage, the timeline and the knobs. The roadmap now
+  includes the UI/UX redesign as item 5.
+
 ## 1.10.0 — 2026-11-22
 
 - **Audio:** `beat` and `vu` now react on the first transient instead of

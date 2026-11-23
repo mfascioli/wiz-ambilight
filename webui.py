@@ -45,6 +45,10 @@ CONFIG_KEYS = (
     "react_target",
     "react_profile",
     "react_bands",
+    "react_threshold",
+    "react_attack",
+    "react_release",
+    "react_punch",
     "vibrance",
     "brightness",
     "mode",
@@ -66,6 +70,10 @@ DEFAULT_CONFIG = {
     "react_target": 0.45,
     "react_profile": "balanced",
     "react_bands": [],
+    "react_threshold": -22.0,
+    "react_attack": 1.0,
+    "react_release": 55.0,
+    "react_punch": 3.0,
     "vibrance": 1.0,
     "brightness": 100,
     "mode": "attach",
@@ -205,6 +213,26 @@ def normalize_config(raw, core) -> dict:
         core.rgb_to_hex(color)
         for color in core.normalize_band_colors(config.get("react_bands"))
     ]
+    try:
+        config["react_threshold"] = max(
+            -60.0, min(0.0, float(config["react_threshold"]))
+        )
+    except (TypeError, ValueError):
+        config["react_threshold"] = -22.0
+    try:
+        config["react_attack"] = max(0.0, min(200.0, float(config["react_attack"])))
+    except (TypeError, ValueError):
+        config["react_attack"] = 1.0
+    try:
+        config["react_release"] = max(
+            20.0, min(1000.0, float(config["react_release"]))
+        )
+    except (TypeError, ValueError):
+        config["react_release"] = 55.0
+    try:
+        config["react_punch"] = max(1.0, min(4.0, float(config["react_punch"])))
+    except (TypeError, ValueError):
+        config["react_punch"] = 3.0
     try:
         config["vibrance"] = max(0.0, min(2.0, float(config["vibrance"])))
     except (TypeError, ValueError):
@@ -455,6 +483,14 @@ def build_command(config: dict, core, demo: bool = False):
         config.get("react_profile", "balanced"),
         "--react-bands",
         ",".join(config.get("react_bands") or core.DEFAULT_BAND_COLORS),
+        "--react-threshold",
+        f"{config.get('react_threshold', -22.0):g}",
+        "--react-attack",
+        f"{config.get('react_attack', 1.0):g}",
+        "--react-release",
+        f"{config.get('react_release', 55.0):g}",
+        "--react-punch",
+        f"{config.get('react_punch', 3.0):g}",
         "--vibrance",
         f"{config.get('vibrance', 1.0):g}",
         "--brightness",
@@ -832,12 +868,8 @@ def _descendants(stats, roots):
     return {pid: stats[pid] for pid in seen if pid in stats}
 
 
-def _fresh_state_pid(max_age: float = 4.0):
-    """The mpv pid in the newest fresh Lua state file, or None.
-
-    Attach mode has no parent link to follow, so the Lua script writes its own
-    pid. Old scripts do not, and a stale file from a closed player is ignored.
-    """
+def _fresh_state(max_age: float = 4.0):
+    """The newest live Lua state file, or None if every file is stale."""
     try:
         paths = list(runtime_dir().glob("state*.json"))
     except OSError:
@@ -852,11 +884,25 @@ def _fresh_state_pid(max_age: float = 4.0):
         if now - modified > max_age:
             continue
         data = read_json(path, None)
-        pid = data.get("pid") if isinstance(data, dict) else None
-        if isinstance(pid, int) and pid > 0 and _pid_alive(pid):
-            if newest is None or modified > newest[0]:
-                newest = (modified, pid)
+        if not isinstance(data, dict):
+            continue
+        pid = data.get("pid")
+        if not (isinstance(pid, int) and pid > 0 and _pid_alive(pid)):
+            continue
+        if newest is None or modified > newest[0]:
+            newest = (modified, data)
     return newest[1] if newest else None
+
+
+def _fresh_state_pid(max_age: float = 4.0):
+    """The mpv pid in the newest fresh Lua state file, or None.
+
+    Attach mode has no parent link to follow, so the Lua script writes its own
+    pid. Old scripts do not, and a stale file from a closed player is ignored.
+    """
+    data = _fresh_state(max_age)
+    pid = data.get("pid") if data else None
+    return pid if isinstance(pid, int) and pid > 0 else None
 
 
 class Panel:
@@ -1001,6 +1047,33 @@ class Panel:
             "installed": installed,
             "stale": stale,
             "path": str(destination),
+        }
+
+    def meter(self) -> dict:
+        """Live audio levels for the panel's VU needle.
+
+        The Lua state beats at 30 Hz in audio mode, so this is a cheap read of
+        the newest fresh file instead of another mpv round trip.
+        """
+        state = _fresh_state()
+        audio = state.get("audio") if isinstance(state, dict) else None
+        audio = audio if isinstance(audio, dict) else {}
+        db = self.core.hot_db(audio.get("rms"), audio.get("peak"))
+
+        def number(value):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None
+            return value if math.isfinite(value) else None
+
+        bands = audio.get("bands")
+        bands = bands if isinstance(bands, (list, tuple)) else []
+        return {
+            "at": time.time(),
+            "active": db is not None,
+            "db": round(db, 1) if db is not None else None,
+            "rms": number(audio.get("rms")),
+            "peak": number(audio.get("peak")),
+            "bands": [number(value) for value in bands[:5]],
         }
 
     def _sync_stats(self, pid):
@@ -1199,6 +1272,10 @@ class Panel:
                     "label": group.capitalize(),
                 }
                 for group in self.core.REACTION_GROUPS
+            ],
+            "dynamics": [
+                {"id": key, **values}
+                for key, values in self.core.AUDIO_PRESETS.items()
             ],
             "scenes": scenes,
             "wiz_scenes": [
@@ -1833,6 +1910,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             self.panel.maybe_scan()
             self._json(self.panel.snapshot())
+            return
+        if path == "/api/meter":
+            self._json(self.panel.meter())
             return
         target = STATIC_FILES.get(path)
         if target is None:

@@ -581,22 +581,24 @@ REACTIONS = {
     "beat": {
         "group": "audio",
         "label": "Beat — pulse on the beat",
-        "hint": "Band hits flash the bulbs; the audio analyser runs only now.",
+        "hint": "Band hits slam the bulbs; the audio analyser runs only now.",
         "detail": (
             "Listens to five frequency bands. Each bulb owns one band and "
-            "flashes its chosen color when that band jumps above its recent "
-            "average. With one bulb it pulses on the overall beat."
+            "slams to full brightness when that band jumps above its recent "
+            "average and clears the threshold. With one bulb it pulses on the "
+            "overall beat."
         ),
     },
     "vu": {
         "group": "audio",
         "label": "VU — five-band meter",
-        "hint": "Each bulb follows its band as a level meter.",
+        "hint": "Each bulb follows its band as a punchy level meter.",
         "detail": (
-            "Turns the bulbs into a five-band meter. Each bulb follows the "
-            "level of its assigned band, from silence to full, in that band's "
-            "chosen color. With one bulb it follows the overall volume and "
-            "takes the color of the loudest band."
+            "Turns the bulbs into a five-band pulse meter. Each bulb follows "
+            "its assigned band from the threshold to full, in that band's "
+            "color; the compressor curve and punch make the level pump. With "
+            "one bulb it follows the overall volume and takes the color of the "
+            "loudest band."
         ),
     },
 }
@@ -642,21 +644,65 @@ MOTION_TAU = 0.35
 MOTION_DISTANCE = 0.12
 BEAT_THRESHOLD_DB = 3.0
 BEAT_COOLDOWN = 0.12
-# `span` is the headroom kept between hits: 0.55 means the bulbs idle at 45 %
+# `span` is the headroom kept between hits: 0.75 means the bulbs idle at 25 %
 # of the configured brightness and the flash covers the rest. That gap is what
-# makes the pulse read as a flash instead of a small tremble.
-BEAT_SPAN = 0.55
-BEAT_ATTACK = 0.0
-BEAT_RELEASE = 0.10
+# makes the pulse read as a strobe instead of a tremble.
+BEAT_SPAN = 0.75
 VU_LOW_DB = -45.0
 VU_HIGH_DB = -12.0
 VU_SPAN = 1.0
-VU_ATTACK = 0.008
-VU_RELEASE = 0.11
-# A linear dB scale leaves most music in the top of the meter, where a few
-# percent of brightness are easy to miss. Raising the normalised level to this
-# power darkens the quiet passages and widens the gap before a hit.
-VU_CURVE = 1.4
+
+# Audio dynamics, in the spirit of a bus compressor. `threshold` is the dBFS
+# gate where the bulbs start to open, `attack` and `release` are the envelope
+# in seconds, and `punch` is how hard the levels above the gate drive the
+# brightness. A punch above 1 lifts the middle of the window, so a hit lands
+# near full instead of halfway: that is what reads as a pulse.
+AUDIO_THRESHOLD_DB = -22.0
+AUDIO_ATTACK = 0.001
+AUDIO_RELEASE = 0.055
+AUDIO_PUNCH = 3.0
+AUDIO_CEILING_DB = -10.0
+# The balanced beat profile shares the audio envelope defaults.
+BEAT_ATTACK = AUDIO_ATTACK
+BEAT_RELEASE = AUDIO_RELEASE
+
+# Named starting points for the threshold/attack/release/punch controls. The
+# panel writes the four values when one is chosen; the CLI reaches the same
+# place with --react-profile and the individual flags.
+AUDIO_PRESETS = {
+    "mellow": {
+        "label": "Mellow",
+        "threshold": -30.0,
+        "attack": 12.0,
+        "release": 200.0,
+        "punch": 1.4,
+        "hint": "Slow, rounded fades; the meter breathes with the track.",
+    },
+    "glue": {
+        "label": "Glue",
+        "threshold": -26.0,
+        "attack": 6.0,
+        "release": 120.0,
+        "punch": 2.0,
+        "hint": "The SSL-style middle: firm, musical pulses without strobing.",
+    },
+    "punch": {
+        "label": "Punch",
+        "threshold": -22.0,
+        "attack": 1.0,
+        "release": 55.0,
+        "punch": 3.0,
+        "hint": "Hard, short flashes on every hit; the default for audio.",
+    },
+    "strobe": {
+        "label": "Strobe",
+        "threshold": -18.0,
+        "attack": 0.0,
+        "release": 30.0,
+        "punch": 4.0,
+        "hint": "Instant full-scale hits and a fast drop; the most extreme.",
+    },
+}
 
 # Audio follows a faster clock than the video capture. The analyser metadata
 # changes on every audio frame, so a 30 Hz state file keeps kicks and meter
@@ -750,52 +796,64 @@ REACTION_PROFILES = {
         "soft": {
             "threshold": 4.5,
             "cooldown": 0.28,
-            "span": 0.35,
-            "attack": 0.010,
-            "release": 0.18,
-            "hint": "Only clear hits; short flashes with some headroom.",
+            "span": 0.55,
+            "gate": -30.0,
+            "high": VU_HIGH_DB,
+            "attack": 0.012,
+            "release": 0.20,
+            "punch": 1.4,
+            "hint": "Only clear hits; slow, rounded flashes with headroom.",
         },
         "balanced": {
             "threshold": BEAT_THRESHOLD_DB,
             "cooldown": BEAT_COOLDOWN,
             "span": BEAT_SPAN,
-            "attack": BEAT_ATTACK,
-            "release": BEAT_RELEASE,
-            "hint": "The default: instant flashes on the beat.",
+            "gate": AUDIO_THRESHOLD_DB,
+            "high": AUDIO_CEILING_DB,
+            "attack": AUDIO_ATTACK,
+            "release": AUDIO_RELEASE,
+            "punch": AUDIO_PUNCH,
+            "hint": "The default: hard, short flashes on the beat.",
         },
         "strong": {
             "threshold": 1.5,
             "cooldown": 0.09,
-            "span": 0.80,
+            "span": 0.95,
+            "gate": -18.0,
+            "high": -8.0,
             "attack": 0.0,
-            "release": 0.07,
-            "hint": "Sensitive, deep flashes on most hits.",
+            "release": 0.030,
+            "punch": 4.0,
+            "hint": "Sensitive, full-scale strobes on almost every hit.",
         },
     },
     "vu": {
         "soft": {
-            "low": -50.0,
-            "high": -14.0,
+            "high": VU_HIGH_DB,
             "span": 0.70,
-            "attack": 0.020,
-            "release": 0.18,
-            "hint": "Narrow range; a slower, smoother meter.",
+            "gate": -30.0,
+            "attack": 0.012,
+            "release": 0.20,
+            "punch": 1.4,
+            "hint": "Slow, rounded fades; the meter breathes with the track.",
         },
         "balanced": {
-            "low": VU_LOW_DB,
-            "high": VU_HIGH_DB,
+            "high": AUDIO_CEILING_DB,
             "span": VU_SPAN,
-            "attack": VU_ATTACK,
-            "release": VU_RELEASE,
-            "hint": "The default −45…−12 dBFS range.",
+            "gate": AUDIO_THRESHOLD_DB,
+            "attack": AUDIO_ATTACK,
+            "release": AUDIO_RELEASE,
+            "punch": AUDIO_PUNCH,
+            "hint": "The default: a punchy −22…−10 dBFS pulse meter.",
         },
         "strong": {
-            "low": -40.0,
-            "high": -10.0,
+            "high": -8.0,
             "span": 1.0,
-            "attack": 0.004,
-            "release": 0.07,
-            "hint": "Wide, fast range; quiet parts go dark, hits jump.",
+            "gate": -18.0,
+            "attack": 0.0,
+            "release": 0.030,
+            "punch": 4.0,
+            "hint": "Full-scale, fast; quiet parts go dark and hits strobe.",
         },
     },
 }
@@ -917,16 +975,27 @@ def vu_level(db, low: float = VU_LOW_DB, high: float = VU_HIGH_DB) -> float:
     return max(0.0, min(1.0, (value - low) / (high - low)))
 
 
-def vu_curve(level, curve: float = VU_CURVE) -> float:
-    """Darken the quiet part of the meter so hits stand out.
+def pulse_level(
+    db,
+    threshold: float = AUDIO_THRESHOLD_DB,
+    ceiling: float = AUDIO_CEILING_DB,
+    punch: float = AUDIO_PUNCH,
+) -> float:
+    """Map a dBFS level onto 0..1 with a gate and a punch curve.
 
-    The dB window already fits music, but most of a track sits in its top
-    half. Raising the normalised level to `curve` lowers the idle brightness
-    without touching full scale, which is the difference between a gentle
-    breathing and a visible flash.
+    Below `threshold` the bulbs idle. The window up to `ceiling` reaches full
+    scale. `punch` raises the middle of that window, so a hit lands near full
+    instead of halfway; that is the difference between a smooth meter and a
+    visible pulse.
     """
-    value = max(0.0, min(1.0, float(level)))
-    return value**max(0.1, float(curve))
+    value = finite_float(db)
+    if value is None:
+        return 0.0
+    low = float(threshold)
+    high = max(low + 1.0, float(ceiling))
+    level = (value - low) / (high - low)
+    level = max(0.0, min(1.0, level))
+    return level ** (1.0 / max(1.0, float(punch)))
 
 
 def hot_db(rms, peak, peak_db: float = AUDIO_PEAK_DB):
@@ -980,6 +1049,10 @@ class Reaction:
         target: float = REACTION_TARGET,
         profile: str = "balanced",
         bands=None,
+        threshold=None,
+        attack=None,
+        release=None,
+        punch=None,
     ):
         self.mode = mode if mode in REACTIONS else "color"
         self.amount = max(0.0, min(1.0, float(amount)))
@@ -1004,11 +1077,22 @@ class Reaction:
         self.beat_span = float(values.get("span", BEAT_SPAN))
         self.beat_attack = float(values.get("attack", BEAT_ATTACK))
         self.beat_release = float(values.get("release", BEAT_RELEASE))
-        self.vu_low = float(values.get("low", VU_LOW_DB))
-        self.vu_high = float(values.get("high", VU_HIGH_DB))
         self.vu_span = float(values.get("span", VU_SPAN))
-        self.vu_attack = float(values.get("attack", VU_ATTACK))
-        self.vu_release = float(values.get("release", VU_RELEASE))
+        # The dynamics controls are explicit overrides: the CLI leaves them
+        # unset so a profile still works, while the panel always sends values.
+        self.audio_threshold = float(
+            values.get("gate", AUDIO_THRESHOLD_DB) if threshold is None else threshold
+        )
+        self.audio_ceiling = float(values.get("high", AUDIO_CEILING_DB))
+        self.audio_attack = float(
+            values.get("attack", AUDIO_ATTACK) if attack is None else attack
+        )
+        self.audio_release = float(
+            values.get("release", AUDIO_RELEASE) if release is None else release
+        )
+        self.audio_punch = float(
+            values.get("punch", AUDIO_PUNCH) if punch is None else punch
+        )
         self.last_frame_at = None
         self.luma = None
         self.gain = 1.0
@@ -1139,7 +1223,12 @@ class Reaction:
         self.band_db = combined
         self.band_peak_db = peaks
         self.band_levels = [
-            vu_curve(vu_level(value, self.vu_low, self.vu_high))
+            pulse_level(
+                value,
+                self.audio_threshold,
+                self.audio_ceiling,
+                self.audio_punch,
+            )
             for value in combined
         ]
         count = len(lights)
@@ -1155,7 +1244,12 @@ class Reaction:
             # stand in for the missing overall peak instead of holding still.
             overall_db = max(overall_db, band_hot)
         overall = (
-            vu_curve(vu_level(overall_db, self.vu_low, self.vu_high))
+            pulse_level(
+                overall_db,
+                self.audio_threshold,
+                self.audio_ceiling,
+                self.audio_punch,
+            )
             if overall_db is not None
             else max(self.band_levels)
         )
@@ -1186,9 +1280,11 @@ class Reaction:
             return base, at
         if base is None:
             return value, at
+        if value < self.audio_threshold:
+            # Track the quiet level so the next hit still reads as a jump.
+            return base + (value - base) * 0.35, at
         if (
-            value >= -60.0
-            and value - base >= self.beat_threshold
+            value - base >= self.beat_threshold
             and (at is None or now - at >= self.beat_cooldown)
         ):
             # Re-seed the baseline so one loud hit does not retrigger itself.
@@ -1217,14 +1313,17 @@ class Reaction:
             steady = 1.0 - self.beat_span * self.amount
             pulse_at = self.pulse_at.get(ip, self.beat_at)
             age = now - pulse_at if pulse_at is not None else float("inf")
-            mult = steady + (1.0 - steady) * beat_pulse(
-                age, self.beat_attack, self.beat_release
-            )
+            power = self.levels.get(ip, 0.0)
+            flash = beat_pulse(age, self.audio_attack, self.audio_release)
+            # Any solid hit reaches full brightness; the gate already rejects
+            # quiet ticks, so the remaining level only tapers the softest.
+            gain = min(1.0, 0.5 + power)
+            mult = steady + (1.0 - steady) * flash * gain
         elif self.mode == "vu":
             span = self.vu_span * self.amount
             target = 1.0 - span + span * self.levels.get(ip, 0.0)
             previous = self.vu_env.get(ip, target)
-            tau = self.vu_attack if target >= previous else self.vu_release
+            tau = self.audio_attack if target >= previous else self.audio_release
             alpha = 1.0 - math.exp(-max(0.0, dt) / max(0.001, tau))
             mult = previous + (target - previous) * alpha
             self.vu_env[ip] = mult
@@ -1437,14 +1536,20 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
     sender = WizSender(dry_run=args.dry_run)
     smoother = Smoother(args.smooth / 1000.0)
     base_dimming = max(10, min(100, args.brightness))
+    attack = getattr(args, "react_attack", None)
+    release = getattr(args, "react_release", None)
     reaction = Reaction(
         getattr(args, "react", "color"),
         getattr(args, "react_amount", 0.8),
         getattr(args, "react_target", REACTION_TARGET),
         getattr(args, "react_profile", "balanced"),
         getattr(args, "react_bands", None),
+        threshold=getattr(args, "react_threshold", None),
+        attack=None if attack is None else attack / 1000.0,
+        release=None if release is None else release / 1000.0,
+        punch=getattr(args, "react_punch", None),
     )
-    # Audio envelopes are short: a 120 ms pulse at an 18 Hz send rate can be
+    # Audio envelopes are short: a 55 ms release at an 18 Hz send rate can be
     # missed between datagrams. Audio modes always push at 30 Hz, like the
     # `raw` style, while the style still controls the video-only rate.
     audio_send_hz = max(args.send_hz, AUDIO_FPS) if reaction.audio else args.send_hz
@@ -2116,6 +2221,30 @@ def main(argv=None) -> int:
         ),
     )
     parser.add_argument(
+        "--react-threshold",
+        type=float,
+        default=None,
+        help="audio modes: dBFS gate where the bulbs start to open (-60 to 0)",
+    )
+    parser.add_argument(
+        "--react-attack",
+        type=float,
+        default=None,
+        help="audio modes: envelope attack in ms (0-200)",
+    )
+    parser.add_argument(
+        "--react-release",
+        type=float,
+        default=None,
+        help="audio modes: envelope release in ms (20-1000)",
+    )
+    parser.add_argument(
+        "--react-punch",
+        type=float,
+        default=None,
+        help="audio modes: how hard levels above the gate hit, 1-4",
+    )
+    parser.add_argument(
         "--sampling",
         default="auto",
         choices=SAMPLING_CHOICES,
@@ -2347,6 +2476,14 @@ def main(argv=None) -> int:
             args.react_bands = parse_band_colors(args.react_bands)
         except ValueError as error:
             parser.error(f"--react-bands: {error}")
+    if args.react_threshold is not None:
+        args.react_threshold = max(-60.0, min(0.0, float(args.react_threshold)))
+    if args.react_attack is not None:
+        args.react_attack = max(0.0, min(200.0, float(args.react_attack)))
+    if args.react_release is not None:
+        args.react_release = max(20.0, min(1000.0, float(args.react_release)))
+    if args.react_punch is not None:
+        args.react_punch = max(1.0, min(4.0, float(args.react_punch)))
     resolve_sampling(args, explicit)
 
     if args.attach:

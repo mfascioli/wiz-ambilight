@@ -257,6 +257,49 @@ class StructureTests(unittest.TestCase):
         self.assertIn("react_bands", js)
         self.assertEqual(HTML.count('class="look-col"'), 3)
 
+    def test_audio_dynamics_strip_lives_below_the_look_columns(self):
+        js = (WEB / "app.js").read_text(encoding="utf-8")
+        for control in (
+            'id="dynamicsPanel"',
+            'id="vuMeter"',
+            'id="reactDynamics"',
+            'id="reactThreshold"',
+            'id="reactAttack"',
+            'id="reactRelease"',
+            'id="reactPunch"',
+        ):
+            with self.subTest(control=control):
+                self.assertIn(control, HTML)
+        # The strip is full-width, after the three columns and outside the
+        # manual sampling grid: not a fourth column and not a second card.
+        self.assertIn('class="dynamics-strip hidden" id="dynamicsPanel"', HTML)
+        self.assertLess(HTML.index("sampleStage"), HTML.index('id="dynamicsPanel"'))
+        self.assertLess(HTML.index('id="dynamicsPanel"'), HTML.index('id="samplingManual"'))
+        self.assertLess(HTML.index('id="vuMeter"'), HTML.index('id="samplingManual"'))
+        # Dynamics controls are round knobs over hidden range inputs, not the
+        # old column of sliders.
+        for control in ("reactThreshold", "reactAttack", "reactRelease", "reactPunch"):
+            with self.subTest(control=control):
+                self.assertRegex(
+                    HTML,
+                    r'id="%s" class="knob-input" type="range"' % control,
+                )
+        self.assertNotIn('id="vuField"', HTML)
+        self.assertNotIn('id="reactThresholdField"', HTML)
+        self.assertIn("syncDynamicsFields", js)
+        self.assertIn("drawTimeline", js)
+        self.assertIn("bindScope", js)
+        self.assertIn("bindKnobs", js)
+        self.assertIn("thresholdFromPointer", js)
+        self.assertIn("/api/meter", js)
+        self.assertIn("/api/meter", WEBUI)
+        self.assertIn("AUDIO_PRESETS", CORE)
+        self.assertIn(".dynamics-strip", CSS)
+        self.assertIn(".knob-dial", CSS)
+        self.assertIn(".knob-input", CSS)
+        self.assertIn("#vuMeter", CSS)
+        self.assertEqual(HTML.count('class="look-col"'), 3)
+
     def test_vibrance_stays_inside_preset(self):
         js = (WEB / "app.js").read_text(encoding="utf-8")
         self.assertIn('id="vibrance"', HTML)

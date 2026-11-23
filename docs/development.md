@@ -121,14 +121,32 @@ layer and are scaled by `react_amount` (`0` is a no-op). Spans below are at
 | `cut` | video | frame-to-frame distance | one hard edit, 120 ms flash, 1.5 s cooldown, 6 per minute, 22 % headroom |
 | `motion` | video | per-zone distance | 0.35 s release, brightness and saturation |
 | `duotone` | video | per-zone colour | odd bulbs get `hue_shift(rgb, 180° × amount)` |
-| `beat` | audio | per-band RMS + peak transient | each band 3 dB over a fast running average; 0.12 s minimum gap, instant attack / 100 ms release |
-| `vu` | audio | per-band RMS + sample peak | −45…−12 dBFS per band, 8 ms attack / 110 ms release, level raised to the 1.4 power; one bulb uses the overall level |
+| `beat` | audio | per-band RMS + peak transient | each band must clear the `react_threshold` gate and jump 3 dB over a fast running average; 0.12 s minimum gap, 1 ms attack / 55 ms release, 75 % flash span; a hit reaches full scale |
+| `vu` | audio | per-band RMS + sample peak | −22…−10 dBFS window per band, 1 ms attack / 55 ms release, punch 3.0; one bulb uses the overall level |
 
 `react_profile` (`soft`, `balanced`, `strong`) selects a row from
-`REACTION_PROFILES` for `equalize`, `cut`, `motion`, `beat` and `vu`. The
-profile moves span, time constant, threshold, cooldown and rate limit
-together; `react_amount` still scales the spans, so the two compose. `color`
-and `duotone` have no profile. An unknown profile falls back to `balanced`.
+`REACTION_PROFILES`. Video modes use it for `equalize`, `cut` and `motion`;
+audio modes use it as a starting bundle for the gate, ceiling, envelope and
+punch. `react_amount` still scales the spans, so the two compose. `color` and
+`duotone` have no profile. An unknown profile falls back to `balanced`.
+
+Audio modes expose the same dynamics as explicit controls. `AUDIO_PRESETS`
+holds four named starting points, served to the panel as `dynamics`:
+
+| preset | threshold | attack | release | punch |
+| --- | --- | --- | --- | --- |
+| `mellow` | −30 dBFS | 12 ms | 200 ms | 1.4 |
+| `glue` | −26 dBFS | 6 ms | 120 ms | 2.0 |
+| `punch` | −22 dBFS | 1 ms | 55 ms | 3.0 |
+| `strobe` | −18 dBFS | 0 ms | 30 ms | 4.0 |
+
+`react_threshold` is the gate in dBFS (−60…0), `react_attack` and
+`react_release` are milliseconds (0…200 and 20…1000) and `react_punch` is
+1…4. The panel writes all four; `--react-threshold`, `--react-attack`,
+`--react-release` and `--react-punch` are the CLI equivalents. When they are
+absent, the values come from the profile, which keeps `--react-profile`
+meaningful for old configs. The ceiling comes from the profile's `high` value
+(−10 dBFS by default).
 
 `react_bands` is five `#rrggbb` strings in `sub`, `low`, `low-mid`, `mid`,
 `high` order. The crossover splits at 60, 250, 800 and 2500 Hz. Missing or
@@ -140,9 +158,9 @@ overall level, 2–5 map to `[0,4]`, `[0,2,4]`, `[0,1,3,4]` and `[0,1,2,3,4]`,
 and more than five repeat. With one bulb the colour is the loudest band's.
 
 The pure helpers are in `mpv_ambilight.py`: `scene_luma`, `rgb_distance`,
-`hue_shift`, `equalize_gain`, `vu_level`, `hot_db`, `beat_pulse`, `cut_pulse`,
-`finite_float`, `band_for`, `normalize_band_colors`, `parse_band_colors` and
-the `Reaction` state class. `Reaction.update()` runs when Lua writes a state frame;
+`hue_shift`, `equalize_gain`, `pulse_level`, `vu_level`, `hot_db`,
+`beat_pulse`, `cut_pulse`, `finite_float`, `band_for`,
+`normalize_band_colors`, `parse_band_colors` and the `Reaction` state class. `Reaction.update()` runs when Lua writes a state frame;
 `Reaction.dimming()` runs on every send tick so a 120 ms flash is not lost
 between frames. Colour changes happen before saturation/gamma; brightness is
 per bulb.
@@ -191,18 +209,30 @@ While an audio mode is active the state snapshot gains:
 Levels are dBFS; `crest` is peak minus RMS in dB and `zcr` is the
 zero-crossing rate. The louder channel of each stereo band pair is used, so a
 one-sided mix still registers. Digital silence (`-inf`) and NaN become
-`null`; Python treats `null` as silence. The VU meter uses
+`null`; Python treats `null` as silence. The signal view uses
 `hot_db(rms, peak)`: the hotter of RMS and peak minus 8 dB, so a kick is
 visible on the first update without a mastered track sitting at full scale.
-`vu_curve()` then raises the normalised level to `VU_CURVE` (1.4), which
-darkens the quiet half of the scale so the jump reads as a flash. The beat
-detector runs on the same combined level and compares it with a fast running
-baseline.
+`pulse_level(db, threshold, ceiling, punch)` then gates everything below the
+threshold to zero, maps the window up to the ceiling onto 0…1 and raises the
+result to `1 / punch`. A punch above 1 lifts the middle of the window, so a
+solid hit lands near full instead of halfway; that is what turns a level meter
+into a pulse. The beat detector runs on the same combined level, ignores
+anything below the threshold, and compares it with a fast running baseline.
 
 `Reaction.dimming()` is called only when the send loop builds a datagram, so
 `run_sync()` passes the time since the previous send, not the 3–6 ms polling
-step. The VU attack/release constants are therefore wall-clock values; using
-the polling delta would stretch a 110 ms release into almost a second.
+step. The dynamics attack/release values are therefore wall-clock seconds;
+using the polling delta would stretch a 55 ms release into almost a second.
+
+The panel's **Signal** view is a local readout over that meter. `GET
+/api/meter` reads the newest fresh Lua state file, applies `hot_db` to its
+`audio` object and returns `active`, `db`, `rms`, `peak` and the five band
+levels. The browser polls it every 40 ms only while an audio reaction is
+selected and keeps a five-second history on the canvas: amber trace, red
+segments above the threshold, and the same values in the header. The amber
+threshold line is drawn from `react_threshold` and dragging it writes that
+config value, so the meter follows the song without restarting the sync or
+adding a second analyser.
 
 The Lua timer beats at 30 Hz (`AUDIO_FPS`) even when the sampling profile caps
 video analysis lower. `analyze()` is still gated by `fps_now`, so the extra

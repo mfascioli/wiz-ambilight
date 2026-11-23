@@ -7,13 +7,17 @@ const el = (tag, className, text) => {
   return node;
 };
 
-/* Sliders paint their own filled track through the --fill custom property. */
+/* Sliders paint their own filled track through the --fill custom property.
+   Knob inputs are invisible, so they expose the same ratio as --turn on the
+   round dial instead. */
 const paintRange = (input) => {
   const min = Number(input.min) || 0;
   const max = Number(input.max) || 100;
   const value = Number(input.value) || 0;
   const ratio = max > min ? (value - min) / (max - min) : 0;
   input.style.setProperty("--fill", `${Math.round(ratio * 100)}%`);
+  const knob = input.closest?.(".knob");
+  if (knob) knob.style.setProperty("--turn", String(ratio));
 };
 
 const refs = {
@@ -71,6 +75,20 @@ const refs = {
   reactProfile: document.getElementById("reactProfile"),
   reactProfileField: document.getElementById("reactProfileField"),
   reactProfileHint: document.getElementById("reactProfileHint"),
+  reactDynamics: document.getElementById("reactDynamics"),
+  reactDynamicsHint: document.getElementById("reactDynamicsHint"),
+  reactThreshold: document.getElementById("reactThreshold"),
+  reactThresholdOut: document.getElementById("reactThresholdOut"),
+  reactAttack: document.getElementById("reactAttack"),
+  reactAttackOut: document.getElementById("reactAttackOut"),
+  reactRelease: document.getElementById("reactRelease"),
+  reactReleaseOut: document.getElementById("reactReleaseOut"),
+  reactPunch: document.getElementById("reactPunch"),
+  reactPunchOut: document.getElementById("reactPunchOut"),
+  dynamicsPanel: document.getElementById("dynamicsPanel"),
+  vuMeter: document.getElementById("vuMeter"),
+  vuDbOut: document.getElementById("vuDbOut"),
+  vuOverOut: document.getElementById("vuOverOut"),
   reactTarget: document.getElementById("reactTarget"),
   reactTargetField: document.getElementById("reactTargetField"),
   reactTargetOut: document.getElementById("reactTargetOut"),
@@ -710,6 +728,522 @@ function renderProfileHint() {
   refs.reactProfileHint.textContent = hints[refs.reactProfile.value] || "";
 }
 
+function fillDynamicsSelect(snapshot) {
+  const presets = snapshot.dynamics || [];
+  const signature = JSON.stringify(
+    presets.map((preset) => [
+      preset.id,
+      preset.label,
+      preset.hint,
+      preset.threshold,
+      preset.attack,
+      preset.release,
+      preset.punch,
+    ]),
+  );
+  if (refs.reactDynamics.dataset.signature === signature) return;
+  refs.reactDynamics.replaceChildren();
+  for (const preset of presets) {
+    const option = el("option", "", preset.label);
+    option.value = preset.id;
+    option.title = preset.hint || "";
+    refs.reactDynamics.append(option);
+  }
+  const custom = el("option", "", "Custom");
+  custom.value = "custom";
+  refs.reactDynamics.append(custom);
+  refs.reactDynamics.dataset.signature = signature;
+  refs.reactDynamics.dataset.hints = JSON.stringify(
+    Object.fromEntries(presets.map((preset) => [preset.id, preset.hint || ""])),
+  );
+  refs.reactDynamics.dataset.presets = JSON.stringify(
+    Object.fromEntries(
+      presets.map((preset) => [
+        preset.id,
+        {
+          threshold: preset.threshold,
+          attack: preset.attack,
+          release: preset.release,
+          punch: preset.punch,
+        },
+      ]),
+    ),
+  );
+}
+
+function renderDynamicsHint() {
+  let hints = {};
+  try {
+    hints = JSON.parse(refs.reactDynamics.dataset.hints || "{}");
+  } catch {
+    hints = {};
+  }
+  refs.reactDynamicsHint.textContent =
+    hints[refs.reactDynamics.value] || "Roll your own threshold, attack, release and punch.";
+}
+
+function setRangeOutput(input, output, value, label) {
+  if (document.activeElement !== input) {
+    input.value = String(value);
+    paintRange(input);
+  }
+  output.value = label(value);
+}
+
+function matchingDynamics(config) {
+  let presets = {};
+  try {
+    presets = JSON.parse(refs.reactDynamics.dataset.presets || "{}");
+  } catch {
+    presets = {};
+  }
+  const values = {
+    threshold: Number(config.react_threshold),
+    attack: Number(config.react_attack),
+    release: Number(config.react_release),
+    punch: Number(config.react_punch),
+  };
+  for (const [id, preset] of Object.entries(presets)) {
+    const close = Object.keys(values).every(
+      (key) => Math.abs(values[key] - Number(preset[key])) < 0.51,
+    );
+    if (close) return id;
+  }
+  return "custom";
+}
+
+function syncDynamicsFields(snapshot, config, reaction) {
+  const audio = Boolean(reaction?.audio);
+  refs.dynamicsPanel.classList.toggle("hidden", !audio);
+  // Audio modes use the dynamics preset; video modes keep the profile.
+  refs.reactProfileField.classList.toggle(
+    "hidden",
+    audio || !(reaction?.profiles || []).length,
+  );
+  if (!audio) {
+    stopMeter();
+    return;
+  }
+  fillDynamicsSelect(snapshot);
+  if (document.activeElement !== refs.reactDynamics) {
+    refs.reactDynamics.value = matchingDynamics(config);
+  }
+  renderDynamicsHint();
+  const threshold = Number(config.react_threshold);
+  const attack = Number(config.react_attack);
+  const release = Number(config.react_release);
+  const punch = Number(config.react_punch);
+  setRangeOutput(
+    refs.reactThreshold,
+    refs.reactThresholdOut,
+    Number.isFinite(threshold) ? threshold : -22,
+    (value) => `${Math.round(value)} dB`,
+  );
+  setRangeOutput(
+    refs.reactAttack,
+    refs.reactAttackOut,
+    Number.isFinite(attack) ? attack : 1,
+    (value) => `${Math.round(value)} ms`,
+  );
+  setRangeOutput(
+    refs.reactRelease,
+    refs.reactReleaseOut,
+    Number.isFinite(release) ? release : 55,
+    (value) => `${Math.round(value)} ms`,
+  );
+  setRangeOutput(
+    refs.reactPunch,
+    refs.reactPunchOut,
+    Math.round((Number.isFinite(punch) ? punch : 3) * 100),
+    (value) => `${(value / 100).toFixed(1)}×`,
+  );
+  startMeter();
+}
+
+const SCOPE_MIN_DB = -60;
+const SCOPE_MAX_DB = 0;
+const SCOPE_WINDOW_MS = 5000;
+const SCOPE_POLL_MS = 40;
+const SCOPE_COLORS = {
+  amber: "#fcbe11",
+  hot: "#ff6b5e",
+  grid: "#1c1c1c",
+  time: "rgba(255, 255, 255, .035)",
+  label: "#6f6b62",
+};
+
+const vu = {
+  timer: null,
+  busy: false,
+  history: [],
+  lastDb: null,
+  plot: null,
+  dragging: false,
+};
+
+function thresholdValue() {
+  const value = Number(refs.reactThreshold?.value);
+  return Number.isFinite(value) ? value : -22;
+}
+
+function dbToY(db, top, height) {
+  const clamped = Math.max(SCOPE_MIN_DB, Math.min(SCOPE_MAX_DB, db));
+  return top + ((SCOPE_MAX_DB - clamped) / -SCOPE_MIN_DB) * height;
+}
+
+function meterDb() {
+  const value = Number(vu.lastDb);
+  return Number.isFinite(value) ? value : null;
+}
+
+function renderOverReadout(db, threshold) {
+  const output = refs.vuOverOut;
+  if (!output) return;
+  if (db === null) {
+    output.textContent = "no signal";
+    output.classList.remove("over");
+    return;
+  }
+  const delta = db - threshold;
+  if (delta > 0) {
+    output.textContent = `${delta.toFixed(1)} dB over`;
+    output.classList.add("over");
+  } else {
+    output.textContent = `${Math.abs(delta).toFixed(1)} dB under`;
+    output.classList.remove("over");
+  }
+}
+
+function sizeScope(canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(1, Math.round(rect.width));
+  const height = Math.max(1, Math.round(rect.height));
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const pixelWidth = Math.round(width * dpr);
+  const pixelHeight = Math.round(height * dpr);
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  return { ctx, width, height };
+}
+
+function drawTimeline(db = meterDb()) {
+  const canvas = refs.vuMeter;
+  if (!canvas || !canvas.getContext) return;
+  const { ctx, width, height } = sizeScope(canvas);
+  if (width < 40 || height < 40) return;
+
+  const left = width < 340 ? 26 : 30;
+  const right = width - 8;
+  const top = 10;
+  const bottom = height - 15;
+  const plotWidth = Math.max(1, right - left);
+  const plotHeight = Math.max(1, bottom - top);
+  const threshold = thresholdValue();
+  const now = performance.now();
+
+  ctx.fillStyle = "#090909";
+  ctx.fillRect(0, 0, width, height);
+  ctx.textBaseline = "middle";
+  ctx.font = "8.5px ui-monospace, Menlo, Consolas, monospace";
+
+  // dBFS grid: every 12 dB keeps the trace readable without clutter.
+  ctx.textAlign = "right";
+  for (const mark of [0, -12, -24, -36, -48, -60]) {
+    const y = dbToY(mark, top, plotHeight);
+    ctx.strokeStyle = SCOPE_COLORS.grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(left, y + 0.5);
+    ctx.lineTo(right, y + 0.5);
+    ctx.stroke();
+    ctx.fillStyle = mark === 0 ? "#8a857b" : SCOPE_COLORS.label;
+    ctx.fillText(String(mark), left - 5, y);
+  }
+
+  // Time grid: one line per second across the five-second window.
+  ctx.textAlign = "center";
+  for (let second = 1; second <= 4; second += 1) {
+    const x = right - (second * 1000 * plotWidth) / SCOPE_WINDOW_MS;
+    ctx.strokeStyle = SCOPE_COLORS.time;
+    ctx.beginPath();
+    ctx.moveTo(x + 0.5, top);
+    ctx.lineTo(x + 0.5, bottom);
+    ctx.stroke();
+    ctx.fillStyle = SCOPE_COLORS.label;
+    ctx.fillText(`−${second}s`, x, bottom + 8);
+  }
+  ctx.fillStyle = SCOPE_COLORS.label;
+  ctx.textAlign = "right";
+  ctx.fillText("now", right, bottom + 8);
+
+  const points = vu.history.filter((point) => now - point.t <= SCOPE_WINDOW_MS);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(left, top, plotWidth, plotHeight);
+  ctx.clip();
+
+  if (points.length >= 2) {
+    const xFor = (point) =>
+      right - Math.min(1, (now - point.t) / SCOPE_WINDOW_MS) * plotWidth;
+
+    // Soft body under the trace so level, not just the line, reads at a glance.
+    ctx.beginPath();
+    ctx.moveTo(xFor(points[0]), bottom);
+    for (const point of points) {
+      ctx.lineTo(xFor(point), dbToY(point.db, top, plotHeight));
+    }
+    ctx.lineTo(xFor(points[points.length - 1]), bottom);
+    ctx.closePath();
+    const fill = ctx.createLinearGradient(0, top, 0, bottom);
+    fill.addColorStop(0, "rgba(252, 190, 17, .22)");
+    fill.addColorStop(1, "rgba(252, 190, 17, .02)");
+    ctx.fillStyle = fill;
+    ctx.fill();
+
+    // Segments that push past the threshold turn hot, so hits are obvious.
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 3.5;
+    ctx.strokeStyle = "rgba(255, 107, 94, .16)";
+    ctx.beginPath();
+    for (let index = 1; index < points.length; index += 1) {
+      const prev = points[index - 1];
+      const point = points[index];
+      if ((prev.db + point.db) / 2 <= threshold) continue;
+      ctx.moveTo(xFor(prev), dbToY(prev.db, top, plotHeight));
+      ctx.lineTo(xFor(point), dbToY(point.db, top, plotHeight));
+    }
+    ctx.stroke();
+
+    ctx.lineWidth = 1.5;
+    for (let index = 1; index < points.length; index += 1) {
+      const prev = points[index - 1];
+      const point = points[index];
+      const hot = (prev.db + point.db) / 2 > threshold;
+      ctx.strokeStyle = hot ? SCOPE_COLORS.hot : SCOPE_COLORS.amber;
+      ctx.beginPath();
+      ctx.moveTo(xFor(prev), dbToY(prev.db, top, plotHeight));
+      ctx.lineTo(xFor(point), dbToY(point.db, top, plotHeight));
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+
+  // The live edge: a dot only while frames are actually arriving.
+  const fresh = points.length && now - points[points.length - 1].t < 400;
+  if (fresh) {
+    const level = points[points.length - 1].db;
+    const x = right;
+    const y = dbToY(level, top, plotHeight);
+    const hot = level > threshold;
+    ctx.fillStyle = hot ? SCOPE_COLORS.hot : SCOPE_COLORS.amber;
+    ctx.beginPath();
+    ctx.arc(x, y, 2.6, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.strokeStyle = hot ? "rgba(255, 107, 94, .35)" : "rgba(252, 190, 17, .3)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(x, y, 5.5, 0, 2 * Math.PI);
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = SCOPE_COLORS.label;
+    ctx.font = "10px ui-monospace, Menlo, Consolas, monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("waiting for audio", left + plotWidth / 2, top + plotHeight / 2);
+  }
+
+  // Draggable threshold line and handle.
+  const thresholdY = dbToY(threshold, top, plotHeight);
+  ctx.strokeStyle = "rgba(252, 190, 17, .92)";
+  ctx.lineWidth = 1.2;
+  ctx.setLineDash([5, 3]);
+  ctx.beginPath();
+  ctx.moveTo(left, thresholdY + 0.5);
+  ctx.lineTo(right, thresholdY + 0.5);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = SCOPE_COLORS.amber;
+  ctx.beginPath();
+  ctx.moveTo(right - 7, thresholdY - 5);
+  ctx.lineTo(right, thresholdY);
+  ctx.lineTo(right - 7, thresholdY + 5);
+  ctx.closePath();
+  ctx.fill();
+
+  const label = `${Math.round(threshold)} dB`;
+  ctx.font = "9px ui-monospace, Menlo, Consolas, monospace";
+  const labelWidth = ctx.measureText(label).width;
+  const labelY = Math.max(top + 9, Math.min(bottom - 2, thresholdY - 5));
+  ctx.fillStyle = "rgba(8, 8, 8, .88)";
+  ctx.fillRect(right - labelWidth - 11, labelY - 10, labelWidth + 6, 11);
+  ctx.fillStyle = SCOPE_COLORS.amber;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, right - 8, labelY - 4);
+
+  vu.plot = { left, right, top, bottom, plotHeight };
+  renderOverReadout(db, threshold);
+}
+
+function capturePointer(node, pointerId) {
+  try {
+    node.setPointerCapture?.(pointerId);
+  } catch {
+    // Synthetic or already-released pointers can still drive the math.
+  }
+}
+
+function releasePointer(node, pointerId) {
+  try {
+    if (node.hasPointerCapture?.(pointerId)) node.releasePointerCapture(pointerId);
+  } catch {
+    // The pointer may already be gone; dragging state is what matters.
+  }
+}
+
+function thresholdFromPointer(event) {
+  if (!vu.plot) return;
+  const rect = refs.vuMeter.getBoundingClientRect();
+  const y = Math.max(
+    vu.plot.top,
+    Math.min(vu.plot.bottom, event.clientY - rect.top),
+  );
+  const ratio = (y - vu.plot.top) / vu.plot.plotHeight;
+  const value = SCOPE_MAX_DB + ratio * SCOPE_MIN_DB;
+  const min = Number(refs.reactThreshold.min) || -60;
+  const max = Number(refs.reactThreshold.max) || 0;
+  const step = Number(refs.reactThreshold.step) || 1;
+  const raw = Math.max(min, Math.min(max, value));
+  const snapped = Math.round(raw / step) * step;
+  refs.reactThreshold.value = String(snapped);
+  refs.reactThreshold.dispatchEvent(new Event("input", { bubbles: true }));
+  drawTimeline();
+}
+
+function endThresholdDrag(event) {
+  if (!vu.dragging) return;
+  vu.dragging = false;
+  refs.vuMeter.classList.remove("dragging");
+  releasePointer(refs.vuMeter, event.pointerId);
+  refs.reactThreshold.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function bindScope() {
+  const canvas = refs.vuMeter;
+  if (!canvas) return;
+  canvas.addEventListener("pointerdown", (event) => {
+    if (event.button !== undefined && event.button !== 0) return;
+    if (!vu.plot) return;
+    refs.reactThreshold.focus({ preventScroll: true });
+    vu.dragging = true;
+    canvas.classList.add("dragging");
+    capturePointer(canvas, event.pointerId);
+    thresholdFromPointer(event);
+    event.preventDefault();
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (!vu.dragging) return;
+    thresholdFromPointer(event);
+    event.preventDefault();
+  });
+  canvas.addEventListener("pointerup", endThresholdDrag);
+  canvas.addEventListener("pointercancel", endThresholdDrag);
+}
+
+function bindKnobs() {
+  document.querySelectorAll(".knob").forEach((knob) => {
+    const input = knob.querySelector(".knob-input");
+    if (!input) return;
+    let drag = null;
+
+    knob.addEventListener("pointerdown", (event) => {
+      if (event.button !== undefined && event.button !== 0) return;
+      const start = Number(input.value) || 0;
+      drag = { y: event.clientY, value: start, pointerId: event.pointerId };
+      input.focus({ preventScroll: true });
+      knob.classList.add("dragging");
+      capturePointer(knob, event.pointerId);
+      event.preventDefault();
+    });
+
+    knob.addEventListener("pointermove", (event) => {
+      if (!drag) return;
+      const min = Number(input.min) || 0;
+      const max = Number(input.max) || 100;
+      const step = Number(input.step) || 1;
+      const fine = event.shiftKey ? 0.2 : 1;
+      const delta = ((drag.y - event.clientY) / 150) * (max - min) * fine;
+      const raw = Math.max(min, Math.min(max, drag.value + delta));
+      const snapped = Math.round((raw - min) / step) * step + min;
+      if (Number(input.value) !== snapped) {
+        input.value = String(Number(snapped.toFixed(4)));
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      event.preventDefault();
+    });
+
+    const end = (event) => {
+      if (!drag) return;
+      drag = null;
+      knob.classList.remove("dragging");
+      releasePointer(knob, event.pointerId);
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    knob.addEventListener("pointerup", end);
+    knob.addEventListener("pointercancel", end);
+  });
+}
+
+async function pollMeter() {
+  if (state.closed || document.hidden || vu.busy) return;
+  vu.busy = true;
+  try {
+    const response = await fetch("/api/meter", { cache: "no-store" });
+    if (!response.ok) return;
+    const data = await response.json();
+    const rawDb = data.db;
+    const numericDb = rawDb === null || rawDb === undefined ? NaN : Number(rawDb);
+    const db = Number.isFinite(numericDb) ? numericDb : null;
+    vu.lastDb = db;
+    if (db !== null) {
+      const now = performance.now();
+      vu.history.push({ t: now, db });
+      while (vu.history.length && vu.history[0].t < now - SCOPE_WINDOW_MS - 1000) {
+        vu.history.shift();
+      }
+    }
+    drawTimeline(db);
+    refs.vuDbOut.value = db === null ? "−∞ dB" : `${db.toFixed(1)} dB`;
+  } catch {
+    // The next tick retries; a closed or sleeping player is not an error.
+  } finally {
+    vu.busy = false;
+  }
+}
+
+function startMeter() {
+  if (vu.timer) return;
+  drawTimeline(null);
+  vu.timer = window.setInterval(pollMeter, SCOPE_POLL_MS);
+  pollMeter();
+}
+
+function stopMeter() {
+  if (vu.timer) {
+    window.clearInterval(vu.timer);
+    vu.timer = null;
+  }
+  vu.history = [];
+  vu.lastDb = null;
+  drawTimeline(null);
+  refs.vuDbOut.value = "−∞ dB";
+}
+
 function buildBandInputs(snapshot) {
   const bands = snapshot.bands || [];
   const signature = JSON.stringify(bands.map((band) => [band.id, band.label]));
@@ -757,6 +1291,7 @@ function syncReactionFields(snapshot, config) {
       if (colors[index]) input.value = colors[index];
     });
   }
+  syncDynamicsFields(snapshot, config, reaction);
 }
 
 function renderSettings(snapshot) {
@@ -1682,6 +2217,46 @@ refs.reactAmount.addEventListener("input", () => {
 refs.reactAmount.addEventListener("change", () => {
   saveConfig({ react_amount: Number(refs.reactAmount.value) / 100 });
 });
+refs.reactDynamics.addEventListener("change", () => {
+  renderDynamicsHint();
+  let presets = {};
+  try {
+    presets = JSON.parse(refs.reactDynamics.dataset.presets || "{}");
+  } catch {
+    presets = {};
+  }
+  const preset = presets[refs.reactDynamics.value];
+  if (preset) saveConfig(preset);
+});
+refs.reactThreshold.addEventListener("input", () => {
+  refs.reactThresholdOut.value = `${Math.round(Number(refs.reactThreshold.value))} dB`;
+  paintRange(refs.reactThreshold);
+  drawTimeline();
+});
+refs.reactThreshold.addEventListener("change", () => {
+  saveConfig({ react_threshold: Number(refs.reactThreshold.value) });
+});
+refs.reactAttack.addEventListener("input", () => {
+  refs.reactAttackOut.value = `${Math.round(Number(refs.reactAttack.value))} ms`;
+  paintRange(refs.reactAttack);
+});
+refs.reactAttack.addEventListener("change", () => {
+  saveConfig({ react_attack: Number(refs.reactAttack.value) });
+});
+refs.reactRelease.addEventListener("input", () => {
+  refs.reactReleaseOut.value = `${Math.round(Number(refs.reactRelease.value))} ms`;
+  paintRange(refs.reactRelease);
+});
+refs.reactRelease.addEventListener("change", () => {
+  saveConfig({ react_release: Number(refs.reactRelease.value) });
+});
+refs.reactPunch.addEventListener("input", () => {
+  refs.reactPunchOut.value = `${(Number(refs.reactPunch.value) / 100).toFixed(1)}×`;
+  paintRange(refs.reactPunch);
+});
+refs.reactPunch.addEventListener("change", () => {
+  saveConfig({ react_punch: Number(refs.reactPunch.value) / 100 });
+});
 refs.reactProfile.addEventListener("change", () => {
   renderProfileHint();
   saveConfig({ react_profile: refs.reactProfile.value });
@@ -1907,6 +2482,7 @@ refs.quitBtn.addEventListener("click", async () => {
     /* the server may close the socket before answering */
   }
   window.clearInterval(state.poll);
+  stopMeter();
   refs.statusDot.classList.remove("live");
   refs.sessionPill.textContent = "closed";
   refs.sessionPill.classList.remove("live");
@@ -1937,6 +2513,10 @@ async function boot() {
   const sliders = [
     refs.brightness,
     refs.vibrance,
+    refs.reactThreshold,
+    refs.reactAttack,
+    refs.reactRelease,
+    refs.reactPunch,
     refs.controlBrightness,
     refs.controlTemp,
     refs.controlSpeed,
@@ -1946,6 +2526,8 @@ async function boot() {
     paintRange(input);
     input.addEventListener("input", () => paintRange(input));
   }
+  bindScope();
+  bindKnobs();
   await refresh();
   state.poll = window.setInterval(() => {
     if (!document.hidden && !state.closed) refresh();

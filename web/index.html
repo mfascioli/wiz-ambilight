@@ -206,6 +206,58 @@
               </label>
             </section>
           </div>
+          <div class="dynamics-strip hidden" id="dynamicsPanel">
+            <div class="scope-field">
+              <div class="scope-head">
+                <span class="scope-title">Signal</span>
+                <output class="scope-db" id="vuDbOut">−∞ dB</output>
+                <span class="scope-over" id="vuOverOut">below threshold</span>
+              </div>
+              <canvas id="vuMeter" width="900" height="240" aria-label="Scrolling audio level timeline with threshold">Audio level timeline</canvas>
+              <p class="hint tight scope-hint">Drag the amber threshold line to set it.</p>
+            </div>
+            <div class="dynamics-controls">
+              <div class="field">
+                <label for="reactDynamics">Dynamics preset</label>
+                <select id="reactDynamics"></select>
+                <p class="hint tight" id="reactDynamicsHint"></p>
+              </div>
+              <div class="knob-bank">
+                <div class="knob-field">
+                  <div class="knob">
+                    <span class="knob-dial" aria-hidden="true"><span class="knob-marker"></span></span>
+                    <input id="reactThreshold" class="knob-input" type="range" min="-60" max="0" step="1" value="-22" aria-label="Threshold">
+                  </div>
+                  <output class="knob-value" id="reactThresholdOut">−22 dB</output>
+                  <label class="knob-label" for="reactThreshold">Threshold</label>
+                </div>
+                <div class="knob-field">
+                  <div class="knob">
+                    <span class="knob-dial" aria-hidden="true"><span class="knob-marker"></span></span>
+                    <input id="reactAttack" class="knob-input" type="range" min="0" max="200" step="1" value="1" aria-label="Attack">
+                  </div>
+                  <output class="knob-value" id="reactAttackOut">1 ms</output>
+                  <label class="knob-label" for="reactAttack">Attack</label>
+                </div>
+                <div class="knob-field">
+                  <div class="knob">
+                    <span class="knob-dial" aria-hidden="true"><span class="knob-marker"></span></span>
+                    <input id="reactRelease" class="knob-input" type="range" min="20" max="1000" step="5" value="55" aria-label="Release">
+                  </div>
+                  <output class="knob-value" id="reactReleaseOut">55 ms</output>
+                  <label class="knob-label" for="reactRelease">Release</label>
+                </div>
+                <div class="knob-field">
+                  <div class="knob">
+                    <span class="knob-dial" aria-hidden="true"><span class="knob-marker"></span></span>
+                    <input id="reactPunch" class="knob-input" type="range" min="100" max="400" step="10" value="300" aria-label="Punch">
+                  </div>
+                  <output class="knob-value" id="reactPunchOut">3.0×</output>
+                  <label class="knob-label" for="reactPunch">Punch</label>
+                </div>
+              </div>
+            </div>
+          </div>
           <div class="control-grid sampling-manual hidden" id="samplingManual">
             <div class="field">
               <label for="samplingFps">Read fps <output id="samplingFpsOut">15</output></label>

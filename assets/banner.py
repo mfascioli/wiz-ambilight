@@ -219,7 +219,7 @@ STRIPS = (
     ("development.png", "DEVELOPMENT", "NO DEPENDENCIES",
      "unittest \u00b7 py_compile \u00b7 lua"),
     ("roadmap.png", "ROADMAP", "WHAT IS MISSING",
-     "Windows \u00b7 transport \u00b7 scans"),
+     "Windows \u00b7 transport \u00b7 UI/UX"),
     ("privacy.png", "PRIVACY & SECURITY", "LAN ONLY, BY DESIGN",
      "no cloud \u00b7 no account \u00b7 token"),
     ("credits.png", "CREDITS", "BUILT ON",

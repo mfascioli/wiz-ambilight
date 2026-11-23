@@ -65,6 +65,33 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(webui.normalize_config({"vibrance": -1}, m)["vibrance"], 0.0)
         self.assertEqual(webui.normalize_config({"vibrance": "x"}, m)["vibrance"], 1.0)
 
+    def test_audio_dynamics_defaults_and_clamps(self):
+        config = webui.normalize_config({}, m)
+        self.assertEqual(config["react_threshold"], m.AUDIO_THRESHOLD_DB)
+        self.assertEqual(config["react_attack"], 1.0)
+        self.assertEqual(config["react_release"], 55.0)
+        self.assertEqual(config["react_punch"], m.AUDIO_PUNCH)
+        self.assertEqual(
+            webui.normalize_config({"react_threshold": -99}, m)["react_threshold"],
+            -60.0,
+        )
+        self.assertEqual(
+            webui.normalize_config({"react_threshold": 4}, m)["react_threshold"],
+            0.0,
+        )
+        self.assertEqual(
+            webui.normalize_config({"react_attack": -1}, m)["react_attack"], 0.0
+        )
+        self.assertEqual(
+            webui.normalize_config({"react_release": 1}, m)["react_release"], 20.0
+        )
+        self.assertEqual(
+            webui.normalize_config({"react_punch": 9}, m)["react_punch"], 4.0
+        )
+        self.assertEqual(
+            webui.normalize_config({"react_punch": "x"}, m)["react_punch"], 3.0
+        )
+
     def test_sampling_defaults_and_normalization(self):
         config = webui.normalize_config({}, m)
         self.assertEqual(config["sampling"], "auto")
@@ -302,6 +329,10 @@ class CommandTests(unittest.TestCase):
             react_target=0.6,
             react_profile="strong",
             react_bands=["#010203", "#040506", "#070809", "#0a0b0c", "#0d0e0f"],
+            react_threshold=-24,
+            react_attack=2,
+            react_release=60,
+            react_punch=3.5,
         )
         config["lights"] = {"10.0.0.1": {"enabled": True}}
         argv, _ips, _zones = webui.build_command(config, m)
@@ -313,6 +344,10 @@ class CommandTests(unittest.TestCase):
             argv[argv.index("--react-bands") + 1],
             "#010203,#040506,#070809,#0a0b0c,#0d0e0f",
         )
+        self.assertEqual(argv[argv.index("--react-threshold") + 1], "-24")
+        self.assertEqual(argv[argv.index("--react-attack") + 1], "2")
+        self.assertEqual(argv[argv.index("--react-release") + 1], "60")
+        self.assertEqual(argv[argv.index("--react-punch") + 1], "3.5")
 
     def test_vibrance_is_passed_to_the_sync(self):
         config = make_config(vibrance=1.5)
@@ -337,6 +372,10 @@ class CommandTests(unittest.TestCase):
             argv[argv.index("--react-bands") + 1],
             ",".join(m.DEFAULT_BAND_COLORS),
         )
+        self.assertEqual(argv[argv.index("--react-threshold") + 1], "-22")
+        self.assertEqual(argv[argv.index("--react-attack") + 1], "1")
+        self.assertEqual(argv[argv.index("--react-release") + 1], "55")
+        self.assertEqual(argv[argv.index("--react-punch") + 1], "3")
 
     def test_missing_reaction_keys_fall_back_to_color(self):
         config = make_config()
@@ -447,6 +486,11 @@ class DemoPanelTests(unittest.TestCase):
         self.assertEqual(
             [group["id"] for group in snapshot["reaction_groups"]], ["video", "audio"]
         )
+        self.assertEqual(
+            [preset["id"] for preset in snapshot["dynamics"]],
+            list(m.AUDIO_PRESETS),
+        )
+        self.assertTrue(snapshot["dynamics"][0]["hint"])
         self.assertTrue(snapshot["config_path"].endswith("lights.json"))
         self.assertIsInstance(snapshot["network"], list)
         self.assertIn("active", snapshot["crazy"])
@@ -484,6 +528,32 @@ class DemoPanelTests(unittest.TestCase):
             self.assertIsNone(panel._mpv_pid(None, None))
         finally:
             path.unlink(missing_ok=True)
+
+    def test_meter_reads_the_live_audio_state(self):
+        panel = webui.Panel(m, demo=True)
+        path = webui.runtime_dir() / "state-meter.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "audio": {
+                        "rms": -30.0,
+                        "peak": -6.0,
+                        "bands": [-30.0, -24.0, -12.0, -18.0, -40.0],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        try:
+            meter = panel.meter()
+            self.assertTrue(meter["active"])
+            self.assertAlmostEqual(meter["db"], -14.0)
+            self.assertEqual(len(meter["bands"]), 5)
+            self.assertEqual(meter["bands"][2], -12.0)
+        finally:
+            path.unlink(missing_ok=True)
+        self.assertFalse(panel.meter()["active"])
 
     def test_resources_payload_is_well_formed(self):
         panel = webui.Panel(m, demo=True)
