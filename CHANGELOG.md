@@ -29,21 +29,20 @@ Releases before 1.4.0 were never tagged; their history is in `git log`.
 - **Docs:** README, `docs/development.md`, `docs/design.md` and `AGENTS.md`
   describe the dynamics stage, the timeline and the knobs. The roadmap now
   includes the UI/UX redesign as item 5.
-- **Docs:** the README follows one reading path: **Getting Started** absorbs
-  the old Installation and Quick Start, **Web Panel & Operating Modes** absorbs
-  Attach, and **Configuration** groups Capture/Fade/Send, Styles, Sampling,
-  Layouts & Zones, Reactions, Audio Dynamics, Band Colors and Audio Processing.
-  Environment is a single top-level table and now includes `XDG_CONFIG_HOME`.
-  The panel table documents **Quit**, **Identify** and the sync dry-run switch.
-  `docs/cli.md` gains the exhaustive flag table — every flag, default, range
-  and exit code — so the README no longer duplicates the catalogue.
-- **Docs:** the README teaches the panel first. **Getting Started** is one
-  clone plus `--gui`; cloning never copies the Lua script into mpv, and only
-  attach mode needs that one-time copy because mpv is already running. The
-  terminal reference — discovery, launch and attach, `--set`, style, reaction
-  and sampling flags, the systemd service and scripted looks — moved to
-  `docs/cli.md`, linked from **Getting Started** and the **Command Line**
-  section. `AGENTS.md` records the GUI-first and attach-only install rules.
+- **Docs:** the README follows one reading path and teaches the panel first.
+  **Getting Started** absorbs the old Installation and Quick Start: one clone
+  plus `--gui`, and cloning never copies the Lua script into mpv — only attach
+  mode needs that one-time copy because mpv is already running. **Web Panel &
+  Operating Modes** absorbs Attach, and **Configuration** groups
+  Capture/Fade/Send, Styles, Sampling, Layouts & Zones, Reactions, Audio
+  Dynamics, Band Colors and Audio Processing. Environment is a single
+  top-level table and now includes `XDG_CONFIG_HOME`. The panel table documents
+  **Quit**, **Identify** and the sync dry-run switch. The terminal reference —
+  discovery, launch and attach, `--set`, style, reaction and sampling flags,
+  the systemd service and scripted looks — moved to `docs/cli.md`, linked from
+  **Getting Started** and **Command Line**; it gains the exhaustive flag,
+  default, range and exit-code tables, so the README no longer duplicates the
+  catalogue. `AGENTS.md` records the GUI-first and attach-only install rules.
 
 ## 1.10.0 — 2026-11-22
 

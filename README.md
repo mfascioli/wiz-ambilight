@@ -40,15 +40,12 @@ involved.
 
 - **Uses mpv, not a second player.** The player, its config and its performance
   stay exactly as they are.
-- **Hue-style motion at a sane cost.** Capture, fade and send are three
-  independent rates; the default samples a window-size frame at 8–15 fps and
-  drives the bulbs at 18 Hz with interpolation, so colors glide. See
+- **Hue-style motion at a sane cost.** Colors glide between samples instead of
+  stepping, and the cost is low enough to leave mpv alone. See
   [Performance](#-performance).
 - **No dependencies.** Standard-library Python plus one Lua script.
 - **Two sources, one panel.** Launch a video from the panel, or attach it to an
-  mpv you started normally. Both modes are driven from **Session**; the
-  terminal equivalents are in the
-  [command line reference](docs/cli.md).
+  mpv you started normally.
 - **The bulbs are yours.** The panel is also a small WiZ remote: power,
   brightness, white temperature, RGB/hex colors, WiZ scenes, rooms and saved
   colors, without starting Ambilight.
@@ -56,14 +53,11 @@ involved.
   explicitly chosen zones per bulb.
 - **Reactive modes.** Beyond plain color: equalize room brightness, flash on
   cuts, follow motion, split into a duotone, pulse on the beat or meter the
-  five audio bands. Audio analysis is opt-in and runs on mpv's own filters. See
-  [Reactions](#-reactions).
-- **Audio without a microphone.** Beat and VU use mpv's own analyser; no
-  microphone, no separate process and no extra package. See
-  [Audio Processing](#-audio-processing).
-- **Panel telemetry.** One chart in **Activity** shows mpv and the panel in
-  three unit lanes: CPU %, RAM MB and WiZ UDP KB/s, above the video and
-  capture resolution.
+  five audio bands. See [Reactions](#-reactions).
+- **Audio without a microphone.** Beat and VU read mpv's own audio analyser.
+  See [Audio Processing](#-audio-processing).
+- **Panel telemetry.** **Activity** charts CPU, RAM and WiZ UDP traffic for mpv
+  and the panel while a session runs. See [Performance](#-performance).
 
 ## 📋 Requirements & Compatibility
 
@@ -94,18 +88,11 @@ The panel opens at `http://127.0.0.1:8765/`. There is nothing else to install:
 Python needs no packages, and the panel loads the Lua script from the checkout
 when it launches mpv.
 
-Attach mode is the only exception, because mpv is already running when the
-panel appears. It needs the Lua script copied into mpv's scripts folder once;
-the panel shows an **Install script** banner when that copy is missing or
-outdated. The step is explained in
+Attach mode is the only exception: it needs a one-time Lua copy, explained in
 [Attach to your own mpv](#-attach-to-your-own-mpv).
 
 > WiZ does not expose app-assigned names over UDP, so the panel identifies
 > bulbs by IP and MAC and stores your names locally.
-
-**Launch a video** starts mpv from the panel; **Attach to mpv** follows an mpv
-you started yourself. The difference and the attach-only script copy are in
-[Operating Modes](#-operating-modes).
 
 ### First run
 
@@ -135,10 +122,10 @@ and keeps the first screen focused on the three things a session needs:
 | Section | What it does |
 | --- | --- |
 | **Lights** | Filter by name, IP or model; **All** / **None**; **Scan network**; name bulbs and see IP, online state, model and MAC; assign a zone per bulb or pick a layout; preview the zone on each row; include or exclude a bulb from the sync; **Identify** to flash a bulb; two-step **Forget** to remove a stale row from `lights.json` without touching the bulb; create **rooms** and pick their members. The **Install script** banner appears when attach mode needs the Lua copy. |
-| **Session** | **Attach to mpv** or **Launch a video**; start, restart or stop the sync; choose a video file with **Browse**; follow the session state. |
+| **Session** | Choose **Attach to mpv** or **Launch a video**; start, restart or stop the sync; choose a file with **Browse**; follow the session state. |
 | **Look** | **Reaction** (Video / Audio groups), reaction strength, profile or dynamics, target luma, five band colors, **Capture & fade preset**, **Brightness**, **Vibrance**, **Sampling**, **Layout**, manual read fps / sample columns / block average / frame source, and a dry-run switch that applies to the sync. Audio modes add the dynamics strip. |
 | **Direct control** | Target all bulbs, a room or one bulb; power, brightness, white temperature, color picker / **hex**, WiZ scenes and scene speed; save a color, reapply a saved color, and save or reapply a **scene** (a saved look). It starts collapsed and is a remote, not the normal path. |
-| **Activity** | One chart with CPU %, RAM MB and WiZ UDP KB/s, one line each for mpv and the panel, above the video and capture resolution, read fps and process count; a clearable log. It starts collapsed. |
+| **Activity** | Live CPU, RAM and WiZ UDP chart for mpv and the panel, plus the video and capture resolution, read fps, process count and a clearable log. It starts collapsed. |
 
 The header shows the status dot, the demo and version badges, and **Quit**,
 which stops the sync and closes the panel.
@@ -171,14 +158,10 @@ are in [Environment](#-environment); the schemas are in
 
 ![Operating modes banner: two sources, one panel](assets/modes.png)
 
-| Mode | Where | What runs |
-| --- | --- | --- |
-| **Launch a video** | Session → Launch a video | The panel starts mpv with the chosen file and stops when mpv exits. |
-| **Attach to mpv** | Session → Attach to mpv | The panel follows an mpv you started yourself. |
-| **Command line** | [docs/cli.md](docs/cli.md) | The same modes without the browser, for scripts and headless machines. |
-
-Direct control is separate: it sends a command to the selected bulb, room or all
-bulbs without starting a sync.
+**Launch a video** starts mpv from the panel and stops when mpv exits;
+**Attach to mpv** follows an mpv you started yourself. Direct control is
+separate: it sends a command to the selected bulb, room or all bulbs without
+starting a sync.
 
 #### 🔗 Attach to your own mpv
 
@@ -437,7 +420,7 @@ are explained once in [Capture, Fade & Send](#-capture-fade--send). See
 
 `scaled` copies the window; `source` and the `quality` profile copy the decoded
 frame, roughly nine times the pixels for 4K in a 1280×720 window. Everything
-after the copy — grid sampling, colour math and UDP — is cheap.
+after the copy — grid sampling, color math and UDP — is cheap.
 
 Measured on a Ryzen 5 3600X (6C/12T), GTX 1660 Ti with NVDEC, 16 GB and
 Wayland: a looping H.264 4K60 clip in a 1280×720 window, three bulbs on
@@ -457,8 +440,8 @@ The sync is never the cost: 0.1 % of the machine and 23 MB in the worst case.
 The copy in mpv is, and it self-limits — the manual case asked for 30 fps and
 delivered about 20. On a 4K screen the default automatic sampling caps the
 source copy at 8 fps and widens the grid. If mpv drops frames, lower `--fps`
-or pick `lean`. A hard cut still snaps because large colour jumps bypass the
-fade. UDP stays at a few KB/s: an unchanged colour is not re-sent for 2 s.
+or pick `lean`. UDP stays at a few KB/s: an unchanged color is not re-sent
+for 2 s.
 
 **Activity** plots the same numbers live — CPU %, RAM MB and UDP KB/s, one line
 each for mpv and the panel. CPU is a share of the whole processor; CPU and RSS
@@ -471,8 +454,8 @@ works without a parent link.
 
 ![How it works banner: frame to bulb — sample, fade, setPilot](assets/how.png)
 
-![Architecture: browser, panel, mpv and the sync process inside the computer; WiZ bulbs on the LAN; the internet unused](docs/architecture.svg)
-<sub>Everything inside the dashed computer boundary runs as your user. The bulbs are the only untrusted peer; the internet is unused.</sub>
+![Architecture: browser, panel, mpv and the sync process inside the computer, with WiZ bulbs on the LAN](docs/architecture.svg)
+<sub>Everything inside the dashed computer boundary runs as your user. The bulbs are the only untrusted peer; the internet is never used.</sub>
 
 **Components and data.** mpv decodes the video and a Lua script samples it,
 writing zone colors to a small JSON state file at the capture rate. The sync
@@ -514,9 +497,8 @@ The bulbs are fire-and-forget UDP devices. The sender de-duplicates unchanged
 colors and refreshes them every 2 seconds, so a single lost packet cannot
 leave a bulb stuck on an old frame.
 
-The panel is the only listening socket, and only while `--gui` runs; the sync
-only sends UDP. The full network, process and file surface is in
-[`SECURITY.md`](SECURITY.md).
+The sync only sends UDP. The exposed surface, its bind address and the file and
+process guarantees are in [`SECURITY.md`](SECURITY.md).
 
 ## 🔒 Privacy & Security
 
@@ -527,13 +509,11 @@ only sends UDP. The full network, process and file surface is in
   local `/24`. Nothing is sent to the internet, and the Python side never
   makes an HTTP request.
 - **No account, no telemetry, no cloud.** No sign-in, no analytics, no update
-  check. The panel is served from `127.0.0.1` and the page loads only its own
-  files.
-- **One exposed interface, justified.** The panel is the only listener:
-  `127.0.0.1:8765`, only while `--gui`. The sync opens no inbound socket; it
-  sends UDP from an ephemeral port to `38899`. The
-  [architecture diagram](docs/architecture.svg) draws both the data flow and
-  the trust boundaries.
+  check; the page loads only its own files.
+- **One exposed interface, justified.** The panel is the only listener, bound
+  to `127.0.0.1:8765` while `--gui` runs; the sync opens no inbound socket.
+  The [architecture diagram](docs/architecture.svg) draws both the data flow
+  and the trust boundaries.
 - **Panel hardened.** Loopback bind, `Host`/`Origin` checks, a per-run
   `X-Wiz-Token` on every POST and a strict CSP; argument lists instead of a
   shell; paths starting with `-` rejected; only known bulbs; every value

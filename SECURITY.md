@@ -51,11 +51,12 @@ mpv start. Nothing downloads code, and no installer fetches anything at all.
   pass-through. It never opens a microphone, a capture device or a file and
   never adds a dependency. With any other reaction the audio chain is
   untouched.
-- **Files written.** `state-<pid>.json`, `stats-<pid>.json` and
-  `control.json` under `$XDG_RUNTIME_DIR/wiz-ambilight/` (`/tmp` fallback,
-  `0700`), the `gui-daemon.json` PID file beside them, `lights.json` and
-  `scenes.json` in `~/.config/wiz-ambilight/` (`0600`), and the Lua copy in
-  mpv's scripts folder. Nothing else is created, renamed or deleted.
+- **Files written.** The state file (`state-<pid>.json` in launch mode,
+  `state.json` in attach), `stats-<pid>.json` and `control.json` under
+  `$XDG_RUNTIME_DIR/wiz-ambilight/` (`/tmp` fallback, `0700`), the
+  `gui-daemon.json` PID file beside them, `lights.json` and `scenes.json` in
+  `~/.config/wiz-ambilight/` (`0600`), and the Lua copy in mpv's scripts
+  folder. Nothing else is created, renamed or deleted.
 
 ## Exposed interfaces
 
@@ -65,7 +66,7 @@ Every surface is listed here; if it is not in this table, it does not exist.
 | --- | --- | --- | --- |
 | `127.0.0.1:8765` TCP | only with `--gui` | serve the local panel | loopback bind, Host/Origin checks, per-run token, strict CSP |
 | ephemeral UDP source port | during sync, discovery and direct control | send `setPilot`/`getPilot` and read replies | not a service, no `listen`/`accept`, short timeouts, no `bind` to a public interface |
-| `state-<pid>.json`, `control.json` | during sync | hand zone colors, mpv's pid and the optional audio levels from mpv to Python | runtime dir `0700` |
+| the state file (`state-<pid>.json` launch, `state.json` attach), `control.json` | during sync | hand zone colors, mpv's pid and the optional audio levels from mpv to Python | runtime dir `0700` |
 | `stats-<pid>.json` | during sync, once a second | let the panel graph capture rate and real UDP traffic | runtime dir `0700`, removed on exit, ignored when older than 6 s or owned by another PID |
 | `lights.json`, `scenes.json` | panel | names, zones, rooms, saved colors and saved looks | files `0600`; values range-checked |
 

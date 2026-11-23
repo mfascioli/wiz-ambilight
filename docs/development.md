@@ -38,7 +38,7 @@ without loading the server for normal playback.
 
 | Path | Written by | Purpose |
 | --- | --- | --- |
-| `$XDG_RUNTIME_DIR/wiz-ambilight/state-<pid>.json` | Lua | zone colors, capture rate, mpv pid, and audio levels in audio modes |
+| `$XDG_RUNTIME_DIR/wiz-ambilight/state-<pid>.json` (launch) or `state.json` (attach) | Lua | zone colors, capture rate, mpv pid, and audio levels in audio modes |
 | `$XDG_RUNTIME_DIR/wiz-ambilight/stats-<pid>.json` | sync | UDP throughput, rewritten once a second |
 | `$XDG_RUNTIME_DIR/wiz-ambilight/control.json` | sync | makes the Lua script wake up in attach mode |
 | `$XDG_RUNTIME_DIR/wiz-ambilight/gui-daemon.json` | panel | the sync PID it started, for adoption |

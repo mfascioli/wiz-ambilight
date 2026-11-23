@@ -155,10 +155,9 @@ headings, and leave interface names, option values and file paths untranslated.
   **First run** subsection is a numbered panel walkthrough (scan, choose,
   launch), not a list of commands.
 - **Web Panel & Operating Modes** explains the panel first and keeps **Launch
-  a video**, **Attach to mpv**, direct control and one row pointing to
-  **Command Line**. **Attach** explains why the Lua copy exists, uses the
-  panel's **Install script** button and mentions reinstalling after an update.
-  The systemd user service lives in `docs/cli.md`.
+  a video**, **Attach to mpv** and direct control. **Attach** explains why the
+  Lua copy exists, uses the panel's **Install script** button and mentions
+  reinstalling after an update. The systemd user service lives in `docs/cli.md`.
 - **Command Line** is a short pointer to `docs/cli.md` with the `control.png`
   strip. No command blocks in the README except `--gui` (and `--gui-port`);
   everything else — discovery, launch and attach, `--set`, style, reaction and
