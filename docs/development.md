@@ -381,7 +381,7 @@ the sender off the network.
 
 ```bash
 python3 assets/banner.py            # rewrite the hero and the section strips
-python3 assets/banner.py --version v1.10.0
+python3 assets/banner.py --version v1.11.0
 ```
 
 `assets/banner.py` needs Pillow and numpy; neither is imported at playback

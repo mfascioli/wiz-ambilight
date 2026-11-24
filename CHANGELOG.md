@@ -2,7 +2,7 @@
 
 Releases before 1.4.0 were never tagged; their history is in `git log`.
 
-## Unreleased
+## 1.11.0 — 2026-11-24
 
 - **Auto Lux:** an optional measured-light layer for **every** reaction. A
   checkbox in **Look** (or `--auto-lux`) makes `contrib/lux-bridge.py` receive

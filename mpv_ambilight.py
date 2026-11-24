@@ -54,7 +54,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-VERSION = "1.10.0"
+VERSION = "1.11.0"
 DEFAULT_PORT = 38899
 ZONE_NAMES = {"all", "left", "right", "top", "bottom", "t1", "t2", "t3"}
 
