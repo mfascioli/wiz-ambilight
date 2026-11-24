@@ -45,6 +45,13 @@ CONFIG_KEYS = (
     "react_target",
     "react_profile",
     "react_bands",
+    "react_eq_bands",
+    "react_eq",
+    "react_auto",
+    "react_active_bands",
+    "react_color_mode",
+    "react_color_a",
+    "react_color_b",
     "react_threshold",
     "react_attack",
     "react_release",
@@ -70,7 +77,14 @@ DEFAULT_CONFIG = {
     "react_target": 0.45,
     "react_profile": "balanced",
     "react_bands": [],
-    "react_threshold": -22.0,
+    "react_eq_bands": 8,
+    "react_eq": [],
+    "react_auto": "off",
+    "react_active_bands": False,
+    "react_color_mode": "bands",
+    "react_color_a": "#fcbe11",
+    "react_color_b": "#38bdf8",
+    "react_threshold": -18.0,
     "react_attack": 1.0,
     "react_release": 55.0,
     "react_punch": 3.0,
@@ -209,16 +223,39 @@ def normalize_config(raw, core) -> dict:
         config["react_target"] = 0.45
     if config["react_profile"] not in core.PROFILE_LABELS:
         config["react_profile"] = "balanced"
+    try:
+        eq_bands = int(config["react_eq_bands"])
+    except (TypeError, ValueError):
+        eq_bands = core.DEFAULT_EQ_BANDS
+    eq_bands = max(core.MIN_BANDS, min(core.MAX_BANDS, eq_bands))
+    config["react_eq_bands"] = eq_bands
+    config["react_eq"] = core.normalize_eq_bands(
+        config.get("react_eq"), eq_bands
+    )
     config["react_bands"] = [
         core.rgb_to_hex(color)
-        for color in core.normalize_band_colors(config.get("react_bands"))
+        for color in core.normalize_band_colors(
+            config.get("react_bands"), eq_bands
+        )
     ]
+    if config["react_auto"] not in core.AUTO_MODES:
+        config["react_auto"] = "off"
+    config["react_active_bands"] = bool(config.get("react_active_bands"))
+    if config["react_color_mode"] not in core.AUDIO_COLOR_MODES:
+        config["react_color_mode"] = "bands"
+    for key, fallback in (
+        ("react_color_a", core.DEFAULT_AUDIO_COLOR_A),
+        ("react_color_b", core.DEFAULT_AUDIO_COLOR_B),
+    ):
+        config[key] = core.rgb_to_hex(
+            core.normalize_audio_color(config.get(key), fallback)
+        )
     try:
         config["react_threshold"] = max(
             -60.0, min(0.0, float(config["react_threshold"]))
         )
     except (TypeError, ValueError):
-        config["react_threshold"] = -22.0
+        config["react_threshold"] = -18.0
     try:
         config["react_attack"] = max(0.0, min(200.0, float(config["react_attack"])))
     except (TypeError, ValueError):
@@ -464,6 +501,14 @@ def build_command(config: dict, core, demo: bool = False):
     ips = [ip for ip, _ in pairs]
     zones = effective_zones(config, core)
     sampling = config.get("sampling", "auto")
+    eq_count = config.get("react_eq_bands", core.DEFAULT_EQ_BANDS)
+    eq_bands = core.normalize_eq_bands(config.get("react_eq"), eq_count)
+    eq_colors = [
+        core.rgb_to_hex(color)
+        for color in core.normalize_band_colors(
+            config.get("react_bands"), len(eq_bands)
+        )
+    ]
     argv = [
         sys.executable,
         str(SCRIPT),
@@ -482,9 +527,25 @@ def build_command(config: dict, core, demo: bool = False):
         "--react-profile",
         config.get("react_profile", "balanced"),
         "--react-bands",
-        ",".join(config.get("react_bands") or core.DEFAULT_BAND_COLORS),
+        ",".join(eq_colors),
+        "--react-eq-bands",
+        str(eq_count),
+        "--react-eq",
+        json.dumps(
+            eq_bands,
+            separators=(",", ":"),
+        ),
+        "--react-auto",
+        config.get("react_auto", "off"),
+        *(["--react-active-bands"] if config.get("react_active_bands") else []),
+        "--react-color-mode",
+        config.get("react_color_mode", "bands"),
+        "--react-color-a",
+        config.get("react_color_a") or core.DEFAULT_AUDIO_COLOR_A,
+        "--react-color-b",
+        config.get("react_color_b") or core.DEFAULT_AUDIO_COLOR_B,
         "--react-threshold",
-        f"{config.get('react_threshold', -22.0):g}",
+        f"{config.get('react_threshold', -18.0):g}",
         "--react-attack",
         f"{config.get('react_attack', 1.0):g}",
         "--react-release",
@@ -1050,10 +1111,13 @@ class Panel:
         }
 
     def meter(self) -> dict:
-        """Live audio levels for the panel's VU needle.
+        """Live audio levels for the panel's signal timeline.
 
         The Lua state beats at 30 Hz in audio mode, so this is a cheap read of
-        the newest fresh file instead of another mpv round trip.
+        the newest fresh file instead of another mpv round trip. `ceiling` is
+        the top of the profile's dB window and `window` its minimum width; the
+        panel needs both to draw the light-drive curve in red without
+        duplicating the profile table.
         """
         state = _fresh_state()
         audio = state.get("audio") if isinstance(state, dict) else None
@@ -1065,15 +1129,22 @@ class Panel:
                 return None
             return value if math.isfinite(value) else None
 
+        mode = self.config.get("react")
+        profiles = self.core.REACTION_PROFILES.get(mode, {})
+        profile = profiles.get(self.config.get("react_profile"), {})
+        ceiling = profile.get("high", self.core.AUDIO_CEILING_DB)
+        window = self.core.AUDIO_WINDOW_DB
         bands = audio.get("bands")
         bands = bands if isinstance(bands, (list, tuple)) else []
         return {
             "at": time.time(),
             "active": db is not None,
             "db": round(db, 1) if db is not None else None,
+            "ceiling": number(ceiling),
+            "window": number(window),
             "rms": number(audio.get("rms")),
             "peak": number(audio.get("peak")),
-            "bands": [number(value) for value in bands[:5]],
+            "bands": [number(value) for value in bands[: self.core.MAX_BANDS]],
         }
 
     def _sync_stats(self, pid):
@@ -1223,6 +1294,16 @@ class Panel:
                 {"name": name, "count": len(entries)}
                 for name, entries in sorted(self.scenes.items())
             ]
+        pairs = enabled_lights(config)
+        eq_bands = config.get("react_eq") or self.core.normalize_eq_bands(
+            None, config.get("react_eq_bands", self.core.DEFAULT_EQ_BANDS)
+        )
+        eq_colors = [
+            self.core.rgb_to_hex(color)
+            for color in self.core.normalize_band_colors(
+                config.get("react_bands"), len(eq_bands)
+            )
+        ]
         return {
             "version": self.core.VERSION,
             "demo": self.demo,
@@ -1257,14 +1338,47 @@ class Panel:
             ],
             "bands": [
                 {
-                    "id": name,
-                    "label": self.core.BAND_LABELS[name],
+                    "id": f"band-{index + 1}",
+                    "label": self.core.format_freq(band["freq"]),
                     "color": color,
+                    **band,
                 }
-                for name, color in zip(
-                    self.core.BANDS,
-                    config.get("react_bands") or self.core.DEFAULT_BAND_COLORS,
+                for index, (band, color) in enumerate(
+                    zip(eq_bands, eq_colors)
                 )
+            ],
+            "lamps": [
+                {
+                    "index": index,
+                    "ip": ip,
+                    "name": entry.get("name") or ip,
+                }
+                for index, (ip, entry) in enumerate(pairs)
+            ],
+            "eq_limits": {
+                "min": self.core.MIN_BANDS,
+                "max": self.core.MAX_BANDS,
+                "freq_min": self.core.EQ_FREQ_MIN,
+                "freq_max": self.core.EQ_FREQ_MAX,
+                "gain": self.core.EQ_GAIN_LIMIT,
+                "q_min": 0.4,
+                "q_max": 8.0,
+            },
+            "auto_modes": [
+                {
+                    "id": key,
+                    "label": label,
+                    "hint": self.core.AUTO_HINTS.get(key, ""),
+                }
+                for key, label in self.core.AUTO_MODES.items()
+            ],
+            "color_modes": [
+                {
+                    "id": key,
+                    "label": label,
+                    "hint": self.core.AUDIO_COLOR_HINTS.get(key, ""),
+                }
+                for key, label in self.core.AUDIO_COLOR_MODES.items()
             ],
             "reaction_groups": [
                 {

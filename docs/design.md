@@ -57,23 +57,48 @@ decoration: they explain the path from choosing bulbs to watching the effect.
   flat key/value rows, never nested boxes. **Preset** leads with the Reaction
   group: the dropdown (with a **Video** / **Audio** optgroup each and one hint
   line for the selected mode), then Reaction strength. The Equalize target luma
-  slider and five band color swatches appear only for the reactions that use
-  them. The **Capture & fade preset** select follows the reaction group, with a
+  slider and the **Audio colors** block appear only for the reactions that use
+  them. **Audio colors** is a mode select plus the controls that mode needs:
+  one swatch per EQ band for `bands`, a two-color Low/High row for `range`, a
+  Soft/Loud row for `level`, one swatch for `single`, and no swatches for
+  `spectrum` or `rainbow`. A one-line hint names the current mode. The
+  **Capture & fade preset** select follows the reaction group, with a
   hint naming what it bundles, then Brightness and the **Vibrance** slider that
   multiplies the style's saturation. The capture preset, Brightness and
-  Vibrance are always visible; the band swatches are one hairline row of five
-  equal `input[type="color"]` cells labelled Sub, Low, Low-mid, Mid and High.
-  Reactions never add a fourth column or a second card.
+  Vibrance are always visible; the swatches are a hairline grid of equal
+  `input[type="color"]` cells labelled with each band's frequency, up to eight
+  per row. Reactions never add a fourth column or a second card.
 - **Audio dynamics** are one full-width strip inside Look, below the three
   columns: not a fourth column and not a second card. The left side is a
-  scrolling five-second **Signal** timeline on a canvas — dBFS grid, amber
-  trace, red segments above the threshold and an amber threshold line with a
-  drag handle. Dragging anywhere on it writes `react_threshold`. The right side
-  is **Dynamics preset** and four round knobs — Threshold, Attack, Release and
-  Punch — each an invisible range input over a conic dial. Vertical drag changes
-  the value; `Shift` is fine, arrows work when the input has focus, and the
-  amber value sits above a tracked uppercase label. Audio modes show the strip
-  instead of the profile select; video modes keep the profile.
+  scrolling five-second **Signal** timeline on a canvas — a −36…0 dBFS grid in
+  6 dB steps, an amber input trace, a red light-drive curtain attached to the
+  top border and descending by the same `pulse_level` percentage the bulbs
+  receive (not another level), and an amber threshold line with a drag handle.
+  Dragging anywhere on it writes `react_threshold`. The header pairs the live
+  dBFS value with a **LIGHT n %** readout, red once the drive is above zero.
+  The right side is **Preset** — four starting points for the knobs — and four
+  small round knobs in compressor order: Threshold, Punch, Attack and Release.
+  Each knob is an invisible range input over a conic dial. Vertical drag
+  changes the value; `Shift` is fine, arrows work when the input has focus, and
+  the amber value sits above a tracked uppercase label. The threshold knob is a
+  miniature side-chain meter: its outer ring covers **−60…0 dB**, the live dot
+  walks toward 0 as the input rises, turns red above the gate and crosses an
+  amber tick at the threshold, while the amber dial inside shows the threshold
+  value itself. A permanent note explains that Punch sets how hard hits above
+  the threshold drive the bulbs. Audio modes show the strip instead of the
+  profile select; video modes keep the profile.
+- **Below the dynamics strip** a second full-width **EQ** strip carries the
+  graphic EQ, again inside Look and never a fourth column or a second card. Its
+  header holds **Bands** (2–16), **Auto release** (off / SSL / API 2500 /
+  Hybrid), **Detect active bands** and a summary of how many bands are
+  assigned. A canvas draws the response from 20 Hz to 20 kHz on a −18…+18 dB
+  scale with one draggable node per band. Below it, one vertical fader per band
+  shows gain with the frequency and a lamp select; the selected band is
+  outlined amber and its frequency, Q, gain and lamp are editable in a flat
+  detail row. The frequency control is logarithmic so the low end is not
+  squeezed into a few pixels. The strip stays generic: it takes its minimum,
+  maximum, gain limit and auto modes from the snapshot, not from hard-coded
+  band names.
 - Below `1000px` both stacks flatten to a single column in 01 → 05 order.
   `prefers-reduced-motion` disables transitions.
 

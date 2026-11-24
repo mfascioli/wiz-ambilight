@@ -76,16 +76,36 @@ from `--style`; the style table is in the [README](../README.md#-styles).
 | `--react-amount` | `0.8` | 0–1 | Reaction strength; `0` keeps the source color only. |
 | `--react-target` | `0.45` | 0.05–0.95 | `equalize` only: target scene luma. |
 | `--react-profile` | `balanced` | `soft`, `balanced`, `strong` | Intensity profile. In audio modes it bundles gate, ceiling, envelope and punch. |
-| `--react-bands` | [five defaults](../README.md#-band-colors) | exactly five `#rrggbb` | Colors for sub, low, low-mid, mid and high, in that order. |
-| `--react-threshold` | profile (`-22` dBFS on `balanced`) | −60–0 dBFS | Audio gate where the bulbs start to open. |
+| `--react-bands` | [8 defaults](../README.md#-audio-colors) | exactly `--react-eq-bands` `#rrggbb` values | One color per EQ band, low to high (`bands` mode). |
+| `--react-eq-bands` | `8` | 2–16 | Number of graphic-EQ bands. |
+| `--react-eq` | log-spaced 32 Hz–16 kHz | JSON array | Per-band `{freq,gain,q,lamp}`; `lamp` is a 0-based enabled-bulb index or `-1` for auto. |
+| `--react-auto` | `off` | `off`, `ssl`, `api`, `hybrid` | Compressor-inspired auto release; `ssl` uses dual program-dependent release, `api` adds a soft knee and low-end thrust. |
+| `--react-active-bands` | off | flag | Only bands above their own noise floor (4 dB, 180 ms hold) light a bulb. |
+| `--react-color-mode` | `bands` | `bands`, `spectrum`, `rainbow`, `range`, `level`, `single` | Where audio bulb colors come from. |
+| `--react-color-a` | `#fcbe11` | `#rrggbb` | Low color for `range`, soft color for `level`, only color for `single`. |
+| `--react-color-b` | `#38bdf8` | `#rrggbb` | High color for `range`, loud color for `level`. |
+| `--react-threshold` | profile (`-18` dBFS on `balanced`) | −60–0 dBFS | Audio gate where the bulbs start to open. |
 | `--react-attack` | profile (`1` ms on `balanced`) | 0–200 ms | Envelope attack. |
 | `--react-release` | profile (`55` ms on `balanced`) | 20–1000 ms | Envelope release. |
 | `--react-punch` | profile (`3.0` on `balanced`) | 1–4 | How hard levels above the gate drive brightness. |
 
 The audio profile values are `soft` −30 dBFS / 12 ms / 200 ms / 1.4, `balanced`
-−22 / 1 / 55 / 3.0 and `strong` −18 / 0 / 30 / 4.0 (threshold / attack /
+−18 / 1 / 55 / 3.0 and `strong` −14 / 0 / 30 / 4.0 (threshold / attack /
 release / punch). The four named presets are in the
 [README](../README.md#-audio-dynamics).
+
+`--react-eq` is a JSON array in frequency order. A band missing from the array
+keeps its log-spaced default at that position, and the array is sorted before
+use. For example, a surgical low cut and a sparkle boost on three bulbs:
+
+```bash
+./mpv_ambilight.py --react vu \
+  --react-eq '[{"freq":60,"gain":-12,"q":3.2,"lamp":0},{"freq":250,"gain":4,"q":0.9,"lamp":1},{"freq":9000,"gain":6,"q":5,"lamp":2}]' \
+  song.flac
+```
+
+Gain only shapes detection, never mpv's output. Bands that share a lamp are
+averaged; lamps without an assignment follow the overall mix.
 
 ### Sampling
 
@@ -225,7 +245,13 @@ in [Flags](#flags). These are the flags in use:
 ./mpv_ambilight.py --react vu --react-threshold -24 --react-punch 4 \
   --react-release 30 concert.mkv
 ./mpv_ambilight.py --react vu \
-  --react-bands '#ff3b30,#ff9500,#ffcc00,#34c759,#5ac8fa' concert.mkv
+  --react-bands '#ff3b30,#ff9500,#ffcc00,#34c759,#5ac8fa,#0a84ff,#bf5af2,#ff2d55' \
+  concert.mkv
+./mpv_ambilight.py --react vu --react-eq-bands 16 --react-auto hybrid concert.mkv
+./mpv_ambilight.py --react vu --react-active-bands --react-auto ssl concert.mkv
+./mpv_ambilight.py --react vu --react-color-mode rainbow concert.mkv
+./mpv_ambilight.py --react vu --react-color-mode range \
+  --react-color-a '#ff3b30' --react-color-b '#5ac8fa' concert.mkv
 ```
 
 The four dynamics values also have flags: `--react-threshold`,

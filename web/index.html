@@ -154,10 +154,21 @@
                 <input id="reactTarget" type="range" min="5" max="95" step="1" value="45">
               </div>
               <div class="field" id="reactBandsField">
-                <label>Band colors</label>
+                <label for="reactColorMode">Audio colors</label>
+                <select id="reactColorMode"></select>
                 <div class="band-colors" id="reactBands"></div>
-                <p class="hint tight" id="reactBandsHint">
-                  One bulb follows the mix; more bulbs split the bands.
+                <div class="color-pair" id="reactColorPair">
+                  <label class="band-color" id="reactColorASlot">
+                    <input id="reactColorA" type="color" value="#fcbe11" aria-label="Audio color A">
+                    <span id="reactColorALabel">Low</span>
+                  </label>
+                  <label class="band-color" id="reactColorBSlot">
+                    <input id="reactColorB" type="color" value="#38bdf8" aria-label="Audio color B">
+                    <span id="reactColorBLabel">High</span>
+                  </label>
+                </div>
+                <p class="hint tight" id="reactColorHint">
+                  One bulb follows the mix; more bulbs split the five band colors.
                 </p>
               </div>
               <div class="field">
@@ -211,28 +222,39 @@
               <div class="scope-head">
                 <span class="scope-title">Signal</span>
                 <output class="scope-db" id="vuDbOut">−∞ dB</output>
-                <span class="scope-over" id="vuOverOut">below threshold</span>
+                <span class="scope-over" id="vuOverOut">LIGHT 0%</span>
               </div>
-              <canvas id="vuMeter" width="900" height="240" aria-label="Scrolling audio level timeline with threshold">Audio level timeline</canvas>
-              <p class="hint tight scope-hint">Drag the amber threshold line to set it.</p>
+              <canvas id="vuMeter" width="900" height="240" aria-label="Scrolling input level and light-drive timeline with threshold">Audio level timeline</canvas>
+              <p class="hint tight scope-hint">Amber = input. Red hangs from the top = light drive. Drag the amber line.</p>
             </div>
             <div class="dynamics-controls">
               <div class="field">
-                <label for="reactDynamics">Dynamics preset</label>
-                <select id="reactDynamics"></select>
+                <label for="reactDynamics" title="A starting point for the four knobs">Preset</label>
+                <select id="reactDynamics" title="A starting point for the four knobs"></select>
                 <p class="hint tight" id="reactDynamicsHint"></p>
               </div>
               <div class="knob-bank">
                 <div class="knob-field">
-                  <div class="knob">
+                  <div class="knob knob-live" id="thresholdKnob" title="Outer ring: live input, −60 dB at the left end to 0 dB at the right. Amber dial: threshold.">
+                    <span class="knob-meter" aria-hidden="true"></span>
+                    <span class="knob-gate" aria-hidden="true"></span>
+                    <span class="knob-dot" aria-hidden="true"></span>
                     <span class="knob-dial" aria-hidden="true"><span class="knob-marker"></span></span>
-                    <input id="reactThreshold" class="knob-input" type="range" min="-60" max="0" step="1" value="-22" aria-label="Threshold">
+                    <input id="reactThreshold" class="knob-input" type="range" min="-60" max="0" step="1" value="-18" aria-label="Threshold; the outer ring shows live input from −60 to 0 dB">
                   </div>
-                  <output class="knob-value" id="reactThresholdOut">−22 dB</output>
+                  <output class="knob-value" id="reactThresholdOut">−18 dB</output>
                   <label class="knob-label" for="reactThreshold">Threshold</label>
                 </div>
                 <div class="knob-field">
-                  <div class="knob">
+                  <div class="knob" title="How hard hits above the threshold drive the bulbs; higher is more dramatic.">
+                    <span class="knob-dial" aria-hidden="true"><span class="knob-marker"></span></span>
+                    <input id="reactPunch" class="knob-input" type="range" min="100" max="400" step="10" value="300" aria-label="Punch; how hard hits above the threshold drive the bulbs">
+                  </div>
+                  <output class="knob-value" id="reactPunchOut">3.0×</output>
+                  <label class="knob-label" for="reactPunch">Punch</label>
+                </div>
+                <div class="knob-field">
+                  <div class="knob" title="How quickly the bulbs reach a new level.">
                     <span class="knob-dial" aria-hidden="true"><span class="knob-marker"></span></span>
                     <input id="reactAttack" class="knob-input" type="range" min="0" max="200" step="1" value="1" aria-label="Attack">
                   </div>
@@ -240,23 +262,48 @@
                   <label class="knob-label" for="reactAttack">Attack</label>
                 </div>
                 <div class="knob-field">
-                  <div class="knob">
+                  <div class="knob" title="How quickly the bulbs fall back after a hit.">
                     <span class="knob-dial" aria-hidden="true"><span class="knob-marker"></span></span>
                     <input id="reactRelease" class="knob-input" type="range" min="20" max="1000" step="5" value="55" aria-label="Release">
                   </div>
                   <output class="knob-value" id="reactReleaseOut">55 ms</output>
                   <label class="knob-label" for="reactRelease">Release</label>
                 </div>
-                <div class="knob-field">
-                  <div class="knob">
-                    <span class="knob-dial" aria-hidden="true"><span class="knob-marker"></span></span>
-                    <input id="reactPunch" class="knob-input" type="range" min="100" max="400" step="10" value="300" aria-label="Punch">
-                  </div>
-                  <output class="knob-value" id="reactPunchOut">3.0×</output>
-                  <label class="knob-label" for="reactPunch">Punch</label>
-                </div>
               </div>
+              <p class="hint tight dynamics-note">Punch: how hard hits above the threshold drive the bulbs.</p>
             </div>
+          </div>
+          <div class="eq-strip hidden" id="eqPanel">
+            <div class="eq-head">
+              <span class="scope-title">EQ</span>
+              <label class="eq-count" for="eqBandCount">Bands
+                <select id="eqBandCount"></select>
+              </label>
+              <label class="eq-auto" for="reactAuto">Auto release
+                <select id="reactAuto"></select>
+              </label>
+              <label class="check eq-active">
+                <input type="checkbox" id="reactActiveBands">
+                <span title="Only bands above their own noise floor drive their bulbs">Detect active bands</span>
+              </label>
+              <span class="eq-summary" id="eqSummary"></span>
+            </div>
+            <canvas id="eqCanvas" width="900" height="166" aria-label="8-band graphic EQ curve with one node per band">Audio EQ curve</canvas>
+            <div class="eq-faders" id="eqFaders"></div>
+            <div class="eq-detail" id="eqDetail">
+              <span class="eq-detail-title" id="eqDetailTitle">Band 1</span>
+              <label for="eqFreq">Frequency <output id="eqFreqOut">40 Hz</output></label>
+              <input id="eqFreq" type="range" min="0" max="1000" step="1" value="500">
+              <label for="eqQ">Q <output id="eqQOut">1.4</output></label>
+              <input id="eqQ" type="range" min="0.4" max="8" step="0.1" value="1.4">
+              <label for="eqGain">Gain <output id="eqGainOut">0.0 dB</output></label>
+              <input id="eqGain" type="range" min="-18" max="18" step="0.5" value="0">
+              <label for="eqLamp">Lamp</label>
+              <select id="eqLamp"></select>
+            </div>
+            <p class="hint tight scope-hint">
+              Drag a fader or node. Frequency and Q shape the detection band; gain boosts or cuts how hard that band drives its lamp. Unassigned bulbs follow the overall mix.
+            </p>
           </div>
           <div class="control-grid sampling-manual hidden" id="samplingManual">
             <div class="field">

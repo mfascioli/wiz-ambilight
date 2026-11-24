@@ -28,6 +28,7 @@
   --radius: 2px;
   --fill: 50%;
   --turn: .5;               /* round knob sweep, 0..1 */
+  --level: 0;               /* live input level on the threshold knob, 0..1 */
   --c: #fcbe11;              /* inline override: color chip or chart series */
   --shadow: 0 1px 0 #33000000;
   --font-display: "Merriweather", Georgia, "Times New Roman", serif;
@@ -950,8 +951,8 @@ input[type="range"]::-moz-range-thumb {
    and four knobs that shape it. It is not a fourth column. */
 .dynamics-strip {
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(250px, 1fr);
-  gap: 10px;
+  grid-template-columns: minmax(0, 2fr) minmax(205px, 1fr);
+  gap: 8px;
   margin-top: 7px;
   padding-top: 7px;
   border-top: 1px solid var(--line);
@@ -1002,30 +1003,167 @@ input[type="range"]::-moz-range-thumb {
   min-width: 0;
 }
 .dynamics-controls .field { margin-bottom: 0; }
+/* A second full-width strip for the graphic EQ: the curve, one fader per
+   band, and the detail controls for the selected band. */
+.eq-strip {
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+}
+.eq-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+}
+.eq-head label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 8.5px;
+  letter-spacing: .04em;
+  text-transform: none;
+}
+.eq-head select {
+  height: 20px;
+  min-width: 62px;
+  padding: 1px 4px;
+  font-size: 9px;
+}
+.eq-head .eq-active span { font-size: 8.5px; }
+.eq-summary {
+  margin-left: auto;
+  color: #6f6b62;
+  white-space: nowrap;
+}
+#eqCanvas {
+  display: block;
+  width: 100%;
+  height: 150px;
+  margin-top: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #090909;
+  cursor: crosshair;
+  touch-action: none;
+}
+.eq-faders {
+  display: flex;
+  gap: 2px;
+  margin-top: 5px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.eq-band {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 38px;
+  padding: 3px 2px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.eq-band.selected {
+  border-color: rgba(252, 190, 17, .38);
+  background: rgba(252, 190, 17, .05);
+}
+.eq-band-gain {
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.eq-band input[type="range"] {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 16px;
+  height: 78px;
+  margin: 0;
+  padding: 0;
+  /* The shared range style draws a horizontal 2px line; a vertical fader
+     needs a vertical track, filled from the bottom to the current gain. */
+  background:
+    linear-gradient(0deg, var(--amber) 0 var(--fill, 50%), #2a2a2a var(--fill, 50%) 100%)
+    center / 3px 100% no-repeat;
+  accent-color: var(--amber);
+  cursor: ns-resize;
+}
+.eq-band-freq {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 7px;
+  white-space: nowrap;
+}
+.eq-band-lamp {
+  max-width: 100%;
+  height: 17px;
+  padding: 0 1px;
+  font-size: 7px;
+}
+.eq-detail {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 8px;
+}
+.eq-detail label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 8px;
+  letter-spacing: .03em;
+  text-transform: none;
+}
+.eq-detail input[type="range"] {
+  width: 62px;
+  height: 14px;
+}
+.eq-detail select {
+  height: 20px;
+  min-width: 66px;
+  font-size: 9px;
+}
+.eq-detail-title {
+  color: var(--amber);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
 .knob-bank {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 5px;
+  gap: 4px;
   align-items: start;
   margin-top: auto;
-  padding-top: 5px;
+  padding-top: 4px;
   border-top: 1px solid rgba(255, 255, 255, .05);
 }
 .knob-field {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
   text-align: center;
 }
 .knob {
   --turn: .5;
+  --level: 0;
   position: relative;
   display: grid;
   place-items: center;
-  width: 46px;
-  height: 46px;
+  width: 38px;
+  height: 38px;
   cursor: ns-resize;
   touch-action: none;
   border-radius: 50%;
@@ -1034,8 +1172,8 @@ input[type="range"]::-moz-range-thumb {
 .knob-dial {
   position: relative;
   display: block;
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   background:
     conic-gradient(from 225deg,
@@ -1048,7 +1186,7 @@ input[type="range"]::-moz-range-thumb {
 .knob-dial::before {
   content: "";
   position: absolute;
-  inset: 4px;
+  inset: 3px;
   border-radius: 50%;
   background:
     radial-gradient(circle at 34% 28%, #232323, #101010 62%, #0b0b0b);
@@ -1060,12 +1198,66 @@ input[type="range"]::-moz-range-thumb {
   left: calc(50% - .75px);
   bottom: 50%;
   width: 1.5px;
-  height: 12px;
+  height: 9px;
   border-radius: 1px;
   background: var(--amber);
   transform-origin: 50% 100%;
   transform: rotate(calc(-135deg + var(--turn) * 270deg));
   pointer-events: none;
+}
+.knob-meter {
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background:
+    conic-gradient(from 225deg,
+      rgba(245, 242, 234, .78) 0deg calc(var(--level) * 270deg),
+      rgba(255, 255, 255, .09) calc(var(--level) * 270deg) 270deg,
+      transparent 270deg);
+  -webkit-mask: radial-gradient(farthest-side,
+      transparent calc(100% - 2.5px), #000 calc(100% - 1.5px));
+  mask: radial-gradient(farthest-side,
+      transparent calc(100% - 2.5px), #000 calc(100% - 1.5px));
+  pointer-events: none;
+}
+.knob.hot .knob-meter {
+  background:
+    conic-gradient(from 225deg,
+      var(--bad) 0deg calc(var(--level) * 270deg),
+      rgba(255, 255, 255, .09) calc(var(--level) * 270deg) 270deg,
+      transparent 270deg);
+}
+/* The threshold sits where the live dot crosses the ring, so the gate is a
+   tick on the same −60…0 dB scale; the dial marker points at it from inside. */
+.knob-gate {
+  position: absolute;
+  z-index: 2;
+  left: calc(50% - 1px);
+  top: calc(50% - 2.5px);
+  width: 2px;
+  height: 5px;
+  border-radius: 1px;
+  background: var(--amber);
+  transform: rotate(calc(225deg + var(--turn) * 270deg)) translateY(-20px);
+  pointer-events: none;
+}
+/* Leading dot of the live input ring, anchored on the same 270° arc. */
+.knob-dot {
+  position: absolute;
+  z-index: 2;
+  left: calc(50% - 2px);
+  top: calc(50% - 2px);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #f5f2ea;
+  box-shadow: 0 0 4px rgba(245, 242, 234, .55);
+  transform: rotate(calc(225deg + var(--level) * 270deg)) translateY(-20px);
+  pointer-events: none;
+}
+.knob.hot .knob-dot {
+  background: var(--bad);
+  box-shadow: 0 0 5px rgba(255, 90, 74, .7);
 }
 .knob:hover .knob-dial { filter: brightness(1.18); }
 .knob:has(.knob-input:focus-visible) .knob-dial {
@@ -1088,7 +1280,7 @@ input[type="range"]::-moz-range-thumb {
 .knob-value {
   color: var(--amber);
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 9px;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
   white-space: nowrap;
@@ -1096,18 +1288,33 @@ input[type="range"]::-moz-range-thumb {
 .knob-label {
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 7.5px;
+  font-size: 7px;
   font-weight: 400;
-  letter-spacing: .08em;
+  letter-spacing: .06em;
   line-height: 1.2;
   text-transform: uppercase;
   white-space: nowrap;
 }
+.dynamics-note { color: #6f6b62; line-height: 1.3; }
 
 .band-colors {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 3px;
+}
+.band-colors:empty {
+  display: none;
+}
+.color-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.color-pair.hidden {
+  display: none;
+}
+.color-pair.single {
+  grid-template-columns: minmax(0, 1fr);
 }
 .field .band-color {
   display: grid;
@@ -1463,7 +1670,7 @@ input[type="range"]::-moz-range-thumb {
   .control-grid, .control-grid.second { grid-template-columns: 1fr 1fr; }
   .look-cols { grid-template-columns: 1fr; }
   .dynamics-strip { grid-template-columns: 1fr; }
-  .knob-bank { max-width: 340px; }
+  .knob-bank { max-width: 300px; }
   .look-col {
     border-left: 0;
     border-top: 1px solid var(--line);

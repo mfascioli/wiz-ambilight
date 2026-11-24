@@ -129,7 +129,21 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(config["react_amount"], 0.8)
         self.assertEqual(config["react_target"], 0.45)
         self.assertEqual(config["react_profile"], "balanced")
-        self.assertEqual(config["react_bands"], list(m.DEFAULT_BAND_COLORS))
+        self.assertEqual(config["react_eq_bands"], m.DEFAULT_EQ_BANDS)
+        self.assertEqual(len(config["react_eq"]), m.DEFAULT_EQ_BANDS)
+        self.assertEqual(config["react_eq"][0]["gain"], 0.0)
+        self.assertEqual(
+            [band["freq"] for band in config["react_eq"]],
+            [round(freq, 2) for freq in m.default_eq_freqs(m.DEFAULT_EQ_BANDS)],
+        )
+        self.assertEqual(
+            config["react_bands"], list(m.BAND_COLOR_PALETTE[: m.DEFAULT_EQ_BANDS])
+        )
+        self.assertEqual(config["react_auto"], "off")
+        self.assertEqual(config["react_active_bands"], False)
+        self.assertEqual(config["react_color_mode"], "bands")
+        self.assertEqual(config["react_color_a"], m.DEFAULT_AUDIO_COLOR_A)
+        self.assertEqual(config["react_color_b"], m.DEFAULT_AUDIO_COLOR_B)
 
         bad = webui.normalize_config(
             {
@@ -138,6 +152,11 @@ class NormalizeTests(unittest.TestCase):
                 "react_target": "x",
                 "react_profile": "extreme",
                 "react_bands": ["#FF0000"],
+                "react_eq_bands": 99,
+                "react_auto": "neon",
+                "react_color_mode": "neon",
+                "react_color_a": "nope",
+                "react_color_b": "#ABCDEF",
             },
             m,
         )
@@ -145,8 +164,16 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(bad["react_amount"], 1.0)
         self.assertEqual(bad["react_target"], 0.45)
         self.assertEqual(bad["react_profile"], "balanced")
+        self.assertEqual(bad["react_eq_bands"], m.MAX_BANDS)
+        self.assertEqual(len(bad["react_eq"]), m.MAX_BANDS)
+        self.assertEqual(bad["react_auto"], "off")
         self.assertEqual(bad["react_bands"][0], "#ff0000")
-        self.assertEqual(bad["react_bands"][1:], list(m.DEFAULT_BAND_COLORS[1:]))
+        self.assertEqual(
+            bad["react_bands"][1:], list(m.BAND_COLOR_PALETTE[1 : m.MAX_BANDS])
+        )
+        self.assertEqual(bad["react_color_mode"], "bands")
+        self.assertEqual(bad["react_color_a"], m.DEFAULT_AUDIO_COLOR_A)
+        self.assertEqual(bad["react_color_b"], "#abcdef")
 
         self.assertEqual(
             webui.normalize_config({"react_amount": -3}, m)["react_amount"], 0.0
@@ -323,12 +350,33 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--capture") + 1], "source")
 
     def test_reaction_flags_are_passed_to_the_sync(self):
+        colors = [
+            "#010203",
+            "#040506",
+            "#070809",
+            "#0a0b0c",
+            "#0d0e0f",
+            "#101112",
+            "#131415",
+            "#161718",
+        ]
+        eq = [
+            {"freq": 80.0, "gain": -6.0, "q": 2.0, "lamp": 0},
+            {"freq": 2400.0, "gain": 3.5, "q": 0.8, "lamp": 1},
+        ]
         config = make_config(
             react="beat",
             react_amount=0.55,
             react_target=0.6,
             react_profile="strong",
-            react_bands=["#010203", "#040506", "#070809", "#0a0b0c", "#0d0e0f"],
+            react_eq_bands=8,
+            react_eq=eq,
+            react_bands=colors,
+            react_auto="hybrid",
+            react_active_bands=True,
+            react_color_mode="rainbow",
+            react_color_a="#112233",
+            react_color_b="#445566",
             react_threshold=-24,
             react_attack=2,
             react_release=60,
@@ -340,10 +388,21 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--react-amount") + 1], "0.55")
         self.assertEqual(argv[argv.index("--react-target") + 1], "0.6")
         self.assertEqual(argv[argv.index("--react-profile") + 1], "strong")
+        self.assertEqual(argv[argv.index("--react-eq-bands") + 1], "8")
+        passed_eq = json.loads(argv[argv.index("--react-eq") + 1])
+        self.assertEqual(len(passed_eq), 8)
+        by_freq = {band["freq"]: band for band in passed_eq}
+        self.assertEqual(by_freq[80.0], eq[0])
+        self.assertEqual(by_freq[2400.0], eq[1])
+        self.assertEqual(argv[argv.index("--react-auto") + 1], "hybrid")
+        self.assertIn("--react-active-bands", argv)
         self.assertEqual(
             argv[argv.index("--react-bands") + 1],
-            "#010203,#040506,#070809,#0a0b0c,#0d0e0f",
+            ",".join(colors),
         )
+        self.assertEqual(argv[argv.index("--react-color-mode") + 1], "rainbow")
+        self.assertEqual(argv[argv.index("--react-color-a") + 1], "#112233")
+        self.assertEqual(argv[argv.index("--react-color-b") + 1], "#445566")
         self.assertEqual(argv[argv.index("--react-threshold") + 1], "-24")
         self.assertEqual(argv[argv.index("--react-attack") + 1], "2")
         self.assertEqual(argv[argv.index("--react-release") + 1], "60")
@@ -370,9 +429,25 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--react-profile") + 1], "balanced")
         self.assertEqual(
             argv[argv.index("--react-bands") + 1],
-            ",".join(m.DEFAULT_BAND_COLORS),
+            ",".join(m.BAND_COLOR_PALETTE[: m.DEFAULT_EQ_BANDS]),
         )
-        self.assertEqual(argv[argv.index("--react-threshold") + 1], "-22")
+        self.assertEqual(
+            argv[argv.index("--react-eq-bands") + 1],
+            str(m.DEFAULT_EQ_BANDS),
+        )
+        eq = json.loads(argv[argv.index("--react-eq") + 1])
+        self.assertEqual(len(eq), m.DEFAULT_EQ_BANDS)
+        self.assertEqual(eq[0]["freq"], m.default_eq_freqs(8)[0])
+        self.assertEqual(argv[argv.index("--react-auto") + 1], "off")
+        self.assertNotIn("--react-active-bands", argv)
+        self.assertEqual(argv[argv.index("--react-color-mode") + 1], "bands")
+        self.assertEqual(
+            argv[argv.index("--react-color-a") + 1], m.DEFAULT_AUDIO_COLOR_A
+        )
+        self.assertEqual(
+            argv[argv.index("--react-color-b") + 1], m.DEFAULT_AUDIO_COLOR_B
+        )
+        self.assertEqual(argv[argv.index("--react-threshold") + 1], "-18")
         self.assertEqual(argv[argv.index("--react-attack") + 1], "1")
         self.assertEqual(argv[argv.index("--react-release") + 1], "55")
         self.assertEqual(argv[argv.index("--react-punch") + 1], "3")
@@ -473,16 +548,48 @@ class DemoPanelTests(unittest.TestCase):
         self.assertEqual(reactions["color"]["profiles"], [])
         self.assertEqual(
             [band["id"] for band in snapshot["bands"]],
-            list(m.BANDS),
+            [f"band-{index + 1}" for index in range(m.DEFAULT_EQ_BANDS)],
         )
         self.assertEqual(
             [band["color"] for band in snapshot["bands"]],
-            list(m.DEFAULT_BAND_COLORS),
+            list(m.BAND_COLOR_PALETTE[: m.DEFAULT_EQ_BANDS]),
+        )
+        self.assertEqual(len(snapshot["bands"]), m.DEFAULT_EQ_BANDS)
+        self.assertEqual(
+            snapshot["bands"][0]["label"], m.format_freq(m.default_eq_freqs(8)[0])
+        )
+        self.assertEqual(snapshot["eq_limits"]["min"], m.MIN_BANDS)
+        self.assertEqual(snapshot["eq_limits"]["max"], m.MAX_BANDS)
+        self.assertEqual(
+            [mode["id"] for mode in snapshot["auto_modes"]], list(m.AUTO_MODES)
+        )
+        self.assertEqual(
+            [lamp["index"] for lamp in snapshot["lamps"]],
+            list(range(len(snapshot["lamps"]))),
+        )
+        self.assertEqual(
+            [mode["id"] for mode in snapshot["color_modes"]],
+            list(m.AUDIO_COLOR_MODES),
+        )
+        self.assertTrue(all(mode["hint"] for mode in snapshot["color_modes"]))
+        self.assertEqual(snapshot["config"]["react_color_mode"], "bands")
+        self.assertEqual(
+            snapshot["config"]["react_color_a"], m.DEFAULT_AUDIO_COLOR_A
+        )
+        self.assertEqual(
+            snapshot["config"]["react_color_b"], m.DEFAULT_AUDIO_COLOR_B
         )
         self.assertEqual(snapshot["config"]["react_profile"], "balanced")
         self.assertEqual(
-            snapshot["config"]["react_bands"], list(m.DEFAULT_BAND_COLORS)
+            snapshot["config"]["react_bands"],
+            list(m.BAND_COLOR_PALETTE[: m.DEFAULT_EQ_BANDS]),
         )
+        self.assertEqual(snapshot["config"]["react_eq_bands"], m.DEFAULT_EQ_BANDS)
+        self.assertEqual(
+            len(snapshot["config"]["react_eq"]), m.DEFAULT_EQ_BANDS
+        )
+        self.assertEqual(snapshot["config"]["react_auto"], "off")
+        self.assertEqual(snapshot["config"]["react_active_bands"], False)
         self.assertEqual(
             [group["id"] for group in snapshot["reaction_groups"]], ["video", "audio"]
         )
@@ -498,13 +605,33 @@ class DemoPanelTests(unittest.TestCase):
 
     def test_snapshot_reflects_custom_reaction_config(self):
         path = Path(os.environ["WIZ_AMBILIGHT_GUI_CONFIG"])
-        colors = ["#010203", "#040506", "#070809", "#0a0b0c", "#0d0e0f"]
+        colors = [
+            "#010203",
+            "#040506",
+            "#070809",
+            "#0a0b0c",
+            "#0d0e0f",
+            "#101112",
+            "#131415",
+            "#161718",
+        ]
+        eq = [
+            {"freq": 80, "gain": -6, "q": 2.0, "lamp": 0},
+            {"freq": 2400, "gain": 4.5, "q": 0.8, "lamp": 2},
+        ]
         path.write_text(
             json.dumps(
                 {
                     "react": "vu",
                     "react_profile": "strong",
                     "react_bands": colors,
+                    "react_eq_bands": 8,
+                    "react_eq": eq,
+                    "react_auto": "hybrid",
+                    "react_active_bands": True,
+                    "react_color_mode": "level",
+                    "react_color_a": "#224466",
+                    "react_color_b": "#88aacc",
                 }
             ),
             encoding="utf-8",
@@ -514,6 +641,20 @@ class DemoPanelTests(unittest.TestCase):
         self.assertEqual(snapshot["config"]["react"], "vu")
         self.assertEqual(snapshot["config"]["react_profile"], "strong")
         self.assertEqual([band["color"] for band in snapshot["bands"]], colors)
+        self.assertEqual(snapshot["config"]["react_auto"], "hybrid")
+        self.assertTrue(snapshot["config"]["react_active_bands"])
+        bands = snapshot["config"]["react_eq"]
+        self.assertEqual(len(bands), 8)
+        by_freq = {band["freq"]: band for band in bands}
+        self.assertEqual(by_freq[80.0]["gain"], -6.0)
+        self.assertEqual(by_freq[80.0]["q"], 2.0)
+        self.assertEqual(by_freq[80.0]["lamp"], 0)
+        self.assertEqual(by_freq[2400.0]["gain"], 4.5)
+        self.assertEqual(by_freq[2400.0]["q"], 0.8)
+        self.assertEqual(by_freq[2400.0]["lamp"], 2)
+        self.assertEqual(snapshot["config"]["react_color_mode"], "level")
+        self.assertEqual(snapshot["config"]["react_color_a"], "#224466")
+        self.assertEqual(snapshot["config"]["react_color_b"], "#88aacc")
 
     def test_mpv_pid_comes_from_a_fresh_state_file(self):
         panel = webui.Panel(m, demo=True)
@@ -549,6 +690,8 @@ class DemoPanelTests(unittest.TestCase):
             meter = panel.meter()
             self.assertTrue(meter["active"])
             self.assertAlmostEqual(meter["db"], -14.0)
+            self.assertEqual(meter["ceiling"], m.AUDIO_CEILING_DB)
+            self.assertEqual(meter["window"], m.AUDIO_WINDOW_DB)
             self.assertEqual(len(meter["bands"]), 5)
             self.assertEqual(meter["bands"][2], -12.0)
         finally:

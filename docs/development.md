@@ -62,7 +62,21 @@ or generate from a script:
   "react_amount": 0.8,
   "react_target": 0.45,
   "react_profile": "balanced",
-  "react_bands": ["#ff5a3c", "#fcbe11", "#7ad66b", "#38bdf8", "#a78bfa"],
+  "react_eq_bands": 8,
+  "react_eq": [
+    {"freq": 32, "gain": 0, "q": 1.4, "lamp": -1},
+    {"freq": 77.75, "gain": 0, "q": 1.4, "lamp": -1},
+    {"freq": 188.92, "gain": 0, "q": 1.4, "lamp": -1},
+    {"freq": 459.04, "gain": 0, "q": 1.4, "lamp": -1},
+    {"freq": 1115.37, "gain": 0, "q": 1.4, "lamp": -1},
+    {"freq": 2710.1, "gain": 0, "q": 1.4, "lamp": -1},
+    {"freq": 6584.96, "gain": 0, "q": 1.4, "lamp": -1},
+    {"freq": 16000, "gain": 0, "q": 1.4, "lamp": -1}
+  ],
+  "react_auto": "off",
+  "react_active_bands": false,
+  "react_bands": ["#ff5a3c", "#fcbe11", "#7ad66b", "#38bdf8",
+                  "#a78bfa", "#f472b6", "#2dd4bf", "#fb923c"],
   "brightness": 100,
   "mode": "attach",
   "media": "",
@@ -124,7 +138,7 @@ layer and are scaled by `react_amount` (`0` is a no-op). Spans below are at
 | `motion` | video | per-zone distance | 0.35 s release, brightness and saturation |
 | `duotone` | video | per-zone colour | odd bulbs get `hue_shift(rgb, 180° × amount)` |
 | `beat` | audio | per-band RMS + peak transient | each band must clear the `react_threshold` gate and jump 3 dB over a fast running average; 0.12 s minimum gap, 1 ms attack / 55 ms release, 75 % flash span; a hit reaches full scale |
-| `vu` | audio | per-band RMS + sample peak | −22…−10 dBFS window per band, 1 ms attack / 55 ms release, punch 3.0; one bulb uses the overall level |
+| `vu` | audio | per-band RMS + sample peak | −18…−6 dBFS window per band, 1 ms attack / 55 ms release, punch 3.0; one bulb uses the overall level |
 
 `react_profile` (`soft`, `balanced`, `strong`) selects a row from
 `REACTION_PROFILES`. Video modes use it for `equalize`, `cut` and `motion`;
@@ -137,10 +151,10 @@ holds four named starting points, served to the panel as `dynamics`:
 
 | preset | threshold | attack | release | punch |
 | --- | --- | --- | --- | --- |
-| `mellow` | −30 dBFS | 12 ms | 200 ms | 1.4 |
-| `glue` | −26 dBFS | 6 ms | 120 ms | 2.0 |
-| `punch` | −22 dBFS | 1 ms | 55 ms | 3.0 |
-| `strobe` | −18 dBFS | 0 ms | 30 ms | 4.0 |
+| `mellow` | −28 dBFS | 12 ms | 200 ms | 1.4 |
+| `glue` | −24 dBFS | 6 ms | 120 ms | 2.0 |
+| `punch` | −18 dBFS | 1 ms | 55 ms | 3.0 |
+| `strobe` | −14 dBFS | 0 ms | 30 ms | 4.0 |
 
 `react_threshold` is the gate in dBFS (−60…0), `react_attack` and
 `react_release` are milliseconds (0…200 and 20…1000) and `react_punch` is
@@ -148,21 +162,66 @@ holds four named starting points, served to the panel as `dynamics`:
 `--react-release` and `--react-punch` are the CLI equivalents. When they are
 absent, the values come from the profile, which keeps `--react-profile`
 meaningful for old configs. The ceiling comes from the profile's `high` value
-(−10 dBFS by default).
+(−6 dBFS by default), and `pulse_level` keeps at least `AUDIO_WINDOW_DB`
+(12 dB) of range above the gate so a high threshold stays usable.
 
-`react_bands` is five `#rrggbb` strings in `sub`, `low`, `low-mid`, `mid`,
-`high` order. The crossover splits at 60, 250, 800 and 2500 Hz. Missing or
-malformed entries fall back to `DEFAULT_BAND_COLORS` at their own position, so
-the rest of the list never shifts. The CLI form is
-`--react-bands '#aabbcc,#…'`; the panel stores the same list in `lights.json`.
-`band_for(index, count)` spreads the bands over the bulbs: one bulb follows the
-overall level, 2–5 map to `[0,4]`, `[0,2,4]`, `[0,1,3,4]` and `[0,1,2,3,4]`,
-and more than five repeat. With one bulb the colour is the loudest band's.
+`react_eq_bands` is the analysis band count, **2–16** (default 8).
+`react_eq` is a list of `{freq, gain, q, lamp}` objects kept in frequency
+order. `freq` is the band centre in Hz (20–20000), `gain` is the detection
+boost in dB (−18…+18), `q` is the width (0.4–8) and `lamp` is a 0-based index
+into the enabled bulbs in panel order, or `-1` for auto. `normalize_eq_bands`
+clamps every value, fills a missing slot with the log-spaced default for that
+position and sorts the list, so a malformed band never shifts the rest of the
+curve. The panel always writes an explicit list; a `Reaction` built directly
+without one keeps the classic 5-band layout for compatibility.
+
+The default centres are `(16000/32) ** (1/(N-1))` apart, starting at 32 Hz;
+for N=8 that is 32, 78, 189, 459, 1.1k, 2.7k, 6.6k and 16k Hz. `eq_splits`
+turns adjacent centres and Q values into the crossover boundaries: each band's
+Q-derived edges are `f * 2**(±0.5/Q)`, the split is the geometric mean of the
+neighbouring edges and is nudged to stay strictly increasing. `eq_thrust_db`
+returns the API-style low-end de-emphasis (−3 dB below 120 Hz, −1.5 dB below
+250 Hz) used only by the `api` and `hybrid` auto modes.
+
+`react_bands` is one `#rrggbb` string per EQ band, low to high, and
+`normalize_band_colors` cycles `BAND_COLOR_PALETTE` (16 colours; the first five
+are the legacy `DEFAULT_BAND_COLORS`) so a 16-band EQ still has distinct
+swatches. Missing or malformed entries fall back to the palette colour at their
+own position. The CLI form is `--react-bands '#aabbcc,#…'` and its count must
+match `--react-eq-bands`; `--react-eq` takes the JSON list.
+
+`band_for(index, count, bands)` spreads the bands over the bulbs when no lamp
+is assigned: one bulb follows the overall level, fewer bulbs than bands map
+evenly from low to high, and more bulbs than bands repeat the cycle. An
+explicit `lamp >= 0` on any band switches to assignment mode: each bulb
+averages every active band assigned to it, takes the colour of the strongest
+of those bands, and bulbs with no assigned band follow the overall mix.
+
+`react_auto` is `off`, `ssl`, `api` or `hybrid`. `Reaction._auto_release`
+tracks how long a bulb has been driven (`sustain`): `ssl` and `hybrid` keep a
+fast time constant for hits and stretch toward `release * 8` (up to 2 s) while
+the program stays compressed, while `api` uses a fixed 1.35× release. `api` and
+`hybrid` also run the level through `** 0.85` (`_auto_level`, a soft knee) and
+apply `eq_thrust_db` to the low bands. `react_active_bands` enables the
+per-band detector: each band keeps a slow floor (fast down, slow up), must sit
+4 dB above it and stay there for 180 ms (`ACTIVE_MARGIN_DB`, `ACTIVE_HOLD`),
+and an inactive band contributes zero even if it is above the gate.
+
+`react_color_mode` picks where an audio bulb's colour comes from:
+`bands` (the list above), `spectrum` (a fixed hue per band), `rainbow` (a hue
+that rotates with time and is offset per band), `range` (a blend from
+`react_color_a` to `react_color_b` across the bands), `level` (the same blend
+driven by the bulb's live level) or `single` (`react_color_a` everywhere).
+`Reaction.audio_color(band, level, now)` is the single decision point, so every
+mode shares the band assignment and brightness path. Colour A and B default to
+`#fcbe11` and `#38bdf8`; malformed hex falls back to the default. The CLI flags
+are `--react-color-mode`, `--react-color-a` and `--react-color-b`.
 
 The pure helpers are in `mpv_ambilight.py`: `scene_luma`, `rgb_distance`,
-`hue_shift`, `equalize_gain`, `pulse_level`, `vu_level`, `hot_db`,
-`beat_pulse`, `cut_pulse`, `finite_float`, `band_for`,
-`normalize_band_colors`, `parse_band_colors` and the `Reaction` state class. `Reaction.update()` runs when Lua writes a state frame;
+`hue_shift`, `hsv_rgb`, `blend_rgb`, `equalize_gain`, `pulse_level`,
+`vu_level`, `hot_db`, `beat_pulse`, `cut_pulse`, `finite_float`, `band_for`,
+`normalize_band_colors`, `parse_band_colors`, `normalize_audio_color` and the
+`Reaction` state class. `Reaction.update()` runs when Lua writes a state frame;
 `Reaction.dimming()` runs on every send tick so a 120 ms flash is not lost
 between frames. Colour changes happen before saturation/gamma; brightness is
 per bulb.
@@ -175,27 +234,35 @@ external process. On activation the Lua script appends:
 ```text
 @wizstats:lavfi=[astats=metadata=1:reset=1],
 @wizbands:lavfi=[aformat=channel_layouts=stereo,
-  acrossover=split=60 250 800 2500[b0][b1][b2][b3][b4];
-  [b0][b1][b2][b3][b4]amerge=inputs=5,astats=metadata=1:reset=1,
-  pan=stereo|c0=c0+c2+c4+c6+c8|c1=c1+c3+c5+c7+c9],
+  acrossover=split=<s1> <s2> … <sN-1>[b0][b1]…[bN-1];
+  [b0][b1]…[bN-1]amerge=inputs=N,astats=metadata=1:reset=1,
+  pan=stereo|c0=c0+c2+…|c1=c1+c3+…],
 @wiztail:lavfi=[anull]
 ```
 
+The split points come from `eq_splits()` on the active EQ and are passed to the
+Lua script in its startup config (`bands`). `band_filter()` formats them with
+two decimals, emits one label per band, and builds the `pan` sums from the 2N
+channels, so the same code handles 2, 8 or 16 bands. `sanitize_bands` rejects
+non-numeric and out-of-range splits; when no plan is supplied the classic
+`60 250 800 2500` five-band fallback is used. Changing the plan in a running
+script removes and re-adds the chain (the band lists are compared first).
+
 `astats` injects `af-metadata/wizstats` with the overall levels. `acrossover`
-splits the stereo downmix into five bands, `amerge` stacks them into ten
-channels and a second `astats` exposes `af-metadata/wizbands`, one RMS and one
-peak pair per band. `pan` recombines the ten channels into the stereo output.
-The crossover keeps the magnitude flat (measured within 0.6 dB with white
-noise) but adds an all-pass phase shift, so the output is not sample-identical;
-it is not a pass-through. `anull` keeps the chain valid while the labels are
-removed. The script adds the chain only when `react` is `beat` or `vu`,
-re-adds it after `file-loaded`, and removes `@wizbands`, `@wizstats` and
-`@wiztail` in any order on a switch back to a video mode, on stop and on
-shutdown. A user's own `af` chain is left in place.
+splits the stereo downmix into N bands, `amerge` stacks them into 2N channels
+and a second `astats` exposes `af-metadata/wizbands`, one RMS and one peak pair
+per band. `pan` recombines those channels into the stereo output. The crossover
+keeps the magnitude flat (measured within 0.6 dB with white noise) but adds an
+all-pass phase shift, so the output is not sample-identical; it is not a
+pass-through. `anull` keeps the chain valid while the labels are removed. The
+script adds the chain only when `react` is `beat` or `vu`, re-adds it after
+`file-loaded`, and removes `@wizbands`, `@wizstats` and `@wiztail` in any order
+on a switch back to a video mode, on stop and on shutdown. A user's own `af`
+chain is left in place.
 
 Some mpv builds only expose the metadata of the last `astats` in a chain, so
 `wizstats` can be empty while `wizbands` is live. In that case the Lua script
-rebuilds the overall RMS and peak by summing the five band powers. That also
+rebuilds the overall RMS and peak by summing every band's power. That also
 means audio still works on builds where only the band graph is readable; the
 Python parser accepts either shape.
 
@@ -204,8 +271,8 @@ While an audio mode is active the state snapshot gains:
 ```json
 "audio": {"rms": -24.1, "peak": -18.0, "crest": 6.1, "zcr": 0.12,
           "l": -24.1, "r": -25.0,
-          "bands": [-41.2, -33.8, -27.0, -24.1, -30.5],
-          "band_peaks": [-36.0, -28.1, -21.4, -18.0, -24.2]}
+          "bands": [-41.2, -33.8, -27.0, -24.1, -21.0, -26.5, -31.0, -38.0],
+          "band_peaks": [-36.0, -28.1, -21.4, -18.0, -15.5, -20.0, -24.2, -31.0]}
 ```
 
 Levels are dBFS; `crest` is peak minus RMS in dB and `zcr` is the
@@ -216,10 +283,13 @@ one-sided mix still registers. Digital silence (`-inf`) and NaN become
 visible on the first update without a mastered track sitting at full scale.
 `pulse_level(db, threshold, ceiling, punch)` then gates everything below the
 threshold to zero, maps the window up to the ceiling onto 0…1 and raises the
-result to `1 / punch`. A punch above 1 lifts the middle of the window, so a
-solid hit lands near full instead of halfway; that is what turns a level meter
-into a pulse. The beat detector runs on the same combined level, ignores
-anything below the threshold, and compares it with a fast running baseline.
+result to `1 / punch`. The window never shrinks below `AUDIO_WINDOW_DB`
+(12 dB): `high = max(threshold + 12, ceiling)`, so a gate close to the ceiling
+does not collapse into a switch. A punch above 1 lifts the middle of the
+window, so a solid hit lands near full instead of halfway; that is what turns
+a level meter into a pulse. The beat detector runs on the same combined level,
+ignores anything below the threshold, and compares it with a fast running
+baseline.
 
 `Reaction.dimming()` is called only when the send loop builds a datagram, so
 `run_sync()` passes the time since the previous send, not the 3–6 ms polling
@@ -228,13 +298,19 @@ using the polling delta would stretch a 55 ms release into almost a second.
 
 The panel's **Signal** view is a local readout over that meter. `GET
 /api/meter` reads the newest fresh Lua state file, applies `hot_db` to its
-`audio` object and returns `active`, `db`, `rms`, `peak` and the five band
-levels. The browser polls it every 40 ms only while an audio reaction is
-selected and keeps a five-second history on the canvas: amber trace, red
-segments above the threshold, and the same values in the header. The amber
-threshold line is drawn from `react_threshold` and dragging it writes that
-config value, so the meter follows the song without restarting the sync or
-adding a second analyser.
+`audio` object and returns `active`, `db`, `ceiling`, `window`, `rms`, `peak`
+and up to 16 band levels. `ceiling` is the selected profile's `high` value and
+`window` is `AUDIO_WINDOW_DB`, so the client can reproduce `pulse_level`
+without duplicating the profile table. The browser polls it every 40 ms only
+while an audio reaction is selected and keeps a five-second history on the
+canvas: an amber input trace, a red light-drive curtain attached to the top
+border and descending by the drive amount, and the live **LIGHT n %** and dBFS
+values in the header. The threshold knob's outer ring reuses the same poll on a
+−60…0 dB scale: a dot walks toward 0 dB as the input rises, turns red above the
+gate and crosses an amber tick at the threshold. The amber threshold line is
+drawn from `react_threshold` and dragging it writes that config value, so the
+meter follows the song without restarting the sync or adding a second
+analyser.
 
 The Lua timer beats at 30 Hz (`AUDIO_FPS`) even when the sampling profile caps
 video analysis lower. `analyze()` is still gated by `fps_now`, so the extra

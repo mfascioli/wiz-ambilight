@@ -9,10 +9,19 @@ const el = (tag, className, text) => {
 
 /* Sliders paint their own filled track through the --fill custom property.
    Knob inputs are invisible, so they expose the same ratio as --turn on the
-   round dial instead. */
+   round dial instead. `max="0"` is a real bound, so it must not fall through
+   a truthiness default. */
+const rangeBounds = (input) => {
+  const min = input.min === "" ? 0 : Number(input.min);
+  const max = input.max === "" ? 100 : Number(input.max);
+  return {
+    min: Number.isFinite(min) ? min : 0,
+    max: Number.isFinite(max) ? max : 100,
+  };
+};
+
 const paintRange = (input) => {
-  const min = Number(input.min) || 0;
-  const max = Number(input.max) || 100;
+  const { min, max } = rangeBounds(input);
   const value = Number(input.value) || 0;
   const ratio = max > min ? (value - min) / (max - min) : 0;
   input.style.setProperty("--fill", `${Math.round(ratio * 100)}%`);
@@ -85,6 +94,7 @@ const refs = {
   reactReleaseOut: document.getElementById("reactReleaseOut"),
   reactPunch: document.getElementById("reactPunch"),
   reactPunchOut: document.getElementById("reactPunchOut"),
+  thresholdKnob: document.getElementById("thresholdKnob"),
   dynamicsPanel: document.getElementById("dynamicsPanel"),
   vuMeter: document.getElementById("vuMeter"),
   vuDbOut: document.getElementById("vuDbOut"),
@@ -94,6 +104,31 @@ const refs = {
   reactTargetOut: document.getElementById("reactTargetOut"),
   reactBands: document.getElementById("reactBands"),
   reactBandsField: document.getElementById("reactBandsField"),
+  reactColorMode: document.getElementById("reactColorMode"),
+  reactColorPair: document.getElementById("reactColorPair"),
+  reactColorA: document.getElementById("reactColorA"),
+  reactColorB: document.getElementById("reactColorB"),
+  reactColorASlot: document.getElementById("reactColorASlot"),
+  reactColorBSlot: document.getElementById("reactColorBSlot"),
+  reactColorALabel: document.getElementById("reactColorALabel"),
+  reactColorBLabel: document.getElementById("reactColorBLabel"),
+  reactColorHint: document.getElementById("reactColorHint"),
+  eqPanel: document.getElementById("eqPanel"),
+  eqBandCount: document.getElementById("eqBandCount"),
+  eqSummary: document.getElementById("eqSummary"),
+  eqCanvas: document.getElementById("eqCanvas"),
+  eqFaders: document.getElementById("eqFaders"),
+  eqDetail: document.getElementById("eqDetail"),
+  eqDetailTitle: document.getElementById("eqDetailTitle"),
+  eqFreq: document.getElementById("eqFreq"),
+  eqFreqOut: document.getElementById("eqFreqOut"),
+  eqQ: document.getElementById("eqQ"),
+  eqQOut: document.getElementById("eqQOut"),
+  eqGain: document.getElementById("eqGain"),
+  eqGainOut: document.getElementById("eqGainOut"),
+  eqLamp: document.getElementById("eqLamp"),
+  reactAuto: document.getElementById("reactAuto"),
+  reactActiveBands: document.getElementById("reactActiveBands"),
   samplingSelect: document.getElementById("samplingSelect"),
   sampleStage: document.getElementById("sampleStage"),
   colorStage: document.getElementById("colorStage"),
@@ -148,6 +183,14 @@ const state = {
   perfTimes: [],
   roomsSignature: "",
   roomArmed: null,
+  eq: {
+    bands: [],
+    lamps: [],
+    limits: null,
+    selected: 0,
+    signature: "",
+    dragging: null,
+  },
 };
 
 // --------------------------------------------------------------------- utils
@@ -691,7 +734,7 @@ function renderReactionHint(reaction) {
   refs.reactHint.textContent = details[reaction] || "";
   refs.reactHint.title =
     "Reactions scale with the strength slider and the style; audio modes " +
-    "add a five-band analyser only while selected";
+    "add a dynamic EQ analyser only while selected";
 }
 
 function fillProfileSelect(reaction) {
@@ -779,7 +822,10 @@ function renderDynamicsHint() {
     hints = {};
   }
   refs.reactDynamicsHint.textContent =
-    hints[refs.reactDynamics.value] || "Roll your own threshold, attack, release and punch.";
+    refs.reactDynamics.value === "custom"
+      ? "Your own four values; pick a preset for a starting point."
+      : hints[refs.reactDynamics.value] ||
+        "A starting point for the four knobs; adjust any of them freely.";
 }
 
 function setRangeOutput(input, output, value, label) {
@@ -836,7 +882,7 @@ function syncDynamicsFields(snapshot, config, reaction) {
   setRangeOutput(
     refs.reactThreshold,
     refs.reactThresholdOut,
-    Number.isFinite(threshold) ? threshold : -22,
+    Number.isFinite(threshold) ? threshold : -18,
     (value) => `${Math.round(value)} dB`,
   );
   setRangeOutput(
@@ -860,13 +906,17 @@ function syncDynamicsFields(snapshot, config, reaction) {
   startMeter();
 }
 
-const SCOPE_MIN_DB = -60;
+/* The timeline matches the Pro-C 2 style: a −36 dBFS floor, an amber input
+   trace, and a red area that hangs from the top for the light drive. The
+   threshold knob's ring uses the plugin's wider −60…0 dB side-chain scale. */
+const SCOPE_MIN_DB = -36;
 const SCOPE_MAX_DB = 0;
+const KNOB_MIN_DB = -60;
 const SCOPE_WINDOW_MS = 5000;
 const SCOPE_POLL_MS = 40;
 const SCOPE_COLORS = {
   amber: "#fcbe11",
-  hot: "#ff6b5e",
+  drive: "#ff6b5e",
   grid: "#1c1c1c",
   time: "rgba(255, 255, 255, .035)",
   label: "#6f6b62",
@@ -877,13 +927,44 @@ const vu = {
   busy: false,
   history: [],
   lastDb: null,
+  ceiling: -6,
+  window: 12,
   plot: null,
   dragging: false,
 };
 
 function thresholdValue() {
   const value = Number(refs.reactThreshold?.value);
-  return Number.isFinite(value) ? value : -22;
+  return Number.isFinite(value) ? value : -18;
+}
+
+function punchValue() {
+  const value = Number(refs.reactPunch?.value) / 100;
+  return Number.isFinite(value) && value >= 1 ? value : 3;
+}
+
+function ceilingValue() {
+  const value = Number(vu.ceiling);
+  return Number.isFinite(value) ? value : -6;
+}
+
+function windowValue() {
+  const value = Number(vu.window);
+  return Number.isFinite(value) && value > 0 ? value : 12;
+}
+
+/* Mirrors pulse_level() in mpv_ambilight.py: gate at the threshold, full
+   brightness once the level reaches the profile ceiling, with a minimum
+   window so a high threshold keeps a usable range. Punch then raises the
+   middle of that window. The result is the bulb brightness the song asks
+   for. */
+function activationLevel(db, threshold = thresholdValue()) {
+  if (db === null || !Number.isFinite(db)) return 0;
+  const low = threshold;
+  const high = Math.max(low + windowValue(), ceilingValue());
+  const raw = (db - low) / (high - low);
+  const clamped = Math.max(0, Math.min(1, raw));
+  return clamped ** (1 / Math.max(1, punchValue()));
 }
 
 function dbToY(db, top, height) {
@@ -896,22 +977,28 @@ function meterDb() {
   return Number.isFinite(value) ? value : null;
 }
 
-function renderOverReadout(db, threshold) {
+function renderLightReadout(db, threshold) {
   const output = refs.vuOverOut;
   if (!output) return;
-  if (db === null) {
-    output.textContent = "no signal";
-    output.classList.remove("over");
-    return;
-  }
-  const delta = db - threshold;
-  if (delta > 0) {
-    output.textContent = `${delta.toFixed(1)} dB over`;
-    output.classList.add("over");
-  } else {
-    output.textContent = `${Math.abs(delta).toFixed(1)} dB under`;
-    output.classList.remove("over");
-  }
+  const percent = Math.round(activationLevel(db, threshold) * 100);
+  output.textContent = `LIGHT ${percent}%`;
+  output.classList.toggle("over", percent > 0);
+}
+
+/* The threshold knob carries the live input on an outer ring, red once the
+   input is above the gate, the way Pro-C 2 tracks its side-chain level. The
+   ring spans −60…0 dB, so the dot walks toward 0 as the song gets louder;
+   the amber tick marks the threshold on the same scale. */
+function updateThresholdRing(db, threshold) {
+  const knob = refs.thresholdKnob;
+  if (!knob) return;
+  const value = Number.isFinite(db) ? db : KNOB_MIN_DB;
+  const ratio = Math.max(
+    0,
+    Math.min(1, (value - KNOB_MIN_DB) / (SCOPE_MAX_DB - KNOB_MIN_DB)),
+  );
+  knob.style.setProperty("--level", ratio.toFixed(4));
+  knob.classList.toggle("hot", db !== null && Number.isFinite(db) && db > threshold);
 }
 
 function sizeScope(canvas) {
@@ -939,7 +1026,7 @@ function drawTimeline(db = meterDb()) {
 
   const left = width < 340 ? 26 : 30;
   const right = width - 8;
-  const top = 10;
+  const top = 1;
   const bottom = height - 15;
   const plotWidth = Math.max(1, right - left);
   const plotHeight = Math.max(1, bottom - top);
@@ -951,9 +1038,9 @@ function drawTimeline(db = meterDb()) {
   ctx.textBaseline = "middle";
   ctx.font = "8.5px ui-monospace, Menlo, Consolas, monospace";
 
-  // dBFS grid: every 12 dB keeps the trace readable without clutter.
+  // dBFS grid: 6 dB steps across the −36…0 window, like a compressor meter.
   ctx.textAlign = "right";
-  for (const mark of [0, -12, -24, -36, -48, -60]) {
+  for (const mark of [0, -6, -12, -18, -24, -30, -36]) {
     const y = dbToY(mark, top, plotHeight);
     ctx.strokeStyle = SCOPE_COLORS.grid;
     ctx.lineWidth = 1;
@@ -962,7 +1049,7 @@ function drawTimeline(db = meterDb()) {
     ctx.lineTo(right, y + 0.5);
     ctx.stroke();
     ctx.fillStyle = mark === 0 ? "#8a857b" : SCOPE_COLORS.label;
-    ctx.fillText(String(mark), left - 5, y);
+    ctx.fillText(String(mark), left - 5, Math.max(5, y));
   }
 
   // Time grid: one line per second across the five-second window.
@@ -991,7 +1078,7 @@ function drawTimeline(db = meterDb()) {
     const xFor = (point) =>
       right - Math.min(1, (now - point.t) / SCOPE_WINDOW_MS) * plotWidth;
 
-    // Soft body under the trace so level, not just the line, reads at a glance.
+    // Soft body under the input trace so level reads at a glance.
     ctx.beginPath();
     ctx.moveTo(xFor(points[0]), bottom);
     for (const point of points) {
@@ -1000,54 +1087,95 @@ function drawTimeline(db = meterDb()) {
     ctx.lineTo(xFor(points[points.length - 1]), bottom);
     ctx.closePath();
     const fill = ctx.createLinearGradient(0, top, 0, bottom);
-    fill.addColorStop(0, "rgba(252, 190, 17, .22)");
+    fill.addColorStop(0, "rgba(252, 190, 17, .20)");
     fill.addColorStop(1, "rgba(252, 190, 17, .02)");
     ctx.fillStyle = fill;
     ctx.fill();
 
-    // Segments that push past the threshold turn hot, so hits are obvious.
-    ctx.lineJoin = "round";
-    ctx.lineWidth = 3.5;
-    ctx.strokeStyle = "rgba(255, 107, 94, .16)";
+    // Red light drive, inverted from the top: the curtain is attached to the
+    // top border and hangs down by the drive amount, so its depth is the
+    // brightness percentage the bulbs receive, not another level.
     ctx.beginPath();
-    for (let index = 1; index < points.length; index += 1) {
-      const prev = points[index - 1];
+    ctx.moveTo(xFor(points[0]), top);
+    for (const point of points) {
+      const drive = activationLevel(point.db, threshold);
+      ctx.lineTo(xFor(point), top + drive * plotHeight);
+    }
+    ctx.lineTo(xFor(points[points.length - 1]), top);
+    ctx.closePath();
+    const driveFill = ctx.createLinearGradient(0, top, 0, bottom);
+    driveFill.addColorStop(0, "rgba(255, 107, 94, .42)");
+    driveFill.addColorStop(0.5, "rgba(255, 107, 94, .22)");
+    driveFill.addColorStop(1, "rgba(255, 107, 94, .06)");
+    ctx.fillStyle = driveFill;
+    ctx.fill();
+
+    // A solid hairline on the top border makes the attachment explicit: the
+    // red area is a curtain hanging from the top, never a floating trace.
+    ctx.strokeStyle = "rgba(255, 107, 94, .55)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(left, top + 0.5);
+    ctx.lineTo(right, top + 0.5);
+    ctx.stroke();
+
+    // Redraw the amber input on top so red stays the drive, never the level.
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = SCOPE_COLORS.amber;
+    ctx.beginPath();
+    for (let index = 0; index < points.length; index += 1) {
       const point = points[index];
-      if ((prev.db + point.db) / 2 <= threshold) continue;
-      ctx.moveTo(xFor(prev), dbToY(prev.db, top, plotHeight));
-      ctx.lineTo(xFor(point), dbToY(point.db, top, plotHeight));
+      const x = xFor(point);
+      const y = dbToY(point.db, top, plotHeight);
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
     }
     ctx.stroke();
 
-    ctx.lineWidth = 1.5;
-    for (let index = 1; index < points.length; index += 1) {
-      const prev = points[index - 1];
+    // A crisp edge on the drive curtain so the percentage is easy to read.
+    ctx.strokeStyle = "rgba(255, 107, 94, .95)";
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    for (let index = 0; index < points.length; index += 1) {
       const point = points[index];
-      const hot = (prev.db + point.db) / 2 > threshold;
-      ctx.strokeStyle = hot ? SCOPE_COLORS.hot : SCOPE_COLORS.amber;
-      ctx.beginPath();
-      ctx.moveTo(xFor(prev), dbToY(prev.db, top, plotHeight));
-      ctx.lineTo(xFor(point), dbToY(point.db, top, plotHeight));
-      ctx.stroke();
+      const x = xFor(point);
+      const y = top + activationLevel(point.db, threshold) * plotHeight;
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
     }
+    ctx.stroke();
   }
   ctx.restore();
 
-  // The live edge: a dot only while frames are actually arriving.
+  // The live edge: an amber dot on the input plus a red tick on the drive.
   const fresh = points.length && now - points[points.length - 1].t < 400;
   if (fresh) {
     const level = points[points.length - 1].db;
     const x = right;
     const y = dbToY(level, top, plotHeight);
-    const hot = level > threshold;
-    ctx.fillStyle = hot ? SCOPE_COLORS.hot : SCOPE_COLORS.amber;
+    ctx.fillStyle = SCOPE_COLORS.amber;
     ctx.beginPath();
     ctx.arc(x, y, 2.6, 0, 2 * Math.PI);
     ctx.fill();
-    ctx.strokeStyle = hot ? "rgba(255, 107, 94, .35)" : "rgba(252, 190, 17, .3)";
+    ctx.strokeStyle = "rgba(252, 190, 17, .3)";
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.arc(x, y, 5.5, 0, 2 * Math.PI);
+    ctx.stroke();
+
+    const driveY = top + activationLevel(level, threshold) * plotHeight;
+    ctx.strokeStyle = "rgba(255, 107, 94, .5)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(right - 0.5, top);
+    ctx.lineTo(right - 0.5, driveY);
+    ctx.stroke();
+    ctx.strokeStyle = SCOPE_COLORS.drive;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(right - 10, driveY + 0.5);
+    ctx.lineTo(right, driveY + 0.5);
     ctx.stroke();
   } else {
     ctx.fillStyle = SCOPE_COLORS.label;
@@ -1087,7 +1215,8 @@ function drawTimeline(db = meterDb()) {
   ctx.fillText(label, right - 8, labelY - 4);
 
   vu.plot = { left, right, top, bottom, plotHeight };
-  renderOverReadout(db, threshold);
+  renderLightReadout(db, threshold);
+  updateThresholdRing(db, threshold);
 }
 
 function capturePointer(node, pointerId) {
@@ -1115,8 +1244,9 @@ function thresholdFromPointer(event) {
   );
   const ratio = (y - vu.plot.top) / vu.plot.plotHeight;
   const value = SCOPE_MAX_DB + ratio * SCOPE_MIN_DB;
-  const min = Number(refs.reactThreshold.min) || -60;
-  const max = Number(refs.reactThreshold.max) || 0;
+  const bounds = rangeBounds(refs.reactThreshold);
+  const min = Math.max(SCOPE_MIN_DB, bounds.min);
+  const max = Math.min(SCOPE_MAX_DB, bounds.max);
   const step = Number(refs.reactThreshold.step) || 1;
   const raw = Math.max(min, Math.min(max, value));
   const snapped = Math.round(raw / step) * step;
@@ -1173,8 +1303,7 @@ function bindKnobs() {
 
     knob.addEventListener("pointermove", (event) => {
       if (!drag) return;
-      const min = Number(input.min) || 0;
-      const max = Number(input.max) || 100;
+      const { min, max } = rangeBounds(input);
       const step = Number(input.step) || 1;
       const fine = event.shiftKey ? 0.2 : 1;
       const delta = ((drag.y - event.clientY) / 150) * (max - min) * fine;
@@ -1206,6 +1335,10 @@ async function pollMeter() {
     const response = await fetch("/api/meter", { cache: "no-store" });
     if (!response.ok) return;
     const data = await response.json();
+    const ceiling = Number(data.ceiling);
+    if (Number.isFinite(ceiling)) vu.ceiling = ceiling;
+    const windowSize = Number(data.window);
+    if (Number.isFinite(windowSize) && windowSize > 0) vu.window = windowSize;
     const rawDb = data.db;
     const numericDb = rawDb === null || rawDb === undefined ? NaN : Number(rawDb);
     const db = Number.isFinite(numericDb) ? numericDb : null;
@@ -1240,8 +1373,11 @@ function stopMeter() {
   }
   vu.history = [];
   vu.lastDb = null;
+  vu.ceiling = -6;
+  vu.window = 12;
   drawTimeline(null);
   refs.vuDbOut.value = "−∞ dB";
+  updateThresholdRing(null, thresholdValue());
 }
 
 function buildBandInputs(snapshot) {
@@ -1249,6 +1385,10 @@ function buildBandInputs(snapshot) {
   const signature = JSON.stringify(bands.map((band) => [band.id, band.label]));
   if (refs.reactBands.dataset.signature === signature) return;
   refs.reactBands.replaceChildren();
+  // Eight swatches fit the Look column; wider EQ layouts wrap onto a second
+  // row instead of shrinking each swatch into a sliver.
+  const columns = Math.max(1, Math.min(8, bands.length));
+  refs.reactBands.style.gridTemplateColumns = `repeat(${columns}, minmax(0, 1fr))`;
   for (const band of bands) {
     const label = el("label", "band-color");
     const input = document.createElement("input");
@@ -1262,12 +1402,390 @@ function buildBandInputs(snapshot) {
   refs.reactBands.dataset.signature = signature;
 }
 
+function eqShortFreq(value) {
+  const freq = Number(value) || 0;
+  if (freq >= 1000) {
+    return `${(freq / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+  }
+  return String(Math.round(freq));
+}
+
+function eqLogToFreq(value) {
+  const ratio = Math.log(20000 / 20);
+  return 20 * Math.exp(ratio * (Number(value) / 1000));
+}
+
+function eqFreqToLog(freq) {
+  const ratio = Math.log(20000 / 20);
+  return (Math.log(Math.max(20, Math.min(20000, Number(freq) || 1000)) / 20) / ratio) * 1000;
+}
+
+function eqClone(bands) {
+  return (bands || []).map((band) => ({ ...band }));
+}
+
+function eqDefaultFreqs(count) {
+  const total = Math.max(2, Math.min(16, Number(count) || 8));
+  const ratio = (16000 / 32) ** (1 / (total - 1));
+  return Array.from({ length: total }, (_, index) => 32 * ratio ** index);
+}
+
+function eqRemapBands(bands, count) {
+  const freqs = eqDefaultFreqs(count);
+  const source = bands || [];
+  return freqs.map((freq) => {
+    let best = null;
+    let bestDistance = Infinity;
+    for (const band of source) {
+      const distance = Math.abs(Math.log2(Number(band.freq) / freq));
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = band;
+      }
+    }
+    return {
+      freq: Math.round(freq * 100) / 100,
+      gain: best ? Number(best.gain) || 0 : 0,
+      q: best ? Number(best.q) || 1.4 : 1.4,
+      lamp: best ? Number(best.lamp ?? -1) : -1,
+    };
+  });
+}
+
+function buildEqCount(snapshot) {
+  const limits = snapshot.eq_limits || { min: 2, max: 16 };
+  const signature = `${limits.min}:${limits.max}`;
+  if (refs.eqBandCount.dataset.signature === signature) return;
+  refs.eqBandCount.replaceChildren();
+  for (let count = limits.min; count <= limits.max; count += 1) {
+    const option = document.createElement("option");
+    option.value = String(count);
+    option.textContent = String(count);
+    refs.eqBandCount.append(option);
+  }
+  refs.eqBandCount.dataset.signature = signature;
+}
+
+function buildEqAuto(snapshot) {
+  const modes = snapshot.auto_modes || [];
+  const signature = JSON.stringify(modes.map((mode) => mode.id));
+  if (refs.reactAuto.dataset.signature === signature) return;
+  refs.reactAuto.replaceChildren();
+  for (const mode of modes) {
+    const option = document.createElement("option");
+    option.value = mode.id;
+    option.textContent = mode.label;
+    refs.reactAuto.append(option);
+  }
+  refs.reactAuto.dataset.signature = signature;
+}
+
+function eqFill(fader, gain) {
+  const pct = ((Math.max(-18, Math.min(18, Number(gain) || 0)) + 18) / 36) * 100;
+  fader.style.setProperty("--fill", `${pct.toFixed(1)}%`);
+}
+
+function fillEqLampSelect(select, lamps, selected) {
+  const signature = JSON.stringify(lamps.map((lamp) => [lamp.index, lamp.name]));
+  if (select.dataset.signature !== signature) {
+    select.replaceChildren();
+    const auto = document.createElement("option");
+    auto.value = "-1";
+    auto.textContent = "Auto";
+    select.append(auto);
+    for (const lamp of lamps) {
+      const option = document.createElement("option");
+      option.value = String(lamp.index);
+      option.textContent = lamp.name;
+      select.append(option);
+    }
+    select.dataset.signature = signature;
+  }
+  select.value = String(selected);
+}
+
+function buildEqFaders(snapshot) {
+  const bands = state.eq.bands;
+  const lamps = state.eq.lamps;
+  const signature = JSON.stringify([
+    bands.length,
+    lamps.map((lamp) => [lamp.index, lamp.name]),
+  ]);
+  if (refs.eqFaders.dataset.signature !== signature) {
+    refs.eqFaders.replaceChildren();
+    bands.forEach((band, index) => {
+      const column = el("div", "eq-band");
+      column.dataset.index = String(index);
+      const gain = el("span", "eq-band-gain", "0.0");
+      const fader = document.createElement("input");
+      fader.type = "range";
+      fader.min = "-18";
+      fader.max = "18";
+      fader.step = "0.5";
+      fader.value = String(band.gain || 0);
+      eqFill(fader, band.gain);
+      fader.dataset.index = String(index);
+      fader.setAttribute("aria-label", `Band ${index + 1} gain`);
+      const freq = el("span", "eq-band-freq", eqShortFreq(band.freq));
+      const lamp = document.createElement("select");
+      lamp.className = "eq-band-lamp";
+      lamp.dataset.index = String(index);
+      lamp.setAttribute("aria-label", `Band ${index + 1} lamp`);
+      fillEqLampSelect(lamp, lamps, band.lamp ?? -1);
+      column.append(gain, fader, freq, lamp);
+      refs.eqFaders.append(column);
+    });
+    refs.eqFaders.dataset.signature = signature;
+  }
+  refs.eqFaders.querySelectorAll(".eq-band").forEach((column, index) => {
+    const band = bands[index];
+    if (!band) return;
+    column.classList.toggle("selected", index === state.eq.selected);
+    const gain = column.querySelector(".eq-band-gain");
+    const fader = column.querySelector('input[type="range"]');
+    const freq = column.querySelector(".eq-band-freq");
+    const lamp = column.querySelector("select");
+    if (gain) gain.textContent = Number(band.gain).toFixed(1);
+    if (fader && document.activeElement !== fader) {
+      fader.value = String(band.gain || 0);
+    }
+    if (fader) eqFill(fader, band.gain);
+    if (freq) freq.textContent = eqShortFreq(band.freq);
+    if (lamp) fillEqLampSelect(lamp, lamps, band.lamp ?? -1);
+  });
+}
+
+function eqPlot() {
+  return state.eq.plot;
+}
+
+function eqFreqBounds(index) {
+  const bands = state.eq.bands;
+  const low = index > 0 ? Number(bands[index - 1]?.freq) * 1.001 : 20;
+  const high =
+    index < bands.length - 1
+      ? Number(bands[index + 1]?.freq) * 0.999
+      : 20000;
+  return [low, high];
+}
+
+function eqX(freq, plot) {
+  const min = 20;
+  const max = 20000;
+  return plot.left
+    + (Math.log(Math.max(min, Math.min(max, freq)) / min) / Math.log(max / min))
+      * (plot.right - plot.left);
+}
+
+function eqY(gain, plot) {
+  const limit = 18;
+  const ratio = Math.max(-1, Math.min(1, gain / limit));
+  const mid = (plot.top + plot.bottom) / 2;
+  return mid - ratio * ((plot.bottom - plot.top) / 2);
+}
+
+function eqCurveGain(freq, bands) {
+  let total = 0;
+  for (const band of bands) {
+    const octaves = Math.log2(freq / Math.max(20, Number(band.freq) || 1000));
+    const sigma = Math.max(0.07, 0.60 / Math.max(0.4, Number(band.q) || 1.4));
+    total += Number(band.gain || 0) * Math.exp(-0.5 * (octaves / sigma) ** 2);
+  }
+  return Math.max(-18, Math.min(18, total));
+}
+
+function drawEq() {
+  const canvas = refs.eqCanvas;
+  if (!canvas || !canvas.getContext) return;
+  const { ctx, width, height } = sizeScope(canvas);
+  if (width < 80 || height < 60) return;
+  const plot = {
+    left: 28,
+    right: width - 9,
+    top: 9,
+    bottom: height - 17,
+  };
+  state.eq.plot = plot;
+  const bands = state.eq.bands;
+  const palette = SCOPE_COLORS;
+
+  ctx.font = "8px ui-monospace, Menlo, Consolas, monospace";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "rgba(255, 255, 255, .035)";
+  for (const gain of [-12, -6, 6, 12]) {
+    const y = eqY(gain, plot);
+    ctx.fillRect(plot.left, y, plot.right - plot.left, 1);
+  }
+  ctx.fillStyle = "rgba(255, 255, 255, .10)";
+  ctx.fillRect(plot.left, eqY(0, plot), plot.right - plot.left, 1);
+  ctx.fillStyle = "#6f6b62";
+  ctx.textAlign = "right";
+  for (const gain of [-18, -12, -6, 0, 6, 12, 18]) {
+    ctx.fillText(`${gain}`, plot.left - 3, eqY(gain, plot));
+  }
+  const marks = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+  ctx.textAlign = "center";
+  for (const freq of marks) {
+    const x = eqX(freq, plot);
+    ctx.fillStyle = "rgba(255, 255, 255, .035)";
+    ctx.fillRect(x, plot.top, 1, plot.bottom - plot.top);
+    ctx.fillStyle = "#6f6b62";
+    ctx.fillText(freq >= 1000 ? `${freq / 1000}k` : `${freq}`, x, height - 7);
+  }
+
+  const curve = [];
+  for (let x = plot.left; x <= plot.right; x += 1) {
+    const ratio = (x - plot.left) / Math.max(1, plot.right - plot.left);
+    const freq = 20 * (20000 / 20) ** ratio;
+    curve.push([x, eqY(eqCurveGain(freq, bands), plot)]);
+  }
+  if (curve.length) {
+    ctx.beginPath();
+    ctx.moveTo(curve[0][0], eqY(0, plot));
+    for (const [x, y] of curve) ctx.lineTo(x, y);
+    ctx.lineTo(curve[curve.length - 1][0], eqY(0, plot));
+    ctx.closePath();
+    ctx.fillStyle = "rgba(252, 190, 17, .13)";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(curve[0][0], curve[0][1]);
+    for (const [x, y] of curve) ctx.lineTo(x, y);
+    ctx.strokeStyle = palette.amber;
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+  }
+  bands.forEach((band, index) => {
+    const x = eqX(Number(band.freq), plot);
+    const y = eqY(Number(band.gain), plot);
+    const color = state.snapshot?.bands?.[index]?.color || palette.amber;
+    ctx.beginPath();
+    ctx.arc(x, y, index === state.eq.selected ? 5 : 3.4, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    if (index === state.eq.selected) {
+      ctx.beginPath();
+      ctx.arc(x, y, 7, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(255, 255, 255, .75)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  });
+  refs.eqSummary.textContent = `${bands.length} bands · ${bands.filter(
+    (band) => Number(band.lamp) >= 0,
+  ).length} assigned`;
+}
+
+function syncEqDetail() {
+  const band = state.eq.bands[state.eq.selected];
+  if (!band) return;
+  refs.eqDetailTitle.textContent = `Band ${state.eq.selected + 1}`;
+  refs.eqFreqOut.value = `${eqShortFreq(band.freq)} Hz`;
+  if (document.activeElement !== refs.eqFreq) {
+    refs.eqFreq.value = String(Math.round(eqFreqToLog(band.freq)));
+  }
+  refs.eqQOut.value = Number(band.q).toFixed(1);
+  if (document.activeElement !== refs.eqQ) refs.eqQ.value = String(band.q);
+  refs.eqGainOut.value = `${Number(band.gain).toFixed(1)} dB`;
+  if (document.activeElement !== refs.eqGain) refs.eqGain.value = String(band.gain);
+  fillEqLampSelect(refs.eqLamp, state.eq.lamps, band.lamp ?? -1);
+}
+
+function updateEqBandDom(index) {
+  const column = refs.eqFaders.querySelector(`.eq-band[data-index="${index}"]`);
+  const band = state.eq.bands[index];
+  if (!column || !band) return;
+  refs.eqFaders.querySelectorAll(".eq-band").forEach((item, itemIndex) => {
+    item.classList.toggle("selected", itemIndex === state.eq.selected);
+  });
+  const gain = column.querySelector(".eq-band-gain");
+  const fader = column.querySelector('input[type="range"]');
+  const freq = column.querySelector(".eq-band-freq");
+  const lamp = column.querySelector("select");
+  if (gain) gain.textContent = Number(band.gain).toFixed(1);
+  if (fader && document.activeElement !== fader) fader.value = String(band.gain);
+  if (fader) eqFill(fader, band.gain);
+  if (freq) freq.textContent = eqShortFreq(band.freq);
+  if (lamp) lamp.value = String(band.lamp ?? -1);
+  syncEqDetail();
+  drawEq();
+}
+
+function syncEqFields(snapshot, config, reaction) {
+  refs.eqPanel.classList.toggle("hidden", !reaction?.audio);
+  if (!reaction?.audio) return;
+  buildEqCount(snapshot);
+  buildEqAuto(snapshot);
+  const next = Array.isArray(config.react_eq) ? config.react_eq : [];
+  // A count change always wins over a focused control: the server just gave us
+  // the new band list. Otherwise keep local values while a fader is in use so
+  // a poll cannot snap the handle back mid-drag.
+  const countChanged = state.eq.bands.length !== next.length;
+  const editing =
+    state.eq.dragging || refs.eqPanel.contains(document.activeElement);
+  if (countChanged || !editing) state.eq.bands = eqClone(next);
+  state.eq.lamps = snapshot.lamps || [];
+  state.eq.limits = snapshot.eq_limits || state.eq.limits;
+  state.eq.selected = Math.max(0, Math.min(state.eq.bands.length - 1, state.eq.selected));
+
+  if (document.activeElement !== refs.eqBandCount) {
+    refs.eqBandCount.value = String(config.react_eq_bands || state.eq.bands.length);
+  }
+  if (document.activeElement !== refs.reactAuto) {
+    refs.reactAuto.value = config.react_auto || "off";
+  }
+  const auto = (snapshot.auto_modes || []).find(
+    (mode) => mode.id === (config.react_auto || "off"),
+  );
+  refs.reactAuto.title = auto?.hint || "";
+  refs.reactActiveBands.checked = Boolean(config.react_active_bands);
+  buildEqFaders(snapshot);
+  syncEqDetail();
+  drawEq();
+}
+
+function buildColorModeSelect(snapshot) {
+  const modes = snapshot.color_modes || [];
+  const signature = JSON.stringify(modes.map((mode) => [mode.id, mode.label]));
+  if (refs.reactColorMode.dataset.signature === signature) return;
+  refs.reactColorMode.replaceChildren();
+  for (const mode of modes) {
+    const option = document.createElement("option");
+    option.value = mode.id;
+    option.textContent = mode.label;
+    refs.reactColorMode.append(option);
+  }
+  refs.reactColorMode.dataset.signature = signature;
+}
+
 function syncReactionFields(snapshot, config) {
   const reaction = reactionById(snapshot, config.react);
   const profiles = reaction?.profiles || [];
   fillProfileSelect(reaction);
   refs.reactTargetField.classList.toggle("hidden", config.react !== "equalize");
   refs.reactBandsField.classList.toggle("hidden", !reaction?.audio);
+  const colorModes = snapshot.color_modes || [];
+  const colorMode = colorModes.some((mode) => mode.id === config.react_color_mode)
+    ? config.react_color_mode
+    : "bands";
+  if (document.activeElement !== refs.reactColorMode) {
+    refs.reactColorMode.value = colorMode;
+  }
+  refs.reactBands.classList.toggle("hidden", colorMode !== "bands");
+  const pair = ["range", "level", "single"].includes(colorMode);
+  refs.reactColorPair.classList.toggle("hidden", !pair);
+  refs.reactColorPair.classList.toggle("single", colorMode === "single");
+  refs.reactColorBSlot.classList.toggle("hidden", colorMode === "single");
+  refs.reactColorALabel.textContent = colorMode === "single"
+    ? "Color" : colorMode === "level" ? "Soft" : "Low";
+  refs.reactColorBLabel.textContent = colorMode === "level" ? "Loud" : "High";
+  const modeHint = colorModes.find((mode) => mode.id === colorMode)?.hint;
+  if (modeHint) refs.reactColorHint.textContent = modeHint;
+  if (document.activeElement !== refs.reactColorA) {
+    refs.reactColorA.value = config.react_color_a || "#fcbe11";
+  }
+  if (document.activeElement !== refs.reactColorB) {
+    refs.reactColorB.value = config.react_color_b || "#38bdf8";
+  }
   if (profiles.length && document.activeElement !== refs.reactProfile) {
     const valid = profiles.some((profile) => profile.id === config.react_profile);
     refs.reactProfile.value = valid ? config.react_profile : profiles[0].id;
@@ -1292,6 +1810,7 @@ function syncReactionFields(snapshot, config) {
     });
   }
   syncDynamicsFields(snapshot, config, reaction);
+  syncEqFields(snapshot, config, reaction);
 }
 
 function renderSettings(snapshot) {
@@ -1303,6 +1822,7 @@ function renderSettings(snapshot) {
   fillSamplingSelect();
   fillReactionSelect(snapshot);
   buildBandInputs(snapshot);
+  buildColorModeSelect(snapshot);
   if (document.activeElement !== refs.styleSelect) refs.styleSelect.value = config.style;
   if (document.activeElement !== refs.reactSelect) {
     refs.reactSelect.value = config.react;
@@ -2226,7 +2746,16 @@ refs.reactDynamics.addEventListener("change", () => {
     presets = {};
   }
   const preset = presets[refs.reactDynamics.value];
-  if (preset) saveConfig(preset);
+  if (preset) {
+    // The dataset uses short keys for matching; the config needs the four
+    // react_* names, or the preset looks applied but the server never sees it.
+    saveConfig({
+      react_threshold: preset.threshold,
+      react_attack: preset.attack,
+      react_release: preset.release,
+      react_punch: preset.punch,
+    });
+  }
 });
 refs.reactThreshold.addEventListener("input", () => {
   refs.reactThresholdOut.value = `${Math.round(Number(refs.reactThreshold.value))} dB`;
@@ -2276,6 +2805,177 @@ refs.reactBands.addEventListener("change", (event) => {
   );
   saveConfig({ react_bands: colors });
 });
+refs.reactColorMode.addEventListener("change", () => {
+  saveConfig({ react_color_mode: refs.reactColorMode.value });
+  if (state.snapshot) {
+    syncReactionFields(state.snapshot, {
+      ...state.snapshot.config,
+      react_color_mode: refs.reactColorMode.value,
+    });
+  }
+});
+refs.reactColorA.addEventListener("change", () =>
+  saveConfig({ react_color_a: refs.reactColorA.value }),
+);
+refs.reactColorB.addEventListener("change", () =>
+  saveConfig({ react_color_b: refs.reactColorB.value }),
+);
+function saveEq() {
+  saveConfig({ react_eq: state.eq.bands });
+}
+refs.eqBandCount.addEventListener("change", () => {
+  const count = Number(refs.eqBandCount.value);
+  state.eq.bands = eqRemapBands(state.eq.bands, count);
+  state.eq.selected = Math.max(
+    0,
+    Math.min(state.eq.bands.length - 1, state.eq.selected),
+  );
+  // Send the full plan with the count so the server never extends the old
+  // centres positionally (which would duplicate the top band).
+  saveConfig({ react_eq_bands: count, react_eq: state.eq.bands });
+});
+refs.reactAuto.addEventListener("change", () => {
+  const mode = (state.snapshot?.auto_modes || []).find(
+    (item) => item.id === refs.reactAuto.value,
+  );
+  refs.reactAuto.title = mode?.hint || "";
+  saveConfig({ react_auto: refs.reactAuto.value });
+});
+refs.reactActiveBands.addEventListener("change", () =>
+  saveConfig({ react_active_bands: refs.reactActiveBands.checked }),
+);
+refs.eqFaders.addEventListener("click", (event) => {
+  const column = event.target.closest(".eq-band");
+  if (!column) return;
+  state.eq.selected = Number(column.dataset.index);
+  updateEqBandDom(state.eq.selected);
+});
+refs.eqFaders.addEventListener("input", (event) => {
+  const fader = event.target.closest('input[type="range"]');
+  if (!fader) return;
+  const index = Number(fader.dataset.index);
+  const band = state.eq.bands[index];
+  if (!band) return;
+  state.eq.selected = index;
+  band.gain = Number(fader.value);
+  updateEqBandDom(index);
+});
+refs.eqFaders.addEventListener("change", (event) => {
+  const fader = event.target.closest('input[type="range"]');
+  if (fader) {
+    const band = state.eq.bands[Number(fader.dataset.index)];
+    if (band) {
+      band.gain = Number(fader.value);
+      saveEq();
+    }
+    return;
+  }
+  const lamp = event.target.closest("select.eq-band-lamp");
+  if (!lamp) return;
+  const band = state.eq.bands[Number(lamp.dataset.index)];
+  if (!band) return;
+  band.lamp = Number(lamp.value);
+  saveEq();
+});
+refs.eqFreq.addEventListener("input", () => {
+  const band = state.eq.bands[state.eq.selected];
+  if (!band) return;
+  const [low, high] = eqFreqBounds(state.eq.selected);
+  band.freq =
+    Math.round(
+      Math.max(low, Math.min(high, eqLogToFreq(refs.eqFreq.value))) * 10,
+    ) / 10;
+  refs.eqFreqOut.value = `${eqShortFreq(band.freq)} Hz`;
+  updateEqBandDom(state.eq.selected);
+});
+refs.eqFreq.addEventListener("change", saveEq);
+refs.eqQ.addEventListener("input", () => {
+  const band = state.eq.bands[state.eq.selected];
+  if (!band) return;
+  band.q = Number(refs.eqQ.value);
+  refs.eqQOut.value = Number(band.q).toFixed(1);
+  drawEq();
+});
+refs.eqQ.addEventListener("change", saveEq);
+refs.eqGain.addEventListener("input", () => {
+  const band = state.eq.bands[state.eq.selected];
+  if (!band) return;
+  band.gain = Number(refs.eqGain.value);
+  refs.eqGainOut.value = `${Number(band.gain).toFixed(1)} dB`;
+  updateEqBandDom(state.eq.selected);
+});
+refs.eqGain.addEventListener("change", saveEq);
+refs.eqLamp.addEventListener("change", () => {
+  const band = state.eq.bands[state.eq.selected];
+  if (!band) return;
+  band.lamp = Number(refs.eqLamp.value);
+  updateEqBandDom(state.eq.selected);
+  saveEq();
+});
+
+function eqNodeAt(event) {
+  const plot = state.eq.plot;
+  if (!plot) return -1;
+  const rect = refs.eqCanvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  let best = -1;
+  let bestDistance = 24;
+  state.eq.bands.forEach((band, index) => {
+    const distance = Math.hypot(
+      x - eqX(Number(band.freq), plot),
+      y - eqY(Number(band.gain), plot),
+    );
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = index;
+    }
+  });
+  return best;
+}
+
+function eqPointerUpdate(event) {
+  const drag = state.eq.dragging;
+  const plot = state.eq.plot;
+  if (!drag || !plot) return;
+  const rect = refs.eqCanvas.getBoundingClientRect();
+  const x = Math.max(plot.left, Math.min(plot.right, event.clientX - rect.left));
+  const y = Math.max(plot.top, Math.min(plot.bottom, event.clientY - rect.top));
+  const frequency = 20 * (20000 / 20) ** ((x - plot.left) / (plot.right - plot.left));
+  const gain = Math.round(
+    (1 - ((y - plot.top) / (plot.bottom - plot.top)) * 2) * 18 * 2,
+  ) / 2;
+  const band = state.eq.bands[drag.index];
+  if (!band) return;
+  const [low, high] = eqFreqBounds(drag.index);
+  // Keep the bands in frequency order so a drag never re-sorts the list and
+  // changes which lamp and colour the selected band owns.
+  band.freq = Math.round(Math.max(low, Math.min(high, frequency)) * 10) / 10;
+  band.gain = Math.max(-18, Math.min(18, gain));
+  updateEqBandDom(drag.index);
+}
+
+refs.eqCanvas.addEventListener("pointerdown", (event) => {
+  const index = eqNodeAt(event);
+  if (index < 0) return;
+  state.eq.selected = index;
+  state.eq.dragging = { index, pointerId: event.pointerId };
+  capturePointer(refs.eqCanvas, event.pointerId);
+  updateEqBandDom(index);
+  eqPointerUpdate(event);
+});
+refs.eqCanvas.addEventListener("pointermove", (event) => {
+  if (!state.eq.dragging) return;
+  eqPointerUpdate(event);
+});
+const endEqDrag = (event) => {
+  if (!state.eq.dragging) return;
+  releasePointer(refs.eqCanvas, event.pointerId);
+  state.eq.dragging = null;
+  saveEq();
+};
+refs.eqCanvas.addEventListener("pointerup", endEqDrag);
+refs.eqCanvas.addEventListener("pointercancel", endEqDrag);
 refs.samplingSelect.addEventListener("change", () =>
   saveConfig({ sampling: refs.samplingSelect.value }),
 );
@@ -2368,6 +3068,7 @@ window.addEventListener("resize", () => {
   window.cancelAnimationFrame(perfResize);
   perfResize = window.requestAnimationFrame(() => {
     if (state.snapshot) renderPerfChart(state.snapshot.resources || {});
+    drawEq();
   });
 });
 let dotClicks = [];

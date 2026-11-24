@@ -237,13 +237,16 @@ class StructureTests(unittest.TestCase):
 
     def test_reaction_granularity_stays_inside_preset(self):
         js = (WEB / "app.js").read_text(encoding="utf-8")
-        # Strength, profile, target and five band swatches are Preset fields,
-        # not new columns or cards.
+        # Strength, profile, target and the audio color source are Preset
+        # fields, not new columns or cards.
         for control in (
             'id="reactAmount"',
             'id="reactProfile"',
             'id="reactTarget"',
             'id="reactBands"',
+            'id="reactColorMode"',
+            'id="reactColorA"',
+            'id="reactColorB"',
         ):
             with self.subTest(control=control):
                 self.assertIn(control, HTML)
@@ -253,8 +256,12 @@ class StructureTests(unittest.TestCase):
         self.assertIn("syncReactionFields", js)
         self.assertIn("fillProfileSelect", js)
         self.assertIn("buildBandInputs", js)
+        self.assertIn("buildColorModeSelect", js)
         self.assertIn("react_profile", js)
         self.assertIn("react_bands", js)
+        self.assertIn("react_color_mode", js)
+        self.assertIn("react_color_a", js)
+        self.assertIn("react_color_b", js)
         self.assertEqual(HTML.count('class="look-col"'), 3)
 
     def test_audio_dynamics_strip_lives_below_the_look_columns(self):
@@ -267,6 +274,10 @@ class StructureTests(unittest.TestCase):
             'id="reactAttack"',
             'id="reactRelease"',
             'id="reactPunch"',
+            'id="thresholdKnob"',
+            'class="knob-meter"',
+            'class="knob-gate"',
+            'class="knob-dot"',
         ):
             with self.subTest(control=control):
                 self.assertIn(control, HTML)
@@ -286,19 +297,103 @@ class StructureTests(unittest.TestCase):
                 )
         self.assertNotIn('id="vuField"', HTML)
         self.assertNotIn('id="reactThresholdField"', HTML)
+        # The threshold knob keeps Pro-C 2's −60…0 dB range so its outer ring
+        # can show the live input walking up to 0 dB.
+        self.assertIn('id="reactThreshold" class="knob-input" type="range" min="-60"', HTML)
+        self.assertIn('value="-18"', HTML)
+        # The live readout and the timeline are about light drive, not "over".
+        self.assertIn("LIGHT 0%", HTML)
+        self.assertIn("Red hangs from the top = light drive", HTML)
+        self.assertIn("Punch: how hard hits above the threshold drive the bulbs.", HTML)
+        self.assertNotIn("Dynamics preset", HTML)
         self.assertIn("syncDynamicsFields", js)
         self.assertIn("drawTimeline", js)
         self.assertIn("bindScope", js)
         self.assertIn("bindKnobs", js)
         self.assertIn("thresholdFromPointer", js)
+        self.assertIn("activationLevel", js)
+        self.assertIn("renderLightReadout", js)
+        self.assertIn("updateThresholdRing", js)
+        # A preset must write the prefixed config keys, not its short labels.
+        self.assertIn("react_threshold: preset.threshold", js)
+        self.assertIn("react_punch: preset.punch", js)
+        self.assertIn("LIGHT ${percent}%", js)
+        self.assertIn('SCOPE_MIN_DB = -36', js)
+        self.assertIn('KNOB_MIN_DB = -60', js)
+        self.assertIn("AUDIO_WINDOW_DB", CORE)
+        self.assertIn('"ceiling"', WEBUI)
+        self.assertIn('"window"', WEBUI)
         self.assertIn("/api/meter", js)
         self.assertIn("/api/meter", WEBUI)
         self.assertIn("AUDIO_PRESETS", CORE)
         self.assertIn(".dynamics-strip", CSS)
         self.assertIn(".knob-dial", CSS)
         self.assertIn(".knob-input", CSS)
+        self.assertIn(".knob-meter", CSS)
+        self.assertIn(".knob-gate", CSS)
+        self.assertIn(".knob-dot", CSS)
+        self.assertIn(".knob.hot .knob-meter", CSS)
         self.assertIn("#vuMeter", CSS)
         self.assertEqual(HTML.count('class="look-col"'), 3)
+
+    def test_eq_strip_lives_below_the_dynamics_strip(self):
+        js = (WEB / "app.js").read_text(encoding="utf-8")
+        for control in (
+            'id="eqPanel"',
+            'id="eqBandCount"',
+            'id="eqCanvas"',
+            'id="eqFaders"',
+            'id="eqSummary"',
+            'id="reactAuto"',
+            'id="reactActiveBands"',
+            'id="eqFreq"',
+            'id="eqQ"',
+            'id="eqGain"',
+            'id="eqLamp"',
+        ):
+            with self.subTest(control=control):
+                self.assertIn(control, HTML)
+        # A second full-width strip, after dynamics and outside the columns.
+        self.assertIn('class="eq-strip hidden" id="eqPanel"', HTML)
+        self.assertLess(HTML.index('id="dynamicsPanel"'), HTML.index('id="eqPanel"'))
+        self.assertLess(HTML.index('id="eqPanel"'), HTML.index('id="samplingManual"'))
+        self.assertEqual(HTML.count('class="look-col"'), 3)
+        # The frequency slider is logarithmic: 0…1000 maps onto 20 Hz…20 kHz.
+        self.assertIn('id="eqFreq" type="range" min="0" max="1000"', HTML)
+        for name in (
+            "drawEq",
+            "buildEqFaders",
+            "syncEqFields",
+            "eqCurveGain",
+            "buildEqAuto",
+            "eqFreqToLog",
+            "eqLogToFreq",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, js)
+        self.assertIn("react_eq", js)
+        self.assertIn("react_eq_bands", js)
+        self.assertIn("react_auto", js)
+        self.assertIn("react_active_bands", js)
+        self.assertIn("requestAnimationFrame", js)
+        self.assertIn(".eq-strip", CSS)
+        self.assertIn(".eq-faders", CSS)
+        self.assertIn(".eq-detail", CSS)
+        self.assertIn("#eqCanvas", CSS)
+        for constant in (
+            "MAX_BANDS",
+            "MIN_BANDS",
+            "DEFAULT_EQ_BANDS",
+            "BAND_COLOR_PALETTE",
+            "AUTO_MODES",
+            "ACTIVE_MARGIN_DB",
+        ):
+            with self.subTest(constant=constant):
+                self.assertIn(constant, CORE)
+        self.assertIn("eq_splits", CORE)
+        self.assertIn('"eq_limits"', WEBUI)
+        self.assertIn('"auto_modes"', WEBUI)
+        self.assertIn('"lamps"', WEBUI)
 
     def test_vibrance_stays_inside_preset(self):
         js = (WEB / "app.js").read_text(encoding="utf-8")

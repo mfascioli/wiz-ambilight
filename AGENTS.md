@@ -80,12 +80,26 @@ headings, and leave interface names, option values and file paths untranslated.
   **Preset** leads with the Reaction group: the dropdown, with one
   `<optgroup>` per source (Video / Audio), then reaction strength. Audio modes
   add a full-width dynamics strip inside Look, below the three columns: a
-  scrolling Signal timeline with a draggable amber threshold line, a Dynamics
-  preset and four round knobs (Threshold, Attack, Release, Punch) over hidden
-  range inputs. Video modes show the profile select instead. The strip is never
-  a fourth column and never a second card. The Equalize target and the five
-  band color swatches stay flat rows under the reaction group, shown only when
-  they apply. The **Capture & fade preset** select
+  scrolling Signal timeline on a −36…0 dBFS scale with an amber input trace, a
+  red light-drive curtain attached to the top border and descending by the
+  brightness the bulbs are asked for, a draggable amber threshold line, a
+  Preset select (a starting point, not a locked mode) and four small round
+  knobs in Threshold, Punch, Attack, Release order over hidden range inputs.
+  The threshold knob carries the live input on an outer ring on the plugin's
+  −60…0 dB side-chain scale: the dot walks toward 0 as the song gets louder,
+  turns red above the gate and crosses an amber gate tick. Threshold itself
+  stays −60…0 dB. Video modes show the profile select instead. The strip is
+  never a fourth column and never a second card. The Equalize target and the
+  **Audio colors** block stay flat rows under the reaction group, shown only
+  when they apply. **Audio colors** is a mode select — `bands`, `spectrum`,
+  `rainbow`, `range`, `level` or `single` — plus the controls that mode uses:
+  one swatch per EQ band for `bands`, a two-color Low/High row for `range`, a
+  Soft/Loud row for `level`, one swatch for `single`, and no swatches for the
+  generated modes. Below Dynamics, a second full-width **EQ** strip holds the
+  band count (2–16), Auto release, active-band detection, the draggable
+  response canvas, one fader per band and the selected band's frequency, Q,
+  gain and lamp. It is also never a fourth column and never a second card. The
+  **Capture & fade preset** select
   follows the reaction group, then Brightness and the **Vibrance** slider;
   those three are always visible and flat.
 - **Reactions and audio.** `react` is one of `color`, `equalize`, `cut`,
@@ -94,14 +108,28 @@ headings, and leave interface names, option values and file paths untranslated.
   `react_profile` (`soft` / `balanced` / `strong`); audio modes use the same
   profile as a starting bundle but are driven by explicit compressor-style
   `react_threshold`, `react_attack`, `react_release` and `react_punch`
-  (`AUDIO_PRESETS` holds the four named points). Audio modes split the
-  mix into five bands (`sub`, `low`, `low-mid`, `mid`, `high`) with one color
-  each via `react_bands`; one bulb follows the overall volume, 2–5 bulbs spread
-  the bands. Audio modes are `beat` and `vu` only: the Lua script adds a
-  labelled `lavfi`/`acrossover`/`astats` analyser while one is selected,
-  removes all its labels on exit and never touches a user's `af` chain. The
-  graph keeps the mix's magnitude but adds an all-pass phase shift, so never
-  describe it as bit-identical. No audio dependency, no separate process, no
+  (`AUDIO_PRESETS` holds the four named points). `pulse_level` keeps at least
+  `AUDIO_WINDOW_DB` (12 dB) of range above the gate, so a high threshold stays
+  expressive instead of becoming a switch. Audio modes split the mix into an
+  EQ of 2–16 bands (default 8, `react_eq_bands` / `react_eq`) with one color
+  each via `react_bands`. Each band has `freq`, `gain`, `q` and `lamp`; gain
+  shapes detection only, never mpv's output. One bulb follows the overall
+  volume; otherwise bands spread over the bulbs, repeat when there are more
+  bulbs than bands, and an explicit `lamp` overrides the spread so several
+  bands can share one bulb (averaged, strongest band's color). `react_auto`
+  (`off` / `ssl` / `api` / `hybrid`) shapes the envelope with SSL-style dual
+  release and API-style soft knee plus low-end thrust, and
+  `react_active_bands` holds a band dark until it rises 4 dB above its own
+  noise floor for 180 ms. `react_color_mode` can instead use a fixed spectrum, a
+  time-rotating rainbow, a two-color range across the bands, a two-color blend
+  driven by the live level, or one fixed color; the colors come from
+  `react_color_a` and `react_color_b` and `Reaction.audio_color` is the single
+  decision point. Audio modes are `beat` and `vu` only: the Lua script builds a
+  labelled `lavfi`/`acrossover`/`astats` analyser from the EQ split points
+  while one is selected, removes all its labels on exit and never touches a
+  user's `af` chain. The graph keeps the mix's magnitude but adds an all-pass
+  phase shift, so never describe it as bit-identical. No audio dependency, no
+  separate process, no
   microphone. The `lux.json` sensor is design-only; do not add its flag until
   the hardware path is tested.
 - **Performance chart.** Activity holds one frame with three unit lanes —
@@ -140,7 +168,8 @@ headings, and leave interface names, option values and file paths untranslated.
    **Web Panel & Operating Modes** (with **Attach to your own mpv** under it)
    → **Configuration** (with **Capture, Fade & Send**, **Styles**,
    **Sampling**, **Layouts & Zones**, **Reactions**, **Audio Dynamics**,
-   **Band Colors** and **Audio Processing** under it) → **Performance** →
+   **Graphic EQ**, **Audio Colors** and **Audio Processing** under it) →
+   **Performance** →
    **Architecture** → **Privacy & Security** → **Environment** →
    **Command Line** → **Troubleshooting** → **Development** → **Roadmap** →
    **Credits & License** → **Related Projects**.

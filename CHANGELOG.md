@@ -7,35 +7,77 @@ Releases before 1.4.0 were never tagged; their history is in `git log`.
 - **Audio:** `beat` and `vu` now share a compressor-style level stage.
   `pulse_level` gates levels below a dBFS threshold, maps the window up to a
   ceiling onto 0…1 and applies a punch curve, so a solid hit reaches full
-  brightness instead of drifting halfway. The default window is −22…−10 dBFS
+  brightness instead of drifting halfway. The default window is −18…−6 dBFS
   with a 1 ms attack, 55 ms release and punch 3.0; `beat` covers 75 % of the
-  range with the flash and `vu` uses the full swing. Quiet ticks no longer
-  trigger beats, and a hit scales with its band level but any solid hit reaches
-  full scale.
+  range with the flash and `vu` uses the full swing. The window keeps at least
+  12 dB above the gate, so a high threshold stays expressive instead of turning
+  into an on/off switch. Quiet ticks no longer trigger beats, and a hit scales
+  with its band level but any solid hit reaches full scale.
 - **Panel:** a full-width dynamics strip under the three Look columns — not a
   fourth column and not a second card — shows a scrolling five-second **Signal**
-  timeline with dBFS grid, amber trace and red peaks above the threshold. The
-  amber threshold line is draggable and writes `react_threshold`. A **Dynamics
-  preset** select and four round knobs — Threshold, Attack, Release and Punch —
-  replace the old sliders; each knob is a vertical drag (Shift for fine) over a
-  hidden, keyboard-accessible range input. Four presets ship: **Mellow**,
-  **Glue**, **Punch** (default) and **Strobe**. Audio modes show the strip
-  instead of the profile select; video modes keep the profile. Both the timeline
-  and the readouts use `GET /api/meter`, which samples the live Lua state at
-  40 ms without restarting the sync.
+  timeline on a **−36…0 dBFS** scale, matching Pro-C 2 instead of the old −60
+  floor. The amber trace is the input; a red curtain attached to the top
+  border descends by the light drive (the brightness `pulse_level` asks for,
+  inverted like a compressor's gain-reduction meter), and the header reads
+  **LIGHT n %**. The draggable amber threshold line writes `react_threshold`.
+  **Preset** is renamed from **Dynamics preset** and described as a starting
+  point for the knobs; the four small knobs sit in Threshold, Punch, Attack,
+  Release order. The threshold knob carries the plugin's **−60…0 dB**
+  side-chain ring: the dot walks toward 0 as the input rises, turns red above
+  the gate and crosses an amber tick at the threshold, while the amber dial
+  shows the threshold itself and the range is now −60…0 dB. A permanent note
+  explains that Punch sets how hard hits above the threshold drive the bulbs.
+  Four presets ship as **Smooth**, **Steady**, **Punchy** (default) and
+  **Strobe**. Audio modes show the strip instead of the profile select; video
+  modes keep the profile. The timeline and readouts use `GET /api/meter`,
+  which now returns the profile ceiling and window and samples the live Lua
+  state at 40 ms without restarting the sync.
 - **CLI:** `--react-threshold`, `--react-attack`, `--react-release` and
   `--react-punch` expose the same four values; `--react-profile` still works as
   a starting bundle for audio modes.
+- **Graphic EQ:** audio modes now feed from a selectable **2–16 band** EQ
+  (default 8). Each band stores `freq`, `gain`, `q` and `lamp`; bands are kept
+  in frequency order and a malformed entry keeps its log-spaced default without
+  shifting the rest of the curve. Gain moves ±18 dB of detection only and never
+  changes mpv's audio. An explicit `lamp` maps a band to an enabled bulb, with
+  several bands averaged per bulb and unassigned bulbs following the overall
+  mix. A second full-width **EQ** strip under Dynamics adds a draggable response
+  canvas, one fader per band, a band-count select, and frequency/Q/gain/lamp
+  detail controls. `--react-eq-bands`, `--react-eq` (JSON) and the matching
+  `react_eq_bands` / `react_eq` config keys carry the plan; the 16-colour
+  palette cycles after the five legacy colours.
+- **EQ detection and auto:** **Detect active bands** holds a band dark until it
+  rises 4 dB above its own slow noise floor for 180 ms, so a steady bed under a
+  kick no longer keeps a bulb lit. **Auto release** adds compressor-inspired
+  `ssl`, `api` and `hybrid` modes: SSL-style dual program-dependent release,
+  API-style soft knee plus a gentle low-end thrust, and a combination of both.
+  These shape the lamp envelope only. `--react-auto` and
+  `--react-active-bands` expose them; the defaults stay `off` and disabled.
+- **Analyser:** the Lua `acrossover` graph is built at runtime from the EQ split
+  points, so it handles 2, 8 or 16 bands without a hard-coded five-band chain.
+  The classic `60 250 800 2500` split remains the fallback when no plan is
+  passed.
+- **Audio colors:** six modes replace the fixed five-band-only palette. `bands`
+  keeps per-band swatches, now one per EQ band; `spectrum` spreads a fixed hue
+  across the bands; `rainbow` rotates the hue over time with a per-bulb offset;
+  `range` blends two colors across the bands; `level` blends the same two
+  colors by the live level; `single` uses one color. **Look → Audio colors**
+  shows a mode select and only the controls that mode needs, and the same
+  values are `react_color_mode`, `react_color_a` and `react_color_b` in
+  `lights.json`, with `--react-color-mode`, `--react-color-a` and
+  `--react-color-b` on the command line. The two colors default to `#fcbe11`
+  and `#38bdf8`.
 - **Docs:** README, `docs/development.md`, `docs/design.md` and `AGENTS.md`
-  describe the dynamics stage, the timeline and the knobs. The roadmap now
-  includes the UI/UX redesign as item 5.
+  describe the dynamics stage, the timeline, the knobs and the graphic EQ. The
+  roadmap now includes the UI/UX redesign as item 5.
 - **Docs:** the README follows one reading path and teaches the panel first.
   **Getting Started** absorbs the old Installation and Quick Start: one clone
   plus `--gui`, and cloning never copies the Lua script into mpv — only attach
   mode needs that one-time copy because mpv is already running. **Web Panel &
   Operating Modes** absorbs Attach, and **Configuration** groups
   Capture/Fade/Send, Styles, Sampling, Layouts & Zones, Reactions, Audio
-  Dynamics, Band Colors and Audio Processing. Environment is a single
+  Dynamics, Graphic EQ, Audio Colors and Audio Processing. Environment is a
+  single
   top-level table and now includes `XDG_CONFIG_HOME`. The panel table documents
   **Quit**, **Identify** and the sync dry-run switch. The terminal reference —
   discovery, launch and attach, `--set`, style, reaction and sampling flags,

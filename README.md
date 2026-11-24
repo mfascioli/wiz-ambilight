@@ -123,15 +123,15 @@ and keeps the first screen focused on the three things a session needs:
 | --- | --- |
 | **Lights** | Filter by name, IP or model; **All** / **None**; **Scan network**; name bulbs and see IP, online state, model and MAC; assign a zone per bulb or pick a layout; preview the zone on each row; include or exclude a bulb from the sync; **Identify** to flash a bulb; two-step **Forget** to remove a stale row from `lights.json` without touching the bulb; create **rooms** and pick their members. The **Install script** banner appears when attach mode needs the Lua copy. |
 | **Session** | Choose **Attach to mpv** or **Launch a video**; start, restart or stop the sync; choose a file with **Browse**; follow the session state. |
-| **Look** | **Reaction** (Video / Audio groups), reaction strength, profile or dynamics, target luma, five band colors, **Capture & fade preset**, **Brightness**, **Vibrance**, **Sampling**, **Layout**, manual read fps / sample columns / block average / frame source, and a dry-run switch that applies to the sync. Audio modes add the dynamics strip. |
+| **Look** | **Reaction** (Video / Audio groups), reaction strength, profile or dynamics, target luma, audio color mode and its swatches or two-color row, **Capture & fade preset**, **Brightness**, **Vibrance**, **Sampling**, **Layout**, manual read fps / sample columns / block average / frame source, and a dry-run switch that applies to the sync. Audio modes add the dynamics and graphic-EQ strips. |
 | **Direct control** | Target all bulbs, a room or one bulb; power, brightness, white temperature, color picker / **hex**, WiZ scenes and scene speed; save a color, reapply a saved color, and save or reapply a **scene** (a saved look). It starts collapsed and is a remote, not the normal path. |
 | **Activity** | Live CPU, RAM and WiZ UDP chart for mpv and the panel, plus the video and capture resolution, read fps, process count and a clearable log. It starts collapsed. |
 
 The header shows the status dot, the demo and version badges, and **Quit**,
 which stops the sync and closes the panel.
 
-![The panel in demo mode: three bulbs on thirds, the VU reaction with a scrolling signal timeline, draggable amber threshold and four round dynamics knobs, five band colors, the Vibrance slider in Look, and Direct control on the right](docs/gui.png)
-<sub>Demo mode with three bulbs on thirds: Session and Look share the left stack, the VU reaction shows its signal timeline and Dynamics controls, Direct control sits on the right with rooms and saved colors, and Activity waits below.</sub>
+![The panel in demo mode: three bulbs on thirds, the VU reaction with a scrolling signal timeline, a red light-drive curtain hanging from the top border, a draggable amber threshold, four small round knobs whose threshold ring shows the live input, an 8-band EQ curve with faders and lamp selectors, the Audio colors mode select, the Vibrance slider in Look, and Direct control on the right](docs/gui.png)
+<sub>Demo mode with three bulbs on thirds: Session and Look share the left stack, the VU reaction shows its signal timeline, Dynamics controls and 8-band EQ, Direct control sits on the right, and Activity waits below.</sub>
 
 The visual language and the layout rules are documented in
 [`docs/design.md`](docs/design.md).
@@ -303,8 +303,8 @@ same control says how the lights react and what they react to.
 | `cut`      | video  | A cut is one hard edit, not camera motion. When the whole frame jumps to a new scene, the bulbs flash at full brightness for a moment; between cuts they sit slightly dimmer so the flash reads as a pulse. Rate-limited. |
 | `motion`   | video  | Compares each zone with the previous frame. Still shots stay calm and slightly dim; movement adds brightness and saturation to the bulbs watching the action. |
 | `duotone`  | video  | Even bulbs keep the sampled color, odd bulbs get the opposite hue. Two bulbs become a complementary pair; more bulbs become a striped duotone. |
-| `beat`     | audio  | Listens to five frequency bands. Each bulb owns one band and slams to full brightness when that band jumps above its recent average. A threshold gates quiet ticks. With one bulb it pulses on the overall beat. |
-| `vu`       | audio  | A five-band pulse meter: each bulb follows its band from the gate to full, in that band's color. With one bulb it meters the overall volume and takes the color of the loudest band. |
+| `beat`     | audio  | Listens to the graphic EQ bands. Each bulb owns one band (or a group of bands) and slams to full brightness when that band jumps above its recent average. A threshold gates quiet ticks. With one bulb it pulses on the overall beat. |
+| `vu`       | audio  | A graphic-EQ pulse meter: each bulb follows its band from the gate to full, in that band's color. With one bulb it meters the overall volume and takes the color of the loudest band. |
 
 **Strength.** Every reaction scales with `--react-amount` (0–1, default `0.8`);
 `0` keeps the source color and disables the reaction. The panel's **Reaction
@@ -338,31 +338,45 @@ the [command line reference](docs/cli.md#styles-reactions-and-sampling).
 Audio modes replace the profile with four compressor-style controls, in the
 spirit of an SSL bus compressor. **Threshold** is the dBFS gate where the bulbs
 start to open, **Attack** and **Release** are the envelope in milliseconds, and
-**Punch** is how hard levels above the gate drive the brightness.
+**Punch** is how hard levels above the gate drive the brightness: at 1× the
+bulbs rise gently, at 4× a small push above the gate reaches full brightness.
+The timeline stops at **−36 dBFS**, like Pro-C 2. The threshold knob carries
+the plugin's **−60…0 dB** side-chain ring: a white dot walks toward 0 dB as the
+song gets louder, turns red while the input is above the gate, and crosses an
+amber tick that marks the threshold. The amber dial inside the ring is the
+threshold itself, so the knob and the tick always agree.
 
-The panel adds **Dynamics preset** with four starting points, four round knobs,
-and a live **Signal** timeline: a five-second dBFS trace whose amber threshold
-line can be dragged directly. Peaks above the line turn red, so the relation
-between the song and the gate is visible before the bulbs move. The same values
-are `lights.json` keys and CLI flags.
+The gate keeps at least **12 dB** of range above it, even when the profile
+ceiling is closer. Raise the threshold to −14 dB and the bulbs still have
+−14…−2 dBFS to work with; without that floor the window would shrink to a
+couple of dB and the bulbs would turn into an on/off switch.
+
+**Preset** is simply a starting point for the four knobs; the panel writes all
+four values when you pick one, and every knob stays editable afterwards. The
+**Signal** timeline is a five-second dBFS trace: the amber line is the input,
+the red curtain hangs from the top border and its depth is the light drive
+(the brightness the bulbs are being asked for, inverted like a compressor's
+gain-reduction meter), and the amber line across the graph is the threshold.
+Drag it directly to move the gate. The same values are `lights.json` keys and
+CLI flags.
 
 | preset   | threshold | attack | release | punch | feel |
 |----------|-----------|--------|---------|-------|------|
-| `Mellow` | −30 dB | 12 ms | 200 ms | 1.4× | slow, rounded fades; the meter breathes with the track |
-| `Glue`   | −26 dB | 6 ms | 120 ms | 2.0× | the SSL-style middle: firm, musical pulses without strobing |
-| `Punch`  | −22 dB | 1 ms | 55 ms | 3.0× | hard, short flashes on every hit; the default |
-| `Strobe` | −18 dB | 0 ms | 30 ms | 4.0× | instant full-scale hits and a fast drop; the most extreme |
+| `Smooth` | −28 dB | 12 ms | 200 ms | 1.4× | slow swells; the bulbs breathe with the track, no flashing |
+| `Steady` | −24 dB | 6 ms | 120 ms | 2.0× | even pulses that follow the mix without strobing |
+| `Punchy` | −18 dB | 1 ms | 55 ms | 3.0× | sharp hits on every beat; the default |
+| `Strobe` | −14 dB | 0 ms | 30 ms | 4.0× | only the loudest hits flash; the most extreme |
 
 `--react-profile` still works for audio modes and selects the gate, ceiling,
-envelope and punch as one bundle; choosing a Dynamics preset in the panel is
+envelope and punch as one bundle; choosing a preset in the panel is
 equivalent to writing the four knobs. The numbers below are per profile and use
 the same window: gate…ceiling for the level, attack / release, punch and the
 share of the brightness range covered by the flash (`beat`) or swing (`vu`).
 
 | reaction   | soft | balanced | strong |
 |------------|------|----------|--------|
-| `beat`     | 4.5 dB jump, −30…−12 dBFS, 12 / 200 ms, punch 1.4, 55 % flash | 3 dB jump, −22…−10 dBFS, 1 / 55 ms, punch 3.0, 75 % flash | 1.5 dB jump, −18…−8 dBFS, 0 / 30 ms, punch 4.0, 95 % flash |
-| `vu`       | −30…−12 dBFS, 12 / 200 ms, punch 1.4, 70 % swing | −22…−10 dBFS, 1 / 55 ms, punch 3.0, full swing | −18…−8 dBFS, 0 / 30 ms, punch 4.0, full swing |
+| `beat`     | 4.5 dB jump, −30…−12 dBFS, 12 / 200 ms, punch 1.4, 55 % flash | 3 dB jump, −18…−6 dBFS, 1 / 55 ms, punch 3.0, 75 % flash | 1.5 dB jump, −14…−2 dBFS, 0 / 30 ms, punch 4.0, 95 % flash |
+| `vu`       | −30…−12 dBFS, 12 / 200 ms, punch 1.4, 70 % swing | −18…−6 dBFS, 1 / 55 ms, punch 3.0, full swing | −14…−2 dBFS, 0 / 30 ms, punch 4.0, full swing |
 
 Pulse and meter modes reserve headroom so the flash has somewhere to go:
 `beat` covers 55–95 % of the range with the flash across its profiles, leaving
@@ -370,35 +384,106 @@ the bulbs at roughly 56–24 % when idle at the default strength, and `vu`
 swings over 70–100 % of the range, so the level can fall much darker than a
 gentle meter.
 
-### 🎵 Band Colors
+### 🎛 Graphic EQ
 
-Audio modes split the mix into five bands:
+Audio modes feed from a graphic EQ with **2 to 16 bands** (default **8**). Each
+band carries four values: **frequency**, **Q**, **gain** and **lamp**. The
+panel's **EQ** strip under Dynamics draws the curve and one fader per band; drag
+a fader or a node on the curve, or use the detail row for the selected band.
 
-| band | range | default color |
+- **Frequency** is the band centre, 20 Hz–20 kHz.
+- **Q** sets the width. A high Q is narrow and surgical; a low Q is broad and
+  picks up more of its neighbours, which is useful when there are fewer bulbs
+  than bands.
+- **Gain** moves the band ±18 dB in the detector only. It never changes the
+  audio mpv plays; it decides how hard that band drives its lamp.
+- **Lamp** assigns the band to one enabled bulb, in the panel's light order.
+  **Auto** keeps the even spread.
+
+Bands are stored low-to-high. Two or more bands can share a bulb: the bulb
+averages their active levels and takes the color of the strongest one. A bulb
+with no explicit assignment follows the overall mix. With no assignments at
+all, the bands are spread evenly across the bulbs and repeat when there are
+more bulbs than bands.
+
+`--react-eq-bands N` sets the count, `--react-eq '[{"freq":80,"gain":-6,"q":2,"lamp":0},…]'`
+sets the bands, `--react-bands` takes exactly N colors, and `lights.json` uses
+`react_eq_bands` and `react_eq`. New EQs start with log-spaced centres from
+32 Hz to 16 kHz.
+
+**Active bands.** **Detect active bands** (default off) compares every band with
+its own slow noise floor. A band must rise **4 dB** above that floor and stay
+there for **180 ms** before it lights a bulb, so a steady bed under a kick no
+longer keeps a bulb lit. With one bulb the overall view becomes the loudest
+active band.
+
+**Auto release.** The **Auto release** select shapes the brightness envelope,
+inspired by two bus compressors:
+
+| mode | behaviour |
+| --- | --- |
+| `off` | fixed attack and release from the knobs |
+| `ssl` | program-dependent dual release: fast after a hit, slower while the mix stays compressed |
+| `api` | soft knee lifts quiet detail, a longer steady release and a gentle low-end thrust |
+| `hybrid` | SSL dual release with the API soft knee and low-end thrust |
+
+The auto modes only change the lamp envelope; the audio path stays untouched.
+They are `--react-auto off|ssl|api|hybrid`, and active detection is
+`--react-active-bands`.
+
+### 🎵 Audio Colors
+
+Audio modes have six color sources, picked in **Look → Audio colors**. The
+panel swaps its controls to match the mode, and `lights.json` / the CLI use the
+same names.
+
+| mode | color source | controls |
 | --- | --- | --- |
-| `sub` | <60 Hz | `#ff5a3c` |
-| `low` | 60–250 Hz | `#fcbe11` |
-| `low-mid` | 250–800 Hz | `#7ad66b` |
-| `mid` | 800–2500 Hz | `#38bdf8` |
-| `high` | >2500 Hz | `#a78bfa` |
+| `bands` | one fixed color per EQ band | one swatch per band |
+| `spectrum` | fixed spectral spread across the bands | none |
+| `rainbow` | hue rotating over ~12 s, offset per bulb | none |
+| `range` | blend from the low color to the high color across the bands | two colors |
+| `level` | blend from the soft color to the loud color as the level rises | two colors |
+| `single` | one fixed color | one color |
 
-Each band has its own color picker in **Look → Preset**; from the CLI the five
-colors are `--react-bands '#rrggbb,#rrggbb,#rrggbb,#rrggbb,#rrggbb'`, in that
-order.
+`bands` is the default. With the default 8-band EQ the centres and colors are:
 
-With one bulb the meter follows the overall volume (0–100 %) and takes the
-loudest band's color. With 2–5 bulbs the bands are spread from sub to high:
-two bulbs get sub/high, three get sub/low-mid/high, four get sub/low/mid/high
-and five get one each; more than five repeat the cycle.
+| band | centre | default color |
+| --- | --- | --- |
+| 1 | 32 Hz | `#ff5a3c` |
+| 2 | 78 Hz | `#fcbe11` |
+| 3 | 189 Hz | `#7ad66b` |
+| 4 | 459 Hz | `#38bdf8` |
+| 5 | 1.1 kHz | `#a78bfa` |
+| 6 | 2.7 kHz | `#f472b6` |
+| 7 | 6.6 kHz | `#2dd4bf` |
+| 8 | 16 kHz | `#fb923c` |
+
+Change any centre and the label follows; the palette keeps cycling through 16
+distinct swatches for larger EQs. Each band has its own color picker in
+**Look → Audio colors** when `bands` is selected; from the CLI pass exactly one
+`#rrggbb` per band, e.g.
+`--react-bands '#rrggbb,#rrggbb,#rrggbb,#rrggbb,#rrggbb,#rrggbb,#rrggbb,#rrggbb'`.
+`range` and `level` use two colors, `--react-color-a` and `--react-color-b`
+(default `#fcbe11` and `#38bdf8`); `single` uses only color A. The mode itself
+is `--react-color-mode bands|spectrum|rainbow|range|level|single`.
+
+The default 8-band crossover splits at roughly 50, 121, 294, 716, 1739, 4224
+and 10264 Hz; moving a band's frequency or Q moves its boundaries. With one
+bulb the meter follows the overall volume (0–100 %) and takes the loudest
+band's color. With fewer bulbs than bands the bands are spread evenly; with
+more bulbs than bands the assignment repeats. An explicit **Lamp** on a band
+overrides that spread, and several bands may share one bulb.
 
 ### 🎧 Audio Processing
 
-Audio modes use mpv's built-in `lavfi`/`astats` bridge. The Lua script adds a
-labelled five-band analyser only while `beat` or `vu` is selected, removes it
-when you switch back to a video mode, and never opens a microphone or extra
-process. The crossover recombines the five slices before the output, so the
-mix keeps its magnitude; like any crossover it adds a small all-pass phase
-shift. No extra package is installed.
+Audio modes use mpv's built-in `lavfi`/`astats` bridge. The Lua script builds a
+labelled N-band analyser from the EQ's split points only while `beat` or `vu`
+is selected, removes it when you switch back to a video mode, and never opens a
+microphone or extra process. An `acrossover` with N−1 splits yields N bands;
+`amerge` and `pan` recombine their 2N channels before the output, so the mix
+keeps its magnitude; like any crossover it adds a small all-pass phase shift. No
+extra package is installed.
 
 Audio modes keep a 30 Hz state heartbeat even when the video is sampled at
 12–20 fps: the picture still follows the sampling profile, but the meter and

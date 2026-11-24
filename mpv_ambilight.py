@@ -583,30 +583,31 @@ REACTIONS = {
         "label": "Beat — pulse on the beat",
         "hint": "Band hits slam the bulbs; the audio analyser runs only now.",
         "detail": (
-            "Listens to five frequency bands. Each bulb owns one band and "
-            "slams to full brightness when that band jumps above its recent "
-            "average and clears the threshold. With one bulb it pulses on the "
-            "overall beat."
+            "Listens to the graphic EQ bands. Each bulb owns one band, or a "
+            "group of bands, and slams to full brightness when that band jumps "
+            "above its recent average and clears the threshold. With one bulb "
+            "it pulses on the overall beat."
         ),
     },
     "vu": {
         "group": "audio",
-        "label": "VU — five-band meter",
-        "hint": "Each bulb follows its band as a punchy level meter.",
+        "label": "VU — EQ meter",
+        "hint": "Each bulb follows its bands as a punchy level meter.",
         "detail": (
-            "Turns the bulbs into a five-band pulse meter. Each bulb follows "
-            "its assigned band from the threshold to full, in that band's "
-            "color; the compressor curve and punch make the level pump. With "
-            "one bulb it follows the overall volume and takes the color of the "
-            "loudest band."
+            "Turns the bulbs into a graphic-EQ pulse meter. Each bulb follows "
+            "its assigned bands from the threshold to full, in the strongest "
+            "band's color; the compressor curve and punch make the level pump. "
+            "With one bulb it follows the overall volume and takes the color of "
+            "the loudest band."
         ),
     },
 }
 REACTION_GROUPS = ("video", "audio")
 AUDIO_REACTIONS = frozenset({"beat", "vu"})
 
-# Five analysis bands, lowest first. The Lua crossover splits at 60, 250, 800
-# and 2500 Hz; these are the user-facing names for those slices.
+# Legacy five-band layout, lowest first. A `Reaction` built without an explicit
+# EQ (old tests, direct API users) keeps these five slices; the panel and CLI
+# always pass a `react_eq` list of 2–16 bands with their own frequencies.
 BANDS = ("sub", "low", "low-mid", "mid", "high")
 BAND_LABELS = {
     "sub": "Sub",
@@ -622,6 +623,68 @@ DEFAULT_BAND_COLORS = (
     "#38bdf8",
     "#a78bfa",
 )
+# A graphic EQ can use up to 16 analysis bands. The palette cycles after the
+# five classic colours so every band still gets a distinct swatch.
+BAND_COLOR_PALETTE = DEFAULT_BAND_COLORS + (
+    "#f472b6",
+    "#2dd4bf",
+    "#fb923c",
+    "#a3e635",
+    "#67e8f9",
+    "#c084fc",
+    "#f87171",
+    "#facc15",
+    "#4ade80",
+    "#60a5fa",
+    "#e879f9",
+)
+MAX_BANDS = 16
+MIN_BANDS = 2
+DEFAULT_EQ_BANDS = 8
+EQ_DEFAULT_Q = 1.4
+EQ_GAIN_LIMIT = 18.0
+EQ_FREQ_MIN = 20.0
+EQ_FREQ_MAX = 20000.0
+EQ_FREQ_LOW = 32.0
+EQ_FREQ_HIGH = 16000.0
+# Active-band detection ignores a band until it rises this far above its own
+# slow noise floor, then holds it briefly so a drum hit does not flicker.
+ACTIVE_MARGIN_DB = 4.0
+ACTIVE_HOLD = 0.18
+# Compressor auto modes, inspired by the SSL G bus and API 2500. They shape the
+# envelope only; the audio leaves mpv untouched.
+AUTO_MODES = {
+    "off": "Off",
+    "ssl": "SSL",
+    "api": "API 2500",
+    "hybrid": "Hybrid",
+}
+AUTO_HINTS = {
+    "off": "Fixed attack and release from the knobs.",
+    "ssl": "Program-dependent dual release: quick on hits, slow on sustained level.",
+    "api": "Softer knee and a gentle low-end thrust, with a steadier release.",
+    "hybrid": "SSL-style dual release with the API soft knee and low-end thrust.",
+}
+# Audio colours do not have to follow the per-band swatches. The mode picks
+# where the colour comes from; `bands` keeps the old per-band behaviour.
+AUDIO_COLOR_MODES = {
+    "bands": "Bands",
+    "spectrum": "Spectrum",
+    "rainbow": "Rainbow",
+    "range": "Color range",
+    "level": "Level blend",
+    "single": "Single color",
+}
+AUDIO_COLOR_HINTS = {
+    "bands": "One bulb follows the mix; more bulbs split the EQ bands.",
+    "spectrum": "A fixed spectral spread across the EQ bands.",
+    "rainbow": "Hue drifts over time with an offset for every bulb.",
+    "range": "Blend from the low color to the high color across the bands.",
+    "level": "Blend from the soft color to the loud color as the level rises.",
+    "single": "Every bulb uses one fixed color.",
+}
+DEFAULT_AUDIO_COLOR_A = "#fcbe11"
+DEFAULT_AUDIO_COLOR_B = "#38bdf8"
 PROFILE_LABELS = {
     "soft": "Soft",
     "balanced": "Balanced",
@@ -657,11 +720,16 @@ VU_SPAN = 1.0
 # in seconds, and `punch` is how hard the levels above the gate drive the
 # brightness. A punch above 1 lifts the middle of the window, so a hit lands
 # near full instead of halfway: that is what reads as a pulse.
-AUDIO_THRESHOLD_DB = -22.0
+AUDIO_THRESHOLD_DB = -18.0
 AUDIO_ATTACK = 0.001
 AUDIO_RELEASE = 0.055
 AUDIO_PUNCH = 3.0
-AUDIO_CEILING_DB = -10.0
+AUDIO_CEILING_DB = -6.0
+# The gate must leave room to move. Without this floor, raising the threshold
+# toward the ceiling collapses the window to a couple of dB and the bulbs turn
+# into an on/off switch. The window only widens: a profile ceiling that is
+# already farther away still wins.
+AUDIO_WINDOW_DB = 12.0
 # The balanced beat profile shares the audio envelope defaults.
 BEAT_ATTACK = AUDIO_ATTACK
 BEAT_RELEASE = AUDIO_RELEASE
@@ -671,36 +739,36 @@ BEAT_RELEASE = AUDIO_RELEASE
 # place with --react-profile and the individual flags.
 AUDIO_PRESETS = {
     "mellow": {
-        "label": "Mellow",
-        "threshold": -30.0,
+        "label": "Smooth",
+        "threshold": -28.0,
         "attack": 12.0,
         "release": 200.0,
         "punch": 1.4,
-        "hint": "Slow, rounded fades; the meter breathes with the track.",
+        "hint": "Slow swells; the bulbs breathe with the track, no flashing.",
     },
     "glue": {
-        "label": "Glue",
-        "threshold": -26.0,
+        "label": "Steady",
+        "threshold": -24.0,
         "attack": 6.0,
         "release": 120.0,
         "punch": 2.0,
-        "hint": "The SSL-style middle: firm, musical pulses without strobing.",
+        "hint": "Even pulses that follow the mix without strobing.",
     },
     "punch": {
-        "label": "Punch",
-        "threshold": -22.0,
+        "label": "Punchy",
+        "threshold": -18.0,
         "attack": 1.0,
         "release": 55.0,
         "punch": 3.0,
-        "hint": "Hard, short flashes on every hit; the default for audio.",
+        "hint": "Sharp hits on every beat; the default.",
     },
     "strobe": {
         "label": "Strobe",
-        "threshold": -18.0,
+        "threshold": -14.0,
         "attack": 0.0,
         "release": 30.0,
         "punch": 4.0,
-        "hint": "Instant full-scale hits and a fast drop; the most extreme.",
+        "hint": "Only the loudest hits flash; the most extreme.",
     },
 }
 
@@ -798,7 +866,7 @@ REACTION_PROFILES = {
             "cooldown": 0.28,
             "span": 0.55,
             "gate": -30.0,
-            "high": VU_HIGH_DB,
+            "high": -12.0,
             "attack": 0.012,
             "release": 0.20,
             "punch": 1.4,
@@ -819,8 +887,8 @@ REACTION_PROFILES = {
             "threshold": 1.5,
             "cooldown": 0.09,
             "span": 0.95,
-            "gate": -18.0,
-            "high": -8.0,
+            "gate": -14.0,
+            "high": -2.0,
             "attack": 0.0,
             "release": 0.030,
             "punch": 4.0,
@@ -829,7 +897,7 @@ REACTION_PROFILES = {
     },
     "vu": {
         "soft": {
-            "high": VU_HIGH_DB,
+            "high": -12.0,
             "span": 0.70,
             "gate": -30.0,
             "attack": 0.012,
@@ -844,12 +912,12 @@ REACTION_PROFILES = {
             "attack": AUDIO_ATTACK,
             "release": AUDIO_RELEASE,
             "punch": AUDIO_PUNCH,
-            "hint": "The default: a punchy −22…−10 dBFS pulse meter.",
+            "hint": "The default: a punchy −18…−6 dBFS pulse meter.",
         },
         "strong": {
-            "high": -8.0,
+            "high": -2.0,
             "span": 1.0,
-            "gate": -18.0,
+            "gate": -14.0,
             "attack": 0.0,
             "release": 0.030,
             "punch": 4.0,
@@ -868,28 +936,136 @@ def finite_float(value):
     return number if math.isfinite(number) else None
 
 
-def band_for(index: int, count: int):
-    """Which of the five bands bulb `index` follows; None means overall.
+def band_for(index: int, count: int, bands: int = len(BANDS)):
+    """Which analysis band bulb `index` follows; None means overall.
 
-    With 2–5 bulbs the bands are spread from sub to high, so two bulbs get the
-    extremes and five get one each. More than five bulbs repeat the cycle.
+    With more bulbs than bands the assignment repeats, so every bulb still has
+    a band. With fewer bulbs the bands are spread from low to high.
     """
+    bands = max(MIN_BANDS, min(MAX_BANDS, int(bands)))
     if count <= 1:
         return None
-    if count > len(BANDS):
-        return index % len(BANDS)
-    return int(round(index * (len(BANDS) - 1) / (count - 1)))
+    if count > bands:
+        return index % bands
+    return int(round(index * (bands - 1) / (count - 1)))
 
 
-def normalize_band_colors(value):
-    """Five RGB triplets, in band order, from hex strings or RGB tuples.
+def default_eq_freqs(count: int):
+    """Log-spaced band centres between 32 Hz and 16 kHz."""
+    count = max(MIN_BANDS, min(MAX_BANDS, int(count)))
+    ratio = (EQ_FREQ_HIGH / EQ_FREQ_LOW) ** (1.0 / (count - 1))
+    return [EQ_FREQ_LOW * ratio**index for index in range(count)]
 
-    A missing or malformed entry falls back to that band's default, so the
-    remaining bands never shift position.
+
+def normalize_eq_bands(value, count=None):
+    """Per-band frequency, gain, Q and lamp assignment.
+
+    Bands are kept in frequency order because the crossover needs increasing
+    split points. A missing or malformed entry falls back to a log-spaced
+    default at that position, so the rest of the curve never shifts.
     """
     raw = list(value) if isinstance(value, (list, tuple)) else []
+    if count is None:
+        count = len(raw) if raw else DEFAULT_EQ_BANDS
+    try:
+        count = int(count)
+    except (TypeError, ValueError):
+        count = DEFAULT_EQ_BANDS
+    count = max(MIN_BANDS, min(MAX_BANDS, count))
+    defaults = default_eq_freqs(count)
+    bands = []
+    for index in range(count):
+        item = raw[index] if index < len(raw) else None
+        if not isinstance(item, dict):
+            item = {}
+        freq = finite_float(item.get("freq"))
+        gain = finite_float(item.get("gain"))
+        q = finite_float(item.get("q"))
+        try:
+            lamp = int(item.get("lamp"))
+        except (TypeError, ValueError):
+            lamp = -1
+        bands.append(
+            {
+                "freq": round(
+                    max(
+                        EQ_FREQ_MIN,
+                        min(
+                            EQ_FREQ_MAX,
+                            freq if freq is not None else defaults[index],
+                        ),
+                    ),
+                    2,
+                ),
+                "gain": round(
+                    max(
+                        -EQ_GAIN_LIMIT,
+                        min(
+                            EQ_GAIN_LIMIT,
+                            gain if gain is not None else 0.0,
+                        ),
+                    ),
+                    2,
+                ),
+                "q": round(max(0.4, min(8.0, q if q is not None else EQ_DEFAULT_Q)), 2),
+                "lamp": max(-1, lamp),
+            }
+        )
+    bands.sort(key=lambda band: band["freq"])
+    return bands
+
+
+def eq_splits(bands):
+    """Crossover frequencies between adjacent EQ bands, lowest first.
+
+    The boundary sits between the two bands' Q-derived edges. Equal Qs put it
+    on the geometric mean of the centres; a narrower band keeps more of its
+    own space. Values are nudged to stay strictly increasing for acrossover.
+    """
+    centers = [float(band["freq"]) for band in bands]
+    splits = []
+    for index in range(len(centers) - 1):
+        first = max(0.4, float(bands[index].get("q", EQ_DEFAULT_Q)))
+        second = max(0.4, float(bands[index + 1].get("q", EQ_DEFAULT_Q)))
+        high = centers[index] * 2.0 ** (0.5 / first)
+        low = centers[index + 1] * 2.0 ** (-0.5 / second)
+        split = math.sqrt(max(1.0, high) * max(1.0, low))
+        split = max(centers[index] * 1.001, min(centers[index + 1] * 0.999, split))
+        split = max(EQ_FREQ_MIN, min(EQ_FREQ_MAX, split))
+        if splits and split <= splits[-1]:
+            split = splits[-1] * 1.001
+        splits.append(round(split, 2))
+    return splits
+
+
+def eq_thrust_db(freq: float) -> float:
+    """Gentle low-end de-emphasis used by the API-inspired auto modes."""
+    if freq < 120.0:
+        return -3.0
+    if freq < 250.0:
+        return -1.5
+    return 0.0
+
+
+def format_freq(value: float) -> str:
+    """Compact frequency label for the EQ's band columns."""
+    value = float(value)
+    if value >= 1000.0:
+        text = f"{value / 1000.0:.1f}".rstrip("0").rstrip(".")
+        return f"{text}k"
+    return f"{round(value)}"
+
+
+def normalize_band_colors(value, count: int = len(BANDS)):
+    """RGB triplets, in band order, from hex strings or RGB tuples.
+
+    A missing or malformed entry falls back to that band's palette colour, so
+    the remaining bands never shift position.
+    """
+    raw = list(value) if isinstance(value, (list, tuple)) else []
+    count = max(MIN_BANDS, min(MAX_BANDS, int(count)))
     colors = []
-    for index in range(len(BANDS)):
+    for index in range(count):
         item = raw[index] if index < len(raw) else None
         try:
             if isinstance(item, str):
@@ -902,15 +1078,37 @@ def normalize_band_colors(value):
                     tuple(max(0, min(255, channel)) for channel in channels)
                 )
         except (TypeError, ValueError):
-            colors.append(hex_to_rgb(DEFAULT_BAND_COLORS[index]))
+            colors.append(hex_to_rgb(BAND_COLOR_PALETTE[index % len(BAND_COLOR_PALETTE)]))
     return tuple(colors)
 
 
-def parse_band_colors(value):
-    """Parse the CLI's five comma-separated hex colors, or raise ValueError."""
+def normalize_audio_color(value, fallback=DEFAULT_AUDIO_COLOR_A):
+    """One RGB triplet from a hex string or RGB tuple, with a safe fallback."""
+    try:
+        if isinstance(value, str):
+            return hex_to_rgb(value)
+        channels = tuple(int(channel) for channel in value)
+        if len(channels) != 3:
+            raise ValueError
+        return tuple(max(0, min(255, channel)) for channel in channels)
+    except (TypeError, ValueError):
+        return hex_to_rgb(fallback)
+
+
+def blend_rgb(first, second, ratio: float):
+    """Linear blend between two RGB triplets; `ratio` 0 is first, 1 is second."""
+    t = max(0.0, min(1.0, float(ratio)))
+    return tuple(
+        clamp8(a + (b - a) * t) for a, b in zip(first, second)
+    )
+
+
+def parse_band_colors(value, count: int = len(BANDS)):
+    """Parse comma-separated hex colors for the configured band count."""
     parts = [part.strip() for part in str(value).split(",") if part.strip()]
-    if len(parts) != len(BANDS):
-        raise ValueError("expected five comma-separated colors")
+    count = max(MIN_BANDS, min(MAX_BANDS, int(count)))
+    if len(parts) != count:
+        raise ValueError(f"expected {count} comma-separated colors")
     return tuple(hex_to_rgb(part) for part in parts)
 
 
@@ -939,6 +1137,16 @@ def hue_shift(rgb, degrees: float):
     h, s, v = colorsys.rgb_to_hsv(r, g, b)
     h = (h + float(degrees) / 360.0) % 1.0
     r, g, b = colorsys.hsv_to_rgb(h, s, v)
+    return (clamp8(r * 255), clamp8(g * 255), clamp8(b * 255))
+
+
+def hsv_rgb(hue: float, saturation: float = 0.9, value: float = 1.0):
+    """An RGB triplet from a hue in turns, clamped to 0..255 channels."""
+    r, g, b = colorsys.hsv_to_rgb(
+        float(hue) % 1.0,
+        max(0.0, min(1.0, float(saturation))),
+        max(0.0, min(1.0, float(value))),
+    )
     return (clamp8(r * 255), clamp8(g * 255), clamp8(b * 255))
 
 
@@ -984,15 +1192,16 @@ def pulse_level(
     """Map a dBFS level onto 0..1 with a gate and a punch curve.
 
     Below `threshold` the bulbs idle. The window up to `ceiling` reaches full
-    scale. `punch` raises the middle of that window, so a hit lands near full
-    instead of halfway; that is the difference between a smooth meter and a
-    visible pulse.
+    scale, but it never shrinks below `AUDIO_WINDOW_DB`: a high gate keeps a
+    usable range instead of turning the meter into an on/off switch. `punch`
+    raises the middle of that window, so a hit lands near full instead of
+    halfway; that is the difference between a smooth meter and a visible pulse.
     """
     value = finite_float(db)
     if value is None:
         return 0.0
     low = float(threshold)
-    high = max(low + 1.0, float(ceiling))
+    high = max(low + AUDIO_WINDOW_DB, float(ceiling))
     level = (value - low) / (high - low)
     level = max(0.0, min(1.0, level))
     return level ** (1.0 / max(1.0, float(punch)))
@@ -1053,6 +1262,12 @@ class Reaction:
         attack=None,
         release=None,
         punch=None,
+        color_mode: str = "bands",
+        color_a=None,
+        color_b=None,
+        eq=None,
+        auto: str = "off",
+        active_bands: bool = False,
     ):
         self.mode = mode if mode in REACTIONS else "color"
         self.amount = max(0.0, min(1.0, float(amount)))
@@ -1060,7 +1275,19 @@ class Reaction:
         self.profile = profile if profile in PROFILE_LABELS else "balanced"
         values = REACTION_PROFILES.get(self.mode, {}).get(self.profile, {})
         self.audio = self.mode in AUDIO_REACTIONS
-        self.band_colors = normalize_band_colors(bands)
+        if isinstance(eq, (list, tuple)) and eq:
+            self.eq = normalize_eq_bands(eq, len(eq))
+        else:
+            # Direct Reaction users (and old tests) keep the classic five-band
+            # layout; the panel and CLI always pass an explicit EQ.
+            self.eq = normalize_eq_bands(None, len(BANDS))
+        self.band_count = len(self.eq)
+        self.band_colors = normalize_band_colors(bands, self.band_count)
+        self.color_mode = color_mode if color_mode in AUDIO_COLOR_MODES else "bands"
+        self.color_a = normalize_audio_color(color_a, DEFAULT_AUDIO_COLOR_A)
+        self.color_b = normalize_audio_color(color_b, DEFAULT_AUDIO_COLOR_B)
+        self.auto = auto if auto in AUTO_MODES else "off"
+        self.active_bands = bool(active_bands)
         self.eq_span = float(values.get("span", REACTION_SPAN))
         self.eq_tau = float(values.get("tau", EQUALIZE_TAU))
         self.eq_floor = float(values.get("floor", REACTION_FLOOR))
@@ -1104,16 +1331,19 @@ class Reaction:
         self.last_cut_at = float("-inf")
         self.beat_base = None
         self.beat_at = None
-        self.band_db = [None] * len(BANDS)
-        self.band_peak_db = [None] * len(BANDS)
-        self.band_levels = [0.0] * len(BANDS)
-        self.band_bases = [None] * len(BANDS)
-        self.band_at = [None] * len(BANDS)
+        self.band_db = [None] * self.band_count
+        self.band_peak_db = [None] * self.band_count
+        self.band_levels = [0.0] * self.band_count
+        self.band_bases = [None] * self.band_count
+        self.band_at = [None] * self.band_count
+        self.band_floor = [None] * self.band_count
+        self.band_active_until = [0.0] * self.band_count
         self.pulse_at = {}
         self.assignments = {}
         self.levels = {}
         self.smoothed = {}
         self.vu_env = {}
+        self.sustain = {}
 
     def _elapsed(self, now: float) -> float:
         if self.last_frame_at is None:
@@ -1190,8 +1420,101 @@ class Reaction:
             if self.amount > 0:
                 self._read_audio(now, audio, raw_colors, lights, beat=False)
 
+    def audio_color(self, band: int, level: float, now: float):
+        """One bulb's colour for the selected audio colour mode."""
+        band = max(0, min(self.band_count - 1, int(band)))
+        mode = self.color_mode
+        if mode == "bands":
+            return self.band_colors[band]
+        if mode == "spectrum":
+            return hsv_rgb(band / self.band_count, 0.9, 1.0)
+        if mode == "rainbow":
+            # A full turn every ~12 seconds, offset so nearby bulbs differ.
+            return hsv_rgb(now * 0.0833 + band / self.band_count, 0.9, 1.0)
+        if mode == "range":
+            return blend_rgb(
+                self.color_a, self.color_b, band / max(1, self.band_count - 1)
+            )
+        if mode == "level":
+            return blend_rgb(self.color_a, self.color_b, level)
+        return self.color_a
+
+    def _shape_bands(self, values, peaks):
+        """Apply the graphic EQ's gain, Q width and API-style thrust."""
+        gains = [float(band.get("gain", 0.0)) for band in self.eq]
+        qs = [max(0.4, float(band.get("q", EQ_DEFAULT_Q))) for band in self.eq]
+        thrust = [
+            eq_thrust_db(float(band.get("freq", 0.0)))
+            if self.auto in ("api", "hybrid")
+            else 0.0
+            for band in self.eq
+        ]
+
+        def adjust(value, index):
+            number = finite_float(value)
+            if number is None:
+                return None
+            return number + gains[index] + thrust[index]
+
+        shaped = [adjust(value, index) for index, value in enumerate(values)]
+        if len(shaped) > 1:
+            linear = [
+                None if value is None else 10.0 ** (value / 10.0)
+                for value in shaped
+            ]
+            blended = []
+            for index, power in enumerate(linear):
+                if power is None:
+                    blended.append(None)
+                    continue
+                neighbors = [
+                    linear[other]
+                    for other in (index - 1, index + 1)
+                    if 0 <= other < len(linear) and linear[other] is not None
+                ]
+                if not neighbors:
+                    blended.append(power)
+                    continue
+                # A broad (low Q) band picks up a little of its neighbours; a
+                # narrow one stays surgical.
+                width = max(0.02, min(0.6, 0.30 / qs[index]))
+                blended.append(power + width * (sum(neighbors) / len(neighbors)))
+            shaped = [
+                None if power is None or power <= 0.0 else 10.0 * math.log(power, 10)
+                for power in blended
+            ]
+        adjusted_peaks = [
+            adjust(value, index) for index, value in enumerate(peaks)
+        ]
+        return shaped, adjusted_peaks
+
+    def _active_bands(self, now: float, values) -> list:
+        """Bands that are currently above their own slow noise floor."""
+        active = []
+        for index, value in enumerate(values):
+            number = finite_float(value)
+            if number is None:
+                active.append(False)
+                continue
+            floor = self.band_floor[index]
+            if floor is None:
+                floor = number
+            elif number < floor:
+                floor += (number - floor) * 0.35
+            else:
+                floor += (number - floor) * 0.02
+            self.band_floor[index] = floor
+            hot = (
+                number >= self.audio_threshold
+                and number - floor >= ACTIVE_MARGIN_DB
+            )
+            if hot:
+                self.band_active_until[index] = now + ACTIVE_HOLD
+            active.append(hot or now < self.band_active_until[index])
+        return active
+
     def _read_audio(self, now, audio, raw_colors, lights, beat):
-        """Read the five band levels, assign bands to bulbs and set colours.
+        """Read the EQ band levels, assign bands to bulbs and set colours.
 
         Both RMS and sample peak drive the meter and the detector. Peak is
         what makes a kick visible on the first state update instead of after
@@ -1208,20 +1531,30 @@ class Reaction:
         for source, target in ((raw_bands, values), (raw_peaks, peaks)):
             if isinstance(source, (list, tuple)):
                 target.extend(
-                    finite_float(value) for value in list(source)[: len(BANDS)]
+                    finite_float(value)
+                    for value in list(source)[: self.band_count]
                 )
-            while len(target) < len(BANDS):
+            while len(target) < self.band_count:
                 target.append(None)
 
-        combined = [hot_db(value, band_peak) for value, band_peak in zip(values, peaks)]
+        combined = [
+            hot_db(value, band_peak) for value, band_peak in zip(values, peaks)
+        ]
         if (
             rms is None
             and peak is None
             and all(value is None for value in combined)
         ):
             return
+        combined, peaks = self._shape_bands(combined, peaks)
         self.band_db = combined
         self.band_peak_db = peaks
+
+        active = (
+            self._active_bands(now, combined)
+            if self.active_bands
+            else [True] * self.band_count
+        )
         self.band_levels = [
             pulse_level(
                 value,
@@ -1229,12 +1562,26 @@ class Reaction:
                 self.audio_ceiling,
                 self.audio_punch,
             )
-            for value in combined
+            if active[index]
+            else 0.0
+            for index, value in enumerate(combined)
         ]
-        count = len(lights)
-        self.assignments = {
-            ip: band_for(index, count) for index, ip in enumerate(lights)
-        }
+
+        explicit = any(int(band.get("lamp", -1)) >= 0 for band in self.eq)
+        assignments = {}
+        for index, ip in enumerate(lights):
+            if explicit:
+                assigned = tuple(
+                    band_index
+                    for band_index, band in enumerate(self.eq)
+                    if int(band.get("lamp", -1)) == index
+                )
+            else:
+                band = band_for(index, len(lights), self.band_count)
+                assigned = () if band is None else (band,)
+            assignments[ip] = assigned
+        self.assignments = assignments
+
         band_hot = max((value for value in combined if value is not None), default=None)
         overall_db = hot_db(rms, peak)
         if overall_db is None:
@@ -1253,7 +1600,12 @@ class Reaction:
             if overall_db is not None
             else max(self.band_levels)
         )
-        dominant = max(range(len(BANDS)), key=lambda index: self.band_levels[index])
+        if self.active_bands:
+            # A dark band must also darken the one-bulb overall view.
+            overall = max(self.band_levels)
+        dominant = max(
+            range(self.band_count), key=lambda index: self.band_levels[index]
+        )
         if beat:
             for index, value in enumerate(combined):
                 self.band_bases[index], self.band_at[index] = self._transient(
@@ -1263,16 +1615,39 @@ class Reaction:
                 now, overall_db, self.beat_base, self.beat_at
             )
         for index, ip in enumerate(lights):
-            band = self.assignments[ip]
-            if band is None:
-                color = self.band_colors[dominant]
-                self.levels[ip] = overall
-                self.pulse_at[ip] = self.beat_at
+            assigned = assignments[ip]
+            if assigned:
+                active_assigned = [
+                    band_index
+                    for band_index in assigned
+                    if active[band_index]
+                ]
+                if active_assigned:
+                    level = sum(
+                        self.band_levels[band_index]
+                        for band_index in active_assigned
+                    ) / len(active_assigned)
+                    color_band = max(
+                        active_assigned,
+                        key=lambda band_index: self.band_levels[band_index],
+                    )
+                    pulses = [
+                        self.band_at[band_index]
+                        for band_index in active_assigned
+                        if self.band_at[band_index] is not None
+                    ]
+                    pulse = max(pulses) if pulses else self.beat_at
+                else:
+                    level = 0.0
+                    color_band = assigned[0]
+                    pulse = self.beat_at
             else:
-                color = self.band_colors[band]
-                self.levels[ip] = self.band_levels[band]
-                self.pulse_at[ip] = self.band_at[band]
-            raw_colors[ip] = color
+                level = overall
+                color_band = dominant
+                pulse = self.beat_at
+            self.levels[ip] = level
+            self.pulse_at[ip] = pulse
+            raw_colors[ip] = self.audio_color(color_band, level, now)
 
     def _transient(self, now, value, base, at):
         """One band's beat detector: a jump over the running average."""
@@ -1298,6 +1673,31 @@ class Reaction:
         motion = self.motion.get(ip, 0.0)
         return max(0.2, 1.0 + 0.35 * self.amount * (motion - 0.5))
 
+    def _auto_release(self, ip: str, dt: float, level: float) -> float:
+        """Release time for the selected auto mode, updated per send tick."""
+        sustain = self.sustain.get(ip, 0.0)
+        if level > 0.05:
+            sustain = min(2.0, sustain + max(0.0, dt))
+        else:
+            sustain = max(0.0, sustain - max(0.0, dt) * 2.0)
+        self.sustain[ip] = sustain
+        if self.auto == "api":
+            return min(1.2, max(0.06, self.audio_release * 1.35))
+        if self.auto in ("ssl", "hybrid"):
+            # SSL-style dual release: a short time constant for hits, a long
+            # one once the program has been compressed for a while.
+            program = min(1.0, sustain / 0.9)
+            fast = max(0.02, self.audio_release)
+            slow = min(2.0, max(0.45, fast * 8.0))
+            return fast + (slow - fast) * program
+        return self.audio_release
+
+    def _auto_level(self, target: float) -> float:
+        """API-inspired soft knee: lift quiet detail instead of gating it."""
+        if self.auto in ("api", "hybrid"):
+            return max(0.0, min(1.0, target)) ** 0.85
+        return target
+
     def dimming(self, ip: str, base: int, now: float, dt: float) -> int:
         """Per-bulb dimming for this send tick, including short pulses."""
         if self.mode == "equalize":
@@ -1314,16 +1714,20 @@ class Reaction:
             pulse_at = self.pulse_at.get(ip, self.beat_at)
             age = now - pulse_at if pulse_at is not None else float("inf")
             power = self.levels.get(ip, 0.0)
-            flash = beat_pulse(age, self.audio_attack, self.audio_release)
+            release = self._auto_release(ip, dt, power)
+            flash = beat_pulse(age, self.audio_attack, release)
             # Any solid hit reaches full brightness; the gate already rejects
             # quiet ticks, so the remaining level only tapers the softest.
             gain = min(1.0, 0.5 + power)
             mult = steady + (1.0 - steady) * flash * gain
         elif self.mode == "vu":
             span = self.vu_span * self.amount
-            target = 1.0 - span + span * self.levels.get(ip, 0.0)
+            target = self._auto_level(
+                1.0 - span + span * self.levels.get(ip, 0.0)
+            )
             previous = self.vu_env.get(ip, target)
-            tau = self.audio_attack if target >= previous else self.audio_release
+            release = self._auto_release(ip, dt, target)
+            tau = self.audio_attack if target >= previous else release
             alpha = 1.0 - math.exp(-max(0.0, dt) / max(0.001, tau))
             mult = previous + (target - previous) * alpha
             self.vu_env[ip] = mult
@@ -1548,6 +1952,12 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
         attack=None if attack is None else attack / 1000.0,
         release=None if release is None else release / 1000.0,
         punch=getattr(args, "react_punch", None),
+        color_mode=getattr(args, "react_color_mode", "bands"),
+        color_a=getattr(args, "react_color_a", None),
+        color_b=getattr(args, "react_color_b", None),
+        eq=getattr(args, "react_eq", None),
+        auto=getattr(args, "react_auto", "off"),
+        active_bands=getattr(args, "react_active_bands", False),
     )
     # Audio envelopes are short: a 55 ms release at an 18 Hz send rate can be
     # missed between datagrams. Audio modes always push at 30 Hz, like the
@@ -1802,6 +2212,7 @@ def run_launcher(args, lights, zone_names, mpv_extra):
             "sample": args.sample_block,
             "capture": args.capture,
             "react": args.react,
+            "bands": eq_splits(args.react_eq),
             # Only the instance we launch should autostart. If the Lua script
             # is also installed globally, that copy stays asleep.
             "script": link.stem,
@@ -1931,6 +2342,7 @@ def run_attach(args, lights, zone_names):
         "sample": args.sample_block,
         "capture": args.capture,
         "react": args.react,
+        "bands": eq_splits(args.react_eq),
         "script": SCRIPT_NAME,
     }
 
@@ -2216,8 +2628,64 @@ def main(argv=None) -> int:
         "--react-bands",
         default=None,
         help=(
-            "five audio band colors as #rrggbb,#rrggbb,#rrggbb,#rrggbb,#rrggbb "
-            "(sub, low, low-mid, mid, high)"
+            "band colors as #rrggbb,#rrggbb,... in low-to-high order; the count "
+            "must match --react-eq-bands"
+        ),
+    )
+    parser.add_argument(
+        "--react-eq-bands",
+        type=int,
+        default=None,
+        help=(
+            f"audio EQ bands, {MIN_BANDS}-{MAX_BANDS} "
+            f"(default: {DEFAULT_EQ_BANDS})"
+        ),
+    )
+    parser.add_argument(
+        "--react-eq",
+        default=None,
+        help=(
+            "audio EQ as JSON: [{freq,gain,q,lamp},...], low to high; lamp is "
+            "a 0-based index into the enabled bulbs, or -1 for auto"
+        ),
+    )
+    parser.add_argument(
+        "--react-auto",
+        default="off",
+        choices=[*AUTO_MODES],
+        help=(
+            "compressor auto behavior: off, ssl, api or hybrid "
+            "(default: off)"
+        ),
+    )
+    parser.add_argument(
+        "--react-active-bands",
+        action="store_true",
+        help="audio modes: only bands above their own noise floor light a bulb",
+    )
+    parser.add_argument(
+        "--react-color-mode",
+        default="bands",
+        choices=[*AUDIO_COLOR_MODES],
+        help=(
+            "audio color source: bands, spectrum, rainbow, range, level or "
+            "single (default: bands)"
+        ),
+    )
+    parser.add_argument(
+        "--react-color-a",
+        default=None,
+        help=(
+            "audio color A as #rrggbb: low end of range, soft of level or the "
+            f"only color (default: {DEFAULT_AUDIO_COLOR_A})"
+        ),
+    )
+    parser.add_argument(
+        "--react-color-b",
+        default=None,
+        help=(
+            "audio color B as #rrggbb: high end of range or loud of level "
+            f"(default: {DEFAULT_AUDIO_COLOR_B})"
         ),
     )
     parser.add_argument(
@@ -2469,11 +2937,29 @@ def main(argv=None) -> int:
         REACTION_TARGET if args.react_target is None else args.react_target
     )
     args.react_target = max(0.05, min(0.95, float(args.react_target)))
+    raw_eq = None
+    if args.react_eq:
+        try:
+            raw_eq = json.loads(args.react_eq)
+        except ValueError as error:
+            parser.error(f"--react-eq: {error}")
+        if not isinstance(raw_eq, list):
+            parser.error("--react-eq: expected a JSON array")
+    if args.react_eq_bands is None:
+        count = len(raw_eq) if raw_eq else DEFAULT_EQ_BANDS
+    else:
+        count = args.react_eq_bands
+    try:
+        count = max(MIN_BANDS, min(MAX_BANDS, int(count)))
+    except (TypeError, ValueError):
+        parser.error("--react-eq-bands: expected a number")
+    args.react_eq = normalize_eq_bands(raw_eq, count)
+    args.react_eq_bands = count
     if args.react_bands is None:
-        args.react_bands = normalize_band_colors(None)
+        args.react_bands = normalize_band_colors(None, count)
     else:
         try:
-            args.react_bands = parse_band_colors(args.react_bands)
+            args.react_bands = parse_band_colors(args.react_bands, count)
         except ValueError as error:
             parser.error(f"--react-bands: {error}")
     if args.react_threshold is not None:
@@ -2484,6 +2970,20 @@ def main(argv=None) -> int:
         args.react_release = max(20.0, min(1000.0, float(args.react_release)))
     if args.react_punch is not None:
         args.react_punch = max(1.0, min(4.0, float(args.react_punch)))
+    if args.react_color_mode not in AUDIO_COLOR_MODES:
+        args.react_color_mode = "bands"
+    for flag, default in (
+        ("react_color_a", DEFAULT_AUDIO_COLOR_A),
+        ("react_color_b", DEFAULT_AUDIO_COLOR_B),
+    ):
+        value = getattr(args, flag, None)
+        if value is None:
+            setattr(args, flag, hex_to_rgb(default))
+        else:
+            try:
+                setattr(args, flag, hex_to_rgb(value))
+            except ValueError as error:
+                parser.error(f"--{flag.replace('_', '-')}: {error}")
     resolve_sampling(args, explicit)
 
     if args.attach:

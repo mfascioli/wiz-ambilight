@@ -32,8 +32,8 @@
         wiz_ambilight-sample=1          average an NxN block per cell (1-4; 0 = auto)
         wiz_ambilight-capture=scaled    scaled (window size) or video (source)
         wiz_ambilight-react=color       color, equalize, cut, motion, duotone,
-                                        beat or vu (audio modes add a five-band
-                                        analyser only while active)
+                                        beat or vu (audio modes add a dynamic
+                                        EQ-band analyser only while active)
 
     JSON written on every capture:
         {"active":true,"t":12.345,"paused":false,"eof":false,
@@ -66,6 +66,7 @@ local S = {
     capture = "video",
     sampling = "manual",
     react = "color",
+    bands = nil,
     audio_warned = false,
     fps_now = 10,
     next_due = 0,
@@ -136,17 +137,76 @@ end
 local AUDIO_FPS = 30.0
 
 -- The analyser is a chain of labelled libavfilter filters. astats injects the
--- RMS/peak metadata, acrossover splits the mix into five bands for the meter,
--- and anull keeps the chain valid while the labels are removed one by one.
--- The band graph recombines the five slices, so the mix keeps its magnitude;
--- like any crossover it adds a small all-pass phase shift.
+-- RMS/peak metadata, acrossover splits the mix into the configured EQ bands
+-- for the meter, and anull keeps the chain valid while the labels are removed
+-- one by one. The band graph recombines the slices, so the mix keeps its
+-- magnitude; like any crossover it adds a small all-pass phase shift.
 local FILTER_STATS = "@wizstats:lavfi=[astats=metadata=1:reset=1]"
-local FILTER_BANDS = "@wizbands:lavfi=[aformat=channel_layouts=stereo,"
-    .. "acrossover=split=60 250 800 2500[b0][b1][b2][b3][b4];"
-    .. "[b0][b1][b2][b3][b4]amerge=inputs=5,"
-    .. "astats=metadata=1:reset=1,"
-    .. "pan=stereo|c0=c0+c2+c4+c6+c8|c1=c1+c3+c5+c7+c9]"
 local FILTER_TAIL = "@wiztail:lavfi=[anull]"
+-- Without an explicit band plan, keep the classic five bands. The panel and
+-- CLI always send their own split points.
+local DEFAULT_SPLITS = { 60, 250, 800, 2500 }
+
+local function sanitize_bands(value)
+    if type(value) ~= "table" then
+        return nil
+    end
+    local out = {}
+    for _, item in ipairs(value) do
+        local hz = tonumber(item)
+        if hz and hz > 10 and hz < 22050 then
+            out[#out + 1] = hz
+        end
+    end
+    if #out < 1 then
+        return nil
+    end
+    table.sort(out)
+    return out
+end
+
+local function bands_equal(first, second)
+    if first == nil or second == nil then
+        return first == second
+    end
+    if #first ~= #second then
+        return false
+    end
+    for index = 1, #first do
+        if math.abs(first[index] - second[index]) > 0.01 then
+            return false
+        end
+    end
+    return true
+end
+
+local function band_splits()
+    return sanitize_bands(S.bands) or DEFAULT_SPLITS
+end
+
+local function band_filter()
+    local splits = band_splits()
+    local count = #splits + 1
+    local frequencies = {}
+    for _, hz in ipairs(splits) do
+        frequencies[#frequencies + 1] = string.format("%.2f", hz)
+    end
+    local labels = {}
+    local left = {}
+    local right = {}
+    for index = 0, count - 1 do
+        labels[#labels + 1] = "[b" .. index .. "]"
+        left[#left + 1] = "c" .. (index * 2)
+        right[#right + 1] = "c" .. (index * 2 + 1)
+    end
+    return "@wizbands:lavfi=[aformat=channel_layouts=stereo,"
+        .. "acrossover=split=" .. table.concat(frequencies, " ")
+        .. table.concat(labels) .. ";"
+        .. table.concat(labels) .. "amerge=inputs=" .. count .. ","
+        .. "astats=metadata=1:reset=1,"
+        .. "pan=stereo|c0=" .. table.concat(left, "+")
+        .. "|c1=" .. table.concat(right, "+") .. "]"
+end
 
 local function audio_stats_off()
     for _, name in ipairs({ "@wizbands", "@wizstats", "@wiztail" }) do
@@ -170,7 +230,7 @@ local function audio_stats_on()
     return mp.commandv(
         "af",
         "add",
-        FILTER_STATS .. "," .. FILTER_BANDS .. "," .. FILTER_TAIL
+        FILTER_STATS .. "," .. band_filter() .. "," .. FILTER_TAIL
     )
 end
 
@@ -225,11 +285,12 @@ local function audio_json()
     )
     local left = field("lavfi.astats.1.RMS_level", rms)
     local right = field("lavfi.astats.2.RMS_level", left)
-    -- The band graph exposes ten channels: five stereo bands, two channels
-    -- each. Take the louder channel per band so a one-sided mix still shows.
-    -- Peak travels beside RMS: the meter uses both so attacks are not
-    -- averaged away, and the beat detector can see a transient in its band.
+    -- The band graph exposes two channels per band. Take the louder channel
+    -- per band so a one-sided mix still shows. Peak travels beside RMS: the
+    -- meter uses both so attacks are not averaged away, and the beat detector
+    -- can see a transient in its band.
     local band_meta = mp.get_property_native("af-metadata/wizbands")
+    local band_count = #band_splits() + 1
     local band_rms = {}
     local band_peaks = {}
     if type(band_meta) == "table" then
@@ -246,7 +307,7 @@ local function audio_json()
             end
             return value
         end
-        for index = 0, 4 do
+        for index = 0, band_count - 1 do
             band_rms[#band_rms + 1] = band_stat(index, "RMS_level")
             band_peaks[#band_peaks + 1] = band_stat(index, "Peak_level")
         end
@@ -277,7 +338,7 @@ local function audio_json()
 
     local function db_array(values)
         local parts = {}
-        for index = 1, 5 do
+        for index = 1, band_count do
             parts[#parts + 1] = json_number(values[index])
         end
         return "[" .. table.concat(parts, ",") .. "]"
@@ -719,6 +780,11 @@ local function start(cfg, from_control)
         if cfg.react ~= nil then
             S.react = tostring(cfg.react)
         end
+        local next_bands = sanitize_bands(cfg.bands)
+        if next_bands ~= nil and not bands_equal(S.bands, next_bands) then
+            S.bands = next_bands
+            audio_stats_off()
+        end
         sync_audio_filter()
         return
     end
@@ -732,6 +798,7 @@ local function start(cfg, from_control)
     if cfg.react ~= nil then
         S.react = tostring(cfg.react)
     end
+    S.bands = sanitize_bands(cfg.bands)
     apply_sampling(cfg, true)
     S.from_control = from_control or false
     S.active = true
