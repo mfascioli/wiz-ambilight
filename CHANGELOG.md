@@ -4,6 +4,8 @@ Releases before 1.4.0 were never tagged; their history is in `git log`.
 
 ## Unreleased
 
+## 1.12.0 - 2026-11-24
+
 - **Graphic EQ:** each band now has a **shape** instead of only a bell. `bell`
   stays the default, and `bandpass`, `lowpass`, `highpass`, `notch` and `flat`
   let a band isolate the part of the mix it should hear, Pro-Q3 style. The
