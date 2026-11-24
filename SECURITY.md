@@ -34,9 +34,10 @@ mpv start. Nothing downloads code, and no installer fetches anything at all.
   you run it, it is the only process here that listens beyond loopback, on
   `0.0.0.0:8766`, with a 512-byte body cap, no outbound requests, and one
   write: `lux.json` replaced atomically at `0600`. A reading can only change
-  Equalize's brightness. Set `WIZ_LUX_TOKEN` / `--token` to require the
-  `X-Lux-Token` header, or `--host 127.0.0.1` to keep it local; there is no
-  TLS.
+  Auto Lux's brightness. The `contrib/esp32-lux/` sketch runs on the sensor
+  board, not on the host, and only posts to the bridge. Set `WIZ_LUX_TOKEN` /
+  `--token` to require the `X-Lux-Token` header, or `--host 127.0.0.1` to keep
+  it local; there is no TLS.
 - **Processes.** The panel starts the sync with `subprocess.Popen(argv, ...)`,
   no shell and no string interpolation, in its own session. Stopping it sends
   `SIGTERM` to the process group when `os.killpg` exists and falls back to
@@ -51,20 +52,23 @@ mpv start. Nothing downloads code, and no installer fetches anything at all.
 - **Audio.** `beat` and `vu` analyse the audio mpv is already decoding. The
   Lua script appends three labelled `lavfi` stages to mpv's audio filter chain
   only while one of those modes is selected: `astats` for the overall levels,
-  a stereo `acrossover`/`amerge`/`astats` graph for the five bands, and `anull`
-  as a removable tail. It reads the levels from `af-metadata`, and removes all
-  three labels on exit. The band graph recombines the crossover slices before
-  the output, so the mix keeps its magnitude (measured within 0.6 dB with white
-  noise) but gains an all-pass phase shift; it is not a bit-identical
-  pass-through. It never opens a microphone, a capture device or a file and
-  never adds a dependency. With any other reaction the audio chain is
-  untouched.
+  a per-band filter bank for the configured EQ, and `anull` as a removable
+  tail. The bank filters a copy of the mix with each band's shape (bell, band
+  pass, low/high pass, notch or flat), merges the untouched stereo pair back as
+  the last two channels and reads every band with `astats`; `pan` then selects
+  only the original pair. The audio mpv plays is therefore unchanged. Configs
+  without an EQ keep the older `acrossover`/`amerge` graph, which recombines the
+  slices and adds an all-pass phase shift. It reads the levels from
+  `af-metadata` and removes all three labels on exit. It never opens a
+  microphone, a capture device or a file and never adds a dependency. With any
+  other reaction the audio chain is untouched.
 - **Files written.** The state file (`state-<pid>.json` in launch mode,
   `state.json` in attach), `stats-<pid>.json` and `control.json` under
-  `$XDG_RUNTIME_DIR/wiz-ambilight/` (`/tmp` fallback, `0700`), the
-  `gui-daemon.json` PID file beside them, `lights.json` and `scenes.json` in
-  `~/.config/wiz-ambilight/` (`0600`), and the Lua copy in mpv's scripts
-  folder. Nothing else is created, renamed or deleted.
+  `$XDG_RUNTIME_DIR/wiz-ambilight/` (`/tmp` fallback, `0700`), the optional
+  `lux.json` written by the bridge beside them, the `gui-daemon.json` PID file,
+  `lights.json` and `scenes.json` in `~/.config/wiz-ambilight/` (`0600`), and
+  the Lua copy in mpv's scripts folder. Nothing else is created, renamed or
+  deleted.
 
 ## Exposed interfaces
 
@@ -73,7 +77,8 @@ Every surface is listed here; if it is not in this table, it does not exist.
 | Surface | When | Why it exists | Mitigation |
 | --- | --- | --- | --- |
 | `127.0.0.1:8765` TCP | only with `--gui` | serve the local panel | loopback bind, Host/Origin checks, per-run token, strict CSP |
-| ephemeral UDP source port | during sync, discovery and direct control | send `setPilot`/`getPilot` and read replies | not a service, no `listen`/`accept`, short timeouts, no `bind` to a public interface |
+| `0.0.0.0:8766` TCP | only while `contrib/lux-bridge.py` runs | receive a sensor reading from the ESP32 | 512-byte body cap, optional `X-Lux-Token`, writes only `lux.json`; `--host 127.0.0.1` keeps it local |
+| ephemeral UDP source port | during sync, discovery and direct control | send `setPilot`/`getPilot`/`getPower` and read replies | not a service, no `listen`/`accept`, short timeouts, no `bind` to a public interface |
 | the state file (`state-<pid>.json` launch, `state.json` attach), `control.json` | during sync | hand zone colors, mpv's pid and the optional audio levels from mpv to Python | runtime dir `0700` |
 | `stats-<pid>.json` | during sync, once a second | let the panel graph capture rate and real UDP traffic | runtime dir `0700`, removed on exit, ignored when older than 6 s or owned by another PID |
 | `lights.json`, `scenes.json` | panel | names, zones, rooms, saved colors and saved looks | files `0600`; values range-checked |
@@ -107,7 +112,9 @@ started by design, and no internet endpoint.
 `mpv_ambilight.py`, `webui.py`, `lua/wiz_ambilight.lua`, `web/`, `tests/` and
 the `assets/` generators are ours. `upstream/` is
 [wiz-hack](https://github.com/myselfshravan/wiz-hack) (MIT), kept for reference
-and never imported. `web/fonts/Merriweather-Bold.ttf` is SIL OFL;
+and never imported. The white-LED mapping and the `getPower`/`pc` metering
+follow [cB-Sigma/wiz](https://github.com/cB-Sigma/wiz) by Abhinav Gautam
+(Apache-2.0); no code was copied, only the protocol behaviour. `web/fonts/Merriweather-Bold.ttf` is SIL OFL;
 `assets/banner-fonts/` (Fira Sans Condensed, SIL OFL) is used by
 `assets/banner.py` only and is never served by the panel. mpv is not bundled.
 
@@ -137,8 +144,8 @@ What has **not** been done:
 
 - no third-party or antivirus scan of a release archive yet;
 - no fuzzing of the UDP parsers or of the panel's JSON bodies;
-- no test against a physical BH1750 or ESP32: the bridge, the parser and the
-  Equalize fallback are covered by unit tests, the sketch is not;
+- no test against a physical sensor or ESP32: the bridge, the parser and the
+  Auto Lux fallback are covered by unit tests, the sketch is not;
 - no test on Windows, where the runtime directory, the Lua install path and
   the file picker still assume Unix — see the roadmap in the
   [README](README.md#-roadmap).
@@ -159,7 +166,7 @@ What has **not** been done:
   account.
 - **The lux bridge is optional and unauthenticated by default.** It listens on
   `0.0.0.0:8766` only while you run it, and any LAN host that reaches the port
-  can post a reading. That changes only Equalize's brightness. Set
+  can post a reading. That changes only Auto Lux's brightness. Set
   `WIZ_LUX_TOKEN` to require the header; the token itself is sent in clear
   text, so keep the bridge on a trusted network.
 

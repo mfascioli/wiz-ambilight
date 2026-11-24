@@ -1107,6 +1107,35 @@ input[type="range"]::-moz-range-thumb {
   padding: 0 1px;
   font-size: 7px;
 }
+.eq-band-tags {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.eq-band-shape {
+  color: #8a857a;
+  font-family: var(--font-mono);
+  font-size: 6px;
+  letter-spacing: .04em;
+}
+.eq-band-solo {
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: transparent;
+  color: #8a857a;
+  font-family: var(--font-mono);
+  font-size: 7px;
+  line-height: 1;
+  cursor: pointer;
+}
+.eq-band-solo.active {
+  border-color: var(--amber);
+  background: rgba(252, 190, 17, .18);
+  color: var(--amber);
+}
 .eq-detail {
   display: flex;
   align-items: center;
@@ -1116,6 +1145,15 @@ input[type="range"]::-moz-range-thumb {
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: 8px;
+}
+.eq-slope-pair,
+.eq-q-pair {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.eq-detail .eq-solo {
+  margin-left: 2px;
 }
 .eq-detail label {
   display: flex;

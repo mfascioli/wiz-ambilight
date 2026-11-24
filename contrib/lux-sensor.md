@@ -5,7 +5,7 @@ it from the video, on top of any reaction. The path is deliberately small and
 file-based:
 
 ```
-BH1750 --I2C--> ESP32 --Wi-Fi POST--> lux-bridge.py --atomic write--> lux.json
+sensor --I2C--> ESP32 --Wi-Fi POST--> lux-bridge.py --atomic write--> lux.json
                                                                           |
                                                      mpv_ambilight.py reads it
 ```
@@ -13,56 +13,85 @@ BH1750 --I2C--> ESP32 --Wi-Fi POST--> lux-bridge.py --atomic write--> lux.json
 The sync never opens a socket for this and never imports an HTTP client. It
 only reads `$XDG_RUNTIME_DIR/wiz-ambilight/lux.json` while Auto Lux is checked,
 and drops the correction when the file is missing, malformed or older than 5 s
-(Equalize then falls back to the video estimate). That means the sensor is
-optional at every step: unplug it, stop the bridge, or kill the ESP32 mid-film
-and the look degrades to the current behaviour.
+(Equalize then falls back to the video estimate; every other reaction keeps its
+look). That means the sensor is optional at every step: unplug it, stop the
+bridge, or kill the ESP32 mid-film and the look degrades to the current
+behaviour.
+
+## Supported sensors
+
+The ESP32 sketch talks to the sensor over raw I2C, so it needs no Arduino
+sensor library. Pick the model you can buy locally and set `SENSOR_MODEL` in
+the sketch to the matching constant.
+
+| Sensor | I2C address | Range | Resolution / notes | `SENSOR_MODEL` |
+| --- | --- | --- | --- | --- |
+| BH1750 (GY-302) | `0x23` (ADDR low) or `0x5C` (ADDR high) | 1–65,535 lx | 1 lx; the default and the cheapest | `SENSOR_BH1750` |
+| VEML7700 | `0x10` | ~0–15,100 lx linear | 0.23 lx at gain 1/4, 100 ms; Vishay correction above 1,000 lx | `SENSOR_VEML7700` |
+| MAX44009 (GY-49) | `0x4A` (ADDR low) or `0x4B` (ADDR high) | 0.045–188,000 lx | 0.045 lx; auto range | `SENSOR_MAX44009` |
+| OPT3001 | `0x44` (ADDR low), `0x45`/`0x46`/`0x47` | 0.01–83,865 lx | 0.01 lx; auto range | `SENSOR_OPT3001` |
+| TSL2591 | `0x29` | ~0–10,700 lx | ~0.16 lx at gain 25x, 100 ms; 88,000 lx at gain 1x | `SENSOR_TSL2591` |
+
+The BH1750 is the default because it is the cheapest widely sold module, reads
+1–65,535 lx at 1 lx resolution, and needs no library: the sketch talks to its
+two registers directly. The other four are supported by the same sketch, each
+with its own raw-I2C driver, so you do not need a sensor library for any of
+them.
+
+The bridge accepts `0`–`65,535` lx. Brighter sensors are clamped to that
+ceiling by the sketch; Auto Lux targets at most `5,000` lx, so this is not a
+practical limit.
 
 ## Bill of materials
 
 | Part | Notes | Price |
 | --- | --- | --- |
 | ESP32 DevKit (any classic ESP32) | Wi-Fi, 3V3, two free pins | US$ 4–8 |
-| BH1750 module (GY-302) | I2C, 3.3 V, address `0x23` or `0x5C` | US$ 1–3 |
+| One sensor from the table above | I2C, 3.3 V | US$ 1–7 |
 | 4 jumper wires | no soldering if the module has headers | — |
-
-A BH1750 is the default because it is the cheapest widely sold module, reads
-1–65535 lx at 1 lx resolution, and needs no library: the sketch talks to its
-two registers directly. VEML7700, MAX44009, OPT3001 and TSL2591 work too, but
-each needs its own converter and none is cheaper or easier to find.
 
 ## 1. Flash the ESP32
 
-Open [`esp32-bh1750/esp32-bh1750.ino`](esp32-bh1750/esp32-bh1750.ino) in the
-Arduino IDE (Arduino-ESP32 core 2.x or 3.x, no libraries) and set:
+Open [`esp32-lux/esp32-lux.ino`](esp32-lux/esp32-lux.ino) in the Arduino IDE
+(Arduino-ESP32 core 2.x or 3.x, no libraries) and set:
 
 ```cpp
+#define SENSOR_MODEL SENSOR_BH1750  // or SENSOR_VEML7700, SENSOR_MAX44009,
+                                    // SENSOR_OPT3001, SENSOR_TSL2591
 WIFI_SSID, WIFI_PASS      // your 2.4 GHz network
 BRIDGE_HOST               // fixed IP of the machine running the bridge
 BRIDGE_PORT               // 8766 unless you change it
 BRIDGE_TOKEN              // same value as WIZ_LUX_TOKEN, or empty
 ```
 
-Wiring, with the module's `ADDR` pin tied to GND (`0x23`):
+Wiring is the same for every model:
 
-| BH1750 | ESP32 |
+| Sensor | ESP32 |
 | --- | --- |
 | VCC | 3V3 |
 | GND | GND |
 | SDA | GPIO21 |
 | SCL | GPIO22 |
-| ADDR | GND |
 
-The serial monitor at 115200 baud prints `lux: 42.5 ok` once per second.
-Note the IP the router gives the ESP32 and reserve it, so a DHCP change does
-not silently stop the readings.
+Set the module's address pin as noted in the table above (`ADDR`/`A0` to GND
+for the first address, to 3V3 for the second; the OPT3001 also offers `0x46`
+and `0x47` by tying `ADDR` to SDA or SCL). All modules are 3.3 V; do not power
+a 5 V-only breakout from 3V3 without checking its regulator, and do not put 5 V
+on the ESP32 I2C pins.
+
+The serial monitor at 115200 baud prints `sensor: ready at 0x…` once at boot
+and `lux: 42.5 ok` once per second. Note the IP the router gives the ESP32 and
+reserve it, so a DHCP change does not silently stop the readings.
 
 ## 2. Run the bridge
 
-On the machine that runs the sync — the same host is simplest, but any host on
-the LAN works if both sides share `$XDG_RUNTIME_DIR`, which in practice means
-the same machine:
+Run the bridge on the machine that runs the sync. It writes `lux.json` into
+`$XDG_RUNTIME_DIR/wiz-ambilight/`, and the sync reads the file from its own
+runtime directory, so both must be the same filesystem; a shared runtime
+directory over the network would also work but is not the supported setup.
 
 ```bash
+mkdir -p ~/.local/bin
 install -m 755 contrib/lux-bridge.py ~/.local/bin/lux-bridge
 mkdir -p ~/.config/wiz-ambilight
 cp contrib/wiz-ambilight-lux.env.example ~/.config/wiz-ambilight/lux.env
@@ -121,6 +150,9 @@ not at a bulb, and do not mount it right beside one.
   protocol itself. Keep the bridge on a trusted network.
 - The reading is not a calibrated measurement. It is one sensor's view of one
   spot; adjust `--lux-target` by eye rather than trusting the number.
-- Tested against the bridge and the parser, not against a physical BH1750 in
-  this repository. If your module always reads `0` or `65535`, check `ADDR`,
-  the wiring, and that the sketch found the sensor at `0x23`.
+- Tested against the bridge and the parser, not against a physical sensor in
+  this repository. The sketch has a raw-I2C driver for each model, but none has
+  been run on hardware here; if a module always reads `0` or `65535`, check the
+  address pin, the wiring and the serial monitor.
+- The bridge accepts `0`–`65,535` lx; brighter sensors are clamped by the
+  sketch. Auto Lux targets at most `5,000` lx.

@@ -126,5 +126,62 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.post(b'{"lux": 7}', token=None), 204)
 
 
+class SketchContractTests(unittest.TestCase):
+    """The ESP32 sketch is not run here; keep its sensor table honest."""
+
+    def setUp(self):
+        self.sketch = (
+            ROOT / "contrib" / "esp32-lux" / "esp32-lux.ino"
+        ).read_text(encoding="utf-8")
+        self.guide = (ROOT / "contrib" / "lux-sensor.md").read_text(encoding="utf-8")
+
+    def test_one_sketch_covers_every_documented_sensor(self):
+        for model in (
+            "BH1750",
+            "VEML7700",
+            "MAX44009",
+            "OPT3001",
+            "TSL2591",
+        ):
+            with self.subTest(model=model):
+                self.assertIn(f"#define SENSOR_{model} ", self.sketch)
+                self.assertIn(f"SENSOR_{model}", self.guide)
+                self.assertIn(f"`SENSOR_{model}`", self.guide)
+
+    def test_i2c_addresses_match_the_guide(self):
+        for address in ("0x23", "0x10", "0x4A", "0x44", "0x29"):
+            with self.subTest(address=address):
+                self.assertIn(address, self.sketch)
+                self.assertIn(f"`{address}`", self.guide)
+
+    def test_veml7700_registers_are_little_endian(self):
+        # VEML7700 16-bit registers send the low byte first; the other models
+        # are big-endian. This is the one ordering that is easy to get wrong.
+        self.assertIn(
+            "Wire.write(uint8_t(VEML7700_CONF & 0xFF));\n"
+            "  Wire.write(uint8_t(VEML7700_CONF >> 8));",
+            self.sketch,
+        )
+        self.assertIn(
+            "uint8_t low = Wire.read();\n"
+            "  uint8_t high = Wire.read();\n"
+            "  uint16_t raw = (uint16_t(high) << 8) | low;\n"
+            "  float value = raw * 0.2304f;",
+            self.sketch,
+        )
+
+    def test_posts_the_bridge_contract(self):
+        self.assertIn('String("http://") + BRIDGE_HOST', self.sketch)
+        self.assertIn('"/lux"', self.sketch)
+        self.assertIn('"X-Lux-Token"', self.sketch)
+        self.assertIn('"{\\"lux\\":%.1f}"', self.sketch)
+        self.assertIn("65535.0f", self.sketch)
+        self.assertNotIn("esp32-bh1750", self.sketch)
+
+    def test_guide_links_the_new_sketch(self):
+        self.assertIn("esp32-lux/esp32-lux.ino", self.guide)
+        self.assertNotIn("esp32-bh1750", self.guide)
+
+
 if __name__ == "__main__":
     unittest.main()

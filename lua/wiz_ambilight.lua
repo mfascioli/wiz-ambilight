@@ -67,6 +67,7 @@ local S = {
     sampling = "manual",
     react = "color",
     bands = nil,
+    eq = nil,
     audio_warned = false,
     fps_now = 10,
     next_due = 0,
@@ -137,14 +138,15 @@ end
 local AUDIO_FPS = 30.0
 
 -- The analyser is a chain of labelled libavfilter filters. astats injects the
--- RMS/peak metadata, acrossover splits the mix into the configured EQ bands
--- for the meter, and anull keeps the chain valid while the labels are removed
--- one by one. The band graph recombines the slices, so the mix keeps its
--- magnitude; like any crossover it adds a small all-pass phase shift.
+-- RMS/peak metadata, the band graph filters a copy of the mix into the
+-- configured EQ bands for the meter, and anull keeps the chain valid while the
+-- labels are removed one by one. The shaped graph merges the untouched mix back
+-- and selects it, so the audio is transparent; the acrossover fallback
+-- recombines its slices and adds a small all-pass phase shift.
 local FILTER_STATS = "@wizstats:lavfi=[astats=metadata=1:reset=1]"
 local FILTER_TAIL = "@wiztail:lavfi=[anull]"
 -- Without an explicit band plan, keep the classic five bands. The panel and
--- CLI always send their own split points.
+-- CLI always send their own band plan.
 local DEFAULT_SPLITS = { 60, 250, 800, 2500 }
 
 local function sanitize_bands(value)
@@ -184,7 +186,138 @@ local function band_splits()
     return sanitize_bands(S.bands) or DEFAULT_SPLITS
 end
 
-local function band_filter()
+-- The panel and CLI send the full band plan. Each band carries the shape that
+-- isolates it from the rest of the mix; the Lua side only needs the fields
+-- that change the filter graph, because gain, lamp and solo are applied by the
+-- Python layer. Older configs without `eq` keep the crossover fallback.
+local EQ_TYPES = {
+    bell = true,
+    bandpass = true,
+    lowpass = true,
+    highpass = true,
+    notch = true,
+    flat = true,
+}
+
+local function sanitize_eq(value)
+    if type(value) ~= "table" then
+        return nil
+    end
+    local out = {}
+    for _, item in ipairs(value) do
+        if type(item) == "table" then
+            local freq = tonumber(item.freq)
+            if freq and freq > 10 and freq < 22050 then
+                local kind = tostring(item.type or "bell"):lower():gsub("[%s%-]", "")
+                if not EQ_TYPES[kind] then
+                    kind = "bell"
+                end
+                local q = tonumber(item.q) or 1.4
+                local slope = tonumber(item.slope) or 24
+                if slope >= 36 then
+                    slope = 48
+                elseif slope >= 18 then
+                    slope = 24
+                else
+                    slope = 12
+                end
+                out[#out + 1] = {
+                    freq = freq,
+                    type = kind,
+                    q = math.max(0.1, math.min(18.0, q)),
+                    slope = slope,
+                }
+            end
+        end
+    end
+    if #out < 1 then
+        return nil
+    end
+    table.sort(out, function(first, second)
+        return first.freq < second.freq
+    end)
+    return out
+end
+
+local function eq_equal(first, second)
+    if first == nil or second == nil then
+        return first == second
+    end
+    if #first ~= #second then
+        return false
+    end
+    for index = 1, #first do
+        local a, b = first[index], second[index]
+        if a.type ~= b.type
+            or math.abs(a.freq - b.freq) > 0.01
+            or math.abs(a.q - b.q) > 0.01
+            or a.slope ~= b.slope
+        then
+            return false
+        end
+    end
+    return true
+end
+
+local function cut_chain(kind, freq, slope)
+    local stages = slope >= 48 and 4 or (slope >= 24 and 2 or 1)
+    local parts = {}
+    for _ = 1, stages do
+        parts[#parts + 1] = kind .. "=f=" .. freq .. ":poles=2"
+    end
+    return table.concat(parts, ",")
+end
+
+local function band_chain(band)
+    local freq = string.format("%.2f", band.freq)
+    local q = string.format("%.2f", band.q)
+    if band.type == "lowpass" then
+        return cut_chain("lowpass", freq, band.slope)
+    elseif band.type == "highpass" then
+        return cut_chain("highpass", freq, band.slope)
+    elseif band.type == "notch" then
+        return "bandreject=f=" .. freq .. ":width_type=q:w=" .. q
+    elseif band.type == "flat" then
+        return "anull"
+    elseif band.type == "bandpass" then
+        -- A steeper band than the bell: Q sets the edges, slope sets how hard
+        -- the mix falls away outside them.
+        local edge = 2.0 ^ (0.5 / math.max(0.4, band.q))
+        local low = string.format("%.2f", band.freq / edge)
+        local high = string.format("%.2f", band.freq * edge)
+        return cut_chain("highpass", low, band.slope)
+            .. "," .. cut_chain("lowpass", high, band.slope)
+    end
+    return "bandpass=f=" .. freq .. ":width_type=q:w=" .. q
+end
+
+local function eq_filter(eq)
+    local count = #eq
+    -- The analysis filters run on a copy of the mix. The original is merged
+    -- back as the last two channels and the pan selects only those, so the
+    -- audible signal is untouched while `astats` sees every shaped band.
+    local parts = { "aformat=channel_layouts=stereo,asplit=2[main][mon]" }
+    local labels = {}
+    for index = 0, count - 1 do
+        labels[#labels + 1] = "[m" .. index .. "]"
+    end
+    parts[#parts + 1] = "[mon]asplit=" .. count .. table.concat(labels)
+    local outs = {}
+    for index = 0, count - 1 do
+        outs[#outs + 1] = "[f" .. index .. "]"
+        parts[#parts + 1] = "[m" .. index .. "]" .. band_chain(eq[index + 1])
+            .. "[f" .. index .. "]"
+    end
+    parts[#parts + 1] = table.concat(outs)
+        .. "amerge=inputs=" .. count .. "[filtered]"
+    parts[#parts + 1] = "[filtered][main]amerge=inputs=2[all]"
+    parts[#parts + 1] = "[all]astats=metadata=1:reset=1[stats]"
+    parts[#parts + 1] = "[stats]pan=stereo|c0=c" .. (count * 2)
+        .. "|c1=c" .. (count * 2 + 1)
+    return "@wizbands:lavfi=[" .. table.concat(parts, ";") .. "]"
+end
+
+local function crossover_filter()
     local splits = band_splits()
     local count = #splits + 1
     local frequencies = {}
@@ -206,6 +339,13 @@ local function band_filter()
         .. "astats=metadata=1:reset=1,"
         .. "pan=stereo|c0=" .. table.concat(left, "+")
         .. "|c1=" .. table.concat(right, "+") .. "]"
+end
+
+local function band_filter()
+    if S.eq and #S.eq > 0 then
+        return eq_filter(S.eq)
+    end
+    return crossover_filter()
 end
 
 local function audio_stats_off()
@@ -290,7 +430,7 @@ local function audio_json()
     -- meter uses both so attacks are not averaged away, and the beat detector
     -- can see a transient in its band.
     local band_meta = mp.get_property_native("af-metadata/wizbands")
-    local band_count = #band_splits() + 1
+    local band_count = S.eq and #S.eq or (#band_splits() + 1)
     local band_rms = {}
     local band_peaks = {}
     if type(band_meta) == "table" then
@@ -314,9 +454,10 @@ local function audio_json()
     end
 
     -- `af-metadata` only exposes the last astats instance on some mpv builds,
-    -- so wizstats can be empty even while the bands are live. Rebuild the
-    -- overall level from the band powers in that case: the crossover slices
-    -- are the same signal, so their powers add back up.
+    -- so wizstats can be empty even while the bands are live. The shaped graph
+    -- merges the untouched mix back as its last two channels, so read those for
+    -- an exact overall level. The crossover fallback has no such pair, and its
+    -- slices are the same signal, so their powers add back up instead.
     local function sum_db(values)
         local power, found = 0.0, false
         for _, db in ipairs(values) do
@@ -330,8 +471,31 @@ local function audio_json()
         end
         return 10.0 * math.log(power, 10)
     end
-    local overall_rms = rms or left or sum_db(band_rms)
-    local overall_peak = peak or sum_db(band_peaks)
+    local function main_stat(suffix)
+        if not S.eq or type(band_meta) ~= "table" then
+            return nil
+        end
+        local main_left = tonumber(
+            band_meta["lavfi.astats." .. (band_count * 2 + 1) .. "." .. suffix]
+        )
+        local main_right = tonumber(
+            band_meta["lavfi.astats." .. (band_count * 2 + 2) .. "." .. suffix]
+        )
+        if main_left == nil then
+            return main_right
+        end
+        if main_right == nil then
+            return main_left
+        end
+        return math.max(main_left, main_right)
+    end
+    local overall_rms = rms
+        or left
+        or main_stat("RMS_level")
+        or sum_db(band_rms)
+    local overall_peak = peak
+        or main_stat("Peak_level")
+        or sum_db(band_peaks)
     if overall_rms == nil and overall_peak == nil then
         return nil
     end
@@ -785,6 +949,11 @@ local function start(cfg, from_control)
             S.bands = next_bands
             audio_stats_off()
         end
+        local next_eq = sanitize_eq(cfg.eq)
+        if next_eq ~= nil and not eq_equal(S.eq, next_eq) then
+            S.eq = next_eq
+            audio_stats_off()
+        end
         sync_audio_filter()
         return
     end
@@ -799,6 +968,7 @@ local function start(cfg, from_control)
         S.react = tostring(cfg.react)
     end
     S.bands = sanitize_bands(cfg.bands)
+    S.eq = sanitize_eq(cfg.eq)
     apply_sampling(cfg, true)
     S.from_control = from_control or false
     S.active = true

@@ -350,6 +350,9 @@ class StructureTests(unittest.TestCase):
             'id="eqQ"',
             'id="eqGain"',
             'id="eqLamp"',
+            'id="eqType"',
+            'id="eqSlope"',
+            'id="eqSolo"',
         ):
             with self.subTest(control=control):
                 self.assertIn(control, HTML)
@@ -365,7 +368,12 @@ class StructureTests(unittest.TestCase):
             "buildEqFaders",
             "syncEqFields",
             "eqCurveGain",
+            "eqBandGain",
             "buildEqAuto",
+            "buildEqType",
+            "buildEqSlope",
+            "eqTypeShort",
+            "eqUsesSlope",
             "eqFreqToLog",
             "eqLogToFreq",
         ):
@@ -379,6 +387,8 @@ class StructureTests(unittest.TestCase):
         self.assertIn(".eq-strip", CSS)
         self.assertIn(".eq-faders", CSS)
         self.assertIn(".eq-detail", CSS)
+        self.assertIn(".eq-band-solo", CSS)
+        self.assertIn(".eq-band-shape", CSS)
         self.assertIn("#eqCanvas", CSS)
         for constant in (
             "MAX_BANDS",
@@ -387,6 +397,9 @@ class StructureTests(unittest.TestCase):
             "BAND_COLOR_PALETTE",
             "AUTO_MODES",
             "ACTIVE_MARGIN_DB",
+            "EQ_BAND_TYPES",
+            "EQ_SLOPES",
+            "EQ_DEFAULT_SLOPE",
         ):
             with self.subTest(constant=constant):
                 self.assertIn(constant, CORE)
@@ -406,6 +419,16 @@ class StructureTests(unittest.TestCase):
         self.assertIn('"vibrance"', WEBUI)
         self.assertIn("--vibrance", CORE)
         self.assertEqual(HTML.count('class="look-col"'), 3)
+
+    def test_white_leds_switch_sits_with_the_send_controls(self):
+        js = (WEB / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="whiteLeds"', HTML)
+        self.assertLess(HTML.index('id="sendStage"'), HTML.index('id="whiteLeds"'))
+        self.assertLess(HTML.index('id="whiteLeds"'), HTML.index('id="dryRun"'))
+        self.assertIn("white_leds", js)
+        self.assertIn('"white_leds"', WEBUI)
+        self.assertIn("--white-leds", CORE)
+        self.assertIn("white_led_params", CORE)
 
     def test_band_color_swatches_keep_the_hairline_language(self):
         self.assertIn(".band-colors", CSS)

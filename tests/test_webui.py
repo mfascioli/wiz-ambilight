@@ -65,6 +65,11 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(webui.normalize_config({"vibrance": -1}, m)["vibrance"], 0.0)
         self.assertEqual(webui.normalize_config({"vibrance": "x"}, m)["vibrance"], 1.0)
 
+    def test_white_leds_is_a_boolean(self):
+        self.assertFalse(webui.normalize_config({}, m)["white_leds"])
+        self.assertTrue(webui.normalize_config({"white_leds": 1}, m)["white_leds"])
+        self.assertFalse(webui.normalize_config({"white_leds": 0}, m)["white_leds"])
+
     def test_audio_dynamics_defaults_and_clamps(self):
         config = webui.normalize_config({}, m)
         self.assertEqual(config["react_threshold"], m.AUDIO_THRESHOLD_DB)
@@ -349,6 +354,21 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--zones") + 1], "left,right")
         self.assertEqual(argv[argv.index("--sampling") + 1], "auto")
 
+    def test_white_leds_flag(self):
+        config = make_config(
+            white_leds=True,
+            lights={"10.0.0.1": {"enabled": True}},
+        )
+        argv, _ips, _zones = webui.build_command(config, m, demo=True)
+        self.assertIn("--white-leds", argv)
+
+        plain, _ips, _zones = webui.build_command(
+            make_config(lights={"10.0.0.1": {"enabled": True}}),
+            m,
+            demo=True,
+        )
+        self.assertNotIn("--white-leds", plain)
+
     def test_manual_sampling_passes_every_knob(self):
         config = make_config(
             sampling="manual",
@@ -411,8 +431,16 @@ class CommandTests(unittest.TestCase):
         passed_eq = json.loads(argv[argv.index("--react-eq") + 1])
         self.assertEqual(len(passed_eq), 8)
         by_freq = {band["freq"]: band for band in passed_eq}
-        self.assertEqual(by_freq[80.0], eq[0])
-        self.assertEqual(by_freq[2400.0], eq[1])
+        low, high = by_freq[80.0], by_freq[2400.0]
+        for band, source in ((low, eq[0]), (high, eq[1])):
+            self.assertEqual(band["freq"], source["freq"])
+            self.assertEqual(band["gain"], source["gain"])
+            self.assertEqual(band["q"], source["q"])
+            self.assertEqual(band["lamp"], source["lamp"])
+            # Shapes default to a bell at 24 dB/oct when the config omits them.
+            self.assertEqual(band["type"], "bell")
+            self.assertEqual(band["slope"], m.EQ_DEFAULT_SLOPE)
+            self.assertFalse(band["solo"])
         self.assertEqual(argv[argv.index("--react-auto") + 1], "hybrid")
         self.assertIn("--react-active-bands", argv)
         self.assertEqual(
@@ -426,6 +454,30 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--react-attack") + 1], "2")
         self.assertEqual(argv[argv.index("--react-release") + 1], "60")
         self.assertEqual(argv[argv.index("--react-punch") + 1], "3.5")
+
+    def test_eq_shapes_and_solo_reach_the_sync(self):
+        config = make_config(
+            react="vu",
+            react_eq_bands=4,
+            react_eq=[
+                {"freq": 60, "type": "lowpass", "slope": 48, "gain": 0, "q": 1.4},
+                {"freq": 300, "type": "bandpass", "slope": 12, "gain": 0, "q": 2.4},
+                {"freq": 2000, "type": "notch", "gain": 0, "q": 4, "solo": True},
+                {"freq": 9000, "type": "highpass", "slope": 24, "gain": 0, "q": 1.4},
+            ],
+        )
+        config["lights"] = {"10.0.0.1": {"enabled": True}}
+        argv, _ips, _zones = webui.build_command(config, m)
+        passed = json.loads(argv[argv.index("--react-eq") + 1])
+        self.assertEqual(
+            [(band["type"], band["slope"], band["solo"]) for band in passed],
+            [
+                ("lowpass", 48, False),
+                ("bandpass", 12, False),
+                ("notch", 24, True),
+                ("highpass", 24, False),
+            ],
+        )
 
     def test_auto_lux_is_opt_in(self):
         config = make_config()
@@ -586,6 +638,16 @@ class DemoPanelTests(unittest.TestCase):
         )
         self.assertEqual(snapshot["eq_limits"]["min"], m.MIN_BANDS)
         self.assertEqual(snapshot["eq_limits"]["max"], m.MAX_BANDS)
+        self.assertEqual(
+            [kind["id"] for kind in snapshot["eq_limits"]["types"]],
+            list(m.EQ_BAND_TYPES),
+        )
+        self.assertEqual(
+            snapshot["eq_limits"]["slopes"], list(m.EQ_SLOPES)
+        )
+        self.assertEqual(
+            snapshot["eq_limits"]["default_slope"], m.EQ_DEFAULT_SLOPE
+        )
         self.assertEqual(
             [mode["id"] for mode in snapshot["auto_modes"]], list(m.AUTO_MODES)
         )
@@ -928,6 +990,77 @@ class DemoPanelTests(unittest.TestCase):
         panel.control("all", {"brightness": 50})
         with self.assertRaises(ValueError):
             panel.save_scene("   ")
+
+    def test_demo_reports_metered_watts(self):
+        panel = webui.Panel(m, demo=True)
+        rows = {row["ip"]: row for row in panel.light_rows()}
+        self.assertEqual(rows["192.0.2.11"]["power"], 4.2)
+        self.assertEqual(rows["192.0.2.12"]["power"], 3.8)
+        # The white fixture has no metering, so the panel shows no watts.
+        self.assertIsNone(rows["192.0.2.13"]["power"])
+
+
+class PowerTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.vars = {}
+        for key, value in {
+            "WIZ_AMBILIGHT_GUI_CONFIG": str(Path(self.tmp.name) / "lights.json"),
+            "WIZ_AMBILIGHT_SCENES_CONFIG": str(Path(self.tmp.name) / "scenes.json"),
+            "XDG_RUNTIME_DIR": self.tmp.name,
+        }.items():
+            self.vars[key] = os.environ.get(key)
+            os.environ[key] = value
+
+    def tearDown(self):
+        for key, value in self.vars.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        self.tmp.cleanup()
+
+    def test_milliwatts_and_pilot_pc_become_watts(self):
+        self.assertEqual(webui._milliwatts_to_watts(4200), 4.2)
+        self.assertIsNone(webui._milliwatts_to_watts(-1))
+        self.assertIsNone(webui._milliwatts_to_watts(True))
+        self.assertEqual(webui._pilot_watts({"pc": 3800}), 3.8)
+        self.assertIsNone(webui._pilot_watts({"r": 1}))
+
+    def test_getpower_reading_lands_on_the_light_row(self):
+        panel = webui.Panel(m)
+        panel.config["lights"]["10.0.0.9"] = {"enabled": True}
+        panel.live = {"10.0.0.9": {"state": True}}
+        with mock.patch.object(
+            m,
+            "query_lights",
+            return_value={"10.0.0.9": {"power": 4200}},
+        ):
+            panel._poll_power(["10.0.0.9"])
+        rows = {row["ip"]: row for row in panel.light_rows()}
+        self.assertEqual(rows["10.0.0.9"]["power"], 4.2)
+
+    def test_a_silent_device_stops_being_asked(self):
+        panel = webui.Panel(m)
+        panel.live = {"10.0.0.9": {"state": True}}
+        with mock.patch.object(m, "query_lights", return_value={}):
+            for _ in range(webui.POWER_ATTEMPTS):
+                panel._poll_power(["10.0.0.9"])
+        self.assertIn("10.0.0.9", panel._no_power)
+        with mock.patch.object(m, "query_lights") as query:
+            panel._power_at = 0.0
+            panel.maybe_power()
+        query.assert_not_called()
+
+    def test_deep_scan_gives_power_another_chance(self):
+        panel = webui.Panel(m)
+        panel._no_power.add("10.0.0.9")
+        panel._power_misses["10.0.0.9"] = 3
+        with mock.patch.object(m, "discover_lights", return_value={}):
+            with mock.patch.object(m, "query_lights", return_value={}):
+                panel.scan(deep=True)
+        self.assertNotIn("10.0.0.9", panel._no_power)
+        self.assertEqual(panel._power_misses, {})
 
 
 class SceneNormalizeTests(unittest.TestCase):

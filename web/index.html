@@ -226,6 +226,10 @@
               </header>
               <dl class="kv" id="sendStage"></dl>
               <label class="check look-check">
+                <input type="checkbox" id="whiteLeds">
+                <span title="Sends the grey part of each color on the bulb's white LEDs">White LEDs</span>
+              </label>
+              <label class="check look-check">
                 <input type="checkbox" id="dryRun">
                 <span title="Applies to the sync process; Direct control always sends">Dry run sync (log colors, no UDP)</span>
               </label>
@@ -306,17 +310,29 @@
             <div class="eq-faders" id="eqFaders"></div>
             <div class="eq-detail" id="eqDetail">
               <span class="eq-detail-title" id="eqDetailTitle">Band 1</span>
+              <label for="eqType">Shape</label>
+              <select id="eqType"></select>
+              <span class="eq-slope-pair" id="eqSlopeField">
+                <label for="eqSlope">Slope <output id="eqSlopeOut">24</output></label>
+                <select id="eqSlope"></select>
+              </span>
+              <label class="check eq-solo" for="eqSolo">
+                <input type="checkbox" id="eqSolo">
+                <span title="Only the soloed bands drive the bulbs">Solo</span>
+              </label>
               <label for="eqFreq">Frequency <output id="eqFreqOut">40 Hz</output></label>
               <input id="eqFreq" type="range" min="0" max="1000" step="1" value="500">
-              <label for="eqQ">Q <output id="eqQOut">1.4</output></label>
-              <input id="eqQ" type="range" min="0.4" max="8" step="0.1" value="1.4">
+              <span class="eq-q-pair" id="eqQField">
+                <label for="eqQ">Q <output id="eqQOut">1.4</output></label>
+                <input id="eqQ" type="range" min="0.4" max="8" step="0.1" value="1.4">
+              </span>
               <label for="eqGain">Gain <output id="eqGainOut">0.0 dB</output></label>
               <input id="eqGain" type="range" min="-18" max="18" step="0.5" value="0">
               <label for="eqLamp">Lamp</label>
               <select id="eqLamp"></select>
             </div>
             <p class="hint tight scope-hint">
-              Drag a fader or node. Frequency and Q shape the detection band; gain boosts or cuts how hard that band drives its lamp. Unassigned bulbs follow the overall mix.
+              Shape isolates the band: a bell, a band pass, a low/high pass, a notch or the full mix. Q sets the width of a bell, band pass or notch; slope sets how hard the cuts fall away. Gain boosts or cuts how hard that band drives its lamp, and Solo makes the selected band drive every bulb. Unassigned bulbs follow the overall mix.
             </p>
           </div>
           <div class="control-grid sampling-manual hidden" id="samplingManual">
@@ -382,7 +398,7 @@
                   <input type="checkbox" id="powerToggle" aria-label="Power">
                   <span></span>
                 </label>
-                <span class="power-state" id="powerState">Off</span>
+                <span class="power-state" id="powerState" title="Reported by the bulb; most models do not meter power.">Off</span>
               </div>
             </div>
             <div class="field">

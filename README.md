@@ -48,17 +48,22 @@ involved.
   mpv you started normally.
 - **The bulbs are yours.** The panel is also a small WiZ remote: power,
   brightness, white temperature, RGB/hex colors, WiZ scenes, rooms and saved
-  colors, without starting Ambilight.
+  colors, without starting Ambilight. **Direct control** shows the target's
+  metered draw when the firmware reports it, and an opt-in **White LEDs**
+  switch sends the grey part of each color on the dedicated white LEDs.
 - **Multi-bulb layouts.** Left/right, top/bottom, thirds, whole-frame, or
   explicitly chosen zones per bulb.
 - **Reactive modes.** Beyond plain color: equalize room brightness, flash on
   cuts, follow motion, split into a duotone, pulse on the beat or meter the
   audio bands. See [Reactions](#-reactions).
-- **Optional light sensor.** A BH1750 on an ESP32 adds measured lux as
-  **Auto Lux**, a brightness layer over any reaction. See
-  [Reactions](#-reactions).
+- **Optional light sensor.** A BH1750, VEML7700, MAX44009, OPT3001 or TSL2591
+  on an ESP32 adds measured lux as **Auto Lux**, a brightness layer over any
+  reaction. See [Reactions](#-reactions).
 - **Audio without a microphone.** Beat and VU read mpv's own audio analyser.
   See [Audio Processing](#-audio-processing).
+- **Graphic EQ with shapes.** 2–16 bands, each a bell, band pass, low/high
+  pass, notch or flat pass, with slope, solo and a lamp per band. See
+  [Graphic EQ](#-graphic-eq).
 - **Panel telemetry.** **Activity** charts CPU, RAM and WiZ UDP traffic for mpv
   and the panel while a session runs. See [Performance](#-performance).
 
@@ -126,8 +131,8 @@ and keeps the first screen focused on the three things a session needs:
 | --- | --- |
 | **Lights** | Filter by name, IP or model; **All** / **None**; **Scan network**; name bulbs and see IP, online state, model and MAC; assign a zone per bulb or pick a layout; preview the zone on each row; include or exclude a bulb from the sync; **Identify** to flash a bulb; two-step **Forget** to remove a stale row from `lights.json` without touching the bulb; create **rooms** and pick their members. The **Install script** banner appears when attach mode needs the Lua copy. |
 | **Session** | Choose **Attach to mpv** or **Launch a video**; start, restart or stop the sync; choose a file with **Browse**; follow the session state. |
-| **Look** | **Reaction** (Video / Audio groups), reaction strength, profile or dynamics, target luma, audio color mode and its swatches or two-color row, **Capture & fade preset**, **Brightness**, **Vibrance**, **Sampling**, **Layout**, manual read fps / sample columns / block average / frame source, and a dry-run switch that applies to the sync. Audio modes add the dynamics and graphic-EQ strips. |
-| **Direct control** | Target all bulbs, a room or one bulb; power, brightness, white temperature, color picker / **hex**, WiZ scenes and scene speed; save a color, reapply a saved color, and save or reapply a **scene** (a saved look). It starts collapsed and is a remote, not the normal path. |
+| **Look** | **Reaction** (Video / Audio groups), reaction strength, profile or dynamics, target luma, audio color mode and its swatches or two-color row, **Capture & fade preset**, **Brightness**, **Vibrance**, **Sampling**, **Layout**, manual read fps / sample columns / block average / frame source, a **White LEDs** switch and a dry-run switch that apply to the sync. Audio modes add the dynamics and graphic-EQ strips. |
+| **Direct control** | Target all bulbs, a room or one bulb; power with the target's metered draw when the firmware reports it, brightness, white temperature, color picker / **hex**, WiZ scenes and scene speed; save a color, reapply a saved color, and save or reapply a **scene** (a saved look). It starts collapsed and is a remote, not the normal path. |
 | **Activity** | Live CPU, RAM and WiZ UDP chart for mpv and the panel, plus the video and capture resolution, read fps, process count and a clearable log. It starts collapsed. |
 
 The header shows the status dot, the demo and version badges, and **Quit**,
@@ -164,7 +169,11 @@ are in [Environment](#-environment); the schemas are in
 **Launch a video** starts mpv from the panel and stops when mpv exits;
 **Attach to mpv** follows an mpv you started yourself. Direct control is
 separate: it sends a command to the selected bulb, room or all bulbs without
-starting a sync.
+starting a sync. When the firmware meters its own draw, Direct control adds it
+to the power state (`On · 4.2 W`); newer firmware reports it in `getPilot`,
+older metering models answer `getPower`, and bulbs that do neither simply show
+`On`. The total covers the selected target and notes how many bulbs answered
+when only some of them meter.
 
 #### 🔗 Attach to your own mpv
 
@@ -212,6 +221,13 @@ Raising capture does not raise the send rate; lowering send does not soften a
 cut. The fade loop runs between them, so a target captured at 12 fps still
 reaches the bulb smoothly at 18 Hz. Large color jumps (≥128 per channel) snap
 on the next frame, so scene cuts land immediately while camera moves fade.
+
+**White LEDs.** Greys mixed from red, green and blue can look slightly tinted.
+The **White LEDs** switch in **Look → Send** (or `--white-leds`) moves the grey
+part of each color — the smallest of the three channels — onto the bulb's `c`
+and `w` channels and subtracts it from RGB, following
+[`cB-Sigma/wiz`](https://github.com/cB-Sigma/wiz). Saturated colors are
+unchanged. It is opt-in because not every model exposes usable white channels.
 
 ### 🎨 Styles
 
@@ -335,11 +351,13 @@ can only lift a dark scene when the brightness ceiling leaves room, so set
 **Auto Lux.** A checkbox in **Look** turns the optional light sensor into a
 brightness layer for **every** reaction: color, equalize, cut, motion, duotone,
 beat and vu keep their own colors and pulses, while Auto Lux holds the room at
-`--lux-target` (default `50`). `contrib/lux-bridge.py` receives a BH1750 reading
-over Wi-Fi and writes `lux.json`; while the file is fresh (under 5 s) the layer
-works, and a missing or stale file leaves the chosen reaction untouched.
-Equalize keeps `--react-target` as its fallback when there is no reading. The
-panel shows the current reading and its age. Setup, wiring and the limits are in
+`--lux-target` (default `50`). `contrib/lux-bridge.py` receives a reading from
+an ESP32 over Wi-Fi and writes `lux.json`; the sketch supports a **BH1750**
+(default), **VEML7700**, **MAX44009**, **OPT3001** or **TSL2591**. While the
+file is fresh (under 5 s) the layer works, and a missing or stale file leaves
+the chosen reaction untouched. Equalize keeps `--react-target` as its fallback
+when there is no reading. The panel shows the current reading and its age.
+Setup, wiring and the limits are in
 [`contrib/lux-sensor.md`](contrib/lux-sensor.md).
 
 The panel exposes every reaction in **Look → Preset**, with the strength,
@@ -400,18 +418,27 @@ gentle meter.
 ### 🎛 Graphic EQ
 
 Audio modes feed from a graphic EQ with **2 to 16 bands** (default **8**). Each
-band carries four values: **frequency**, **Q**, **gain** and **lamp**. The
-panel's **EQ** strip under Dynamics draws the curve and one fader per band; drag
-a fader or a node on the curve, or use the detail row for the selected band.
+band carries **frequency**, **shape**, **Q**, **slope**, **gain**, **lamp** and
+**solo**. The panel's **EQ** strip under Dynamics draws the curve and one fader
+per band; drag a fader or a node on the curve, or use the detail row for the
+selected band.
 
 - **Frequency** is the band centre, 20 Hz–20 kHz.
-- **Q** sets the width. A high Q is narrow and surgical; a low Q is broad and
-  picks up more of its neighbours, which is useful when there are fewer bulbs
-  than bands.
+- **Shape** isolates the band in the analyser, Pro-Q style:
+  **Bell** is the classic two-pole band, **Band pass** keeps only a slice around
+  the centre, **Low pass** and **High pass** keep everything below or above it,
+  **Notch** removes the centre, and **Flat** passes the full mix.
+- **Q** sets the width of a bell, band pass or notch. A high Q is narrow and
+  surgical; a low Q is broad and picks up more of its neighbours, which is useful
+  when there are fewer bulbs than bands.
+- **Slope** (12, 24 or 48 dB/oct) sets how hard a low pass, high pass or band pass
+  falls away outside its edges. Bell and notch ignore it.
 - **Gain** moves the band ±18 dB in the detector only. It never changes the
   audio mpv plays; it decides how hard that band drives its lamp.
 - **Lamp** assigns the band to one enabled bulb, in the panel's light order.
   **Auto** keeps the even spread.
+- **Solo** (the **S** on each fader) makes every bulb follow only the soloed
+  bands, ignoring lamp assignments until you switch it off.
 
 Bands are stored low-to-high. Two or more bands can share a bulb: the bulb
 averages their active levels and takes the color of the strongest one. A bulb
@@ -419,10 +446,12 @@ with no explicit assignment follows the overall mix. With no assignments at
 all, the bands are spread evenly across the bulbs and repeat when there are
 more bulbs than bands.
 
-`--react-eq-bands N` sets the count, `--react-eq '[{"freq":80,"gain":-6,"q":2,"lamp":0},…]'`
+`--react-eq-bands N` sets the count,
+`--react-eq '[{"freq":80,"type":"lowpass","slope":24,"gain":-6,"q":2,"lamp":0},…]'`
 sets the bands, `--react-bands` takes exactly N colors, and `lights.json` uses
-`react_eq_bands` and `react_eq`. New EQs start with log-spaced centres from
-32 Hz to 16 kHz.
+`react_eq_bands` and `react_eq`. New EQs start as bells with log-spaced
+centres from 32 Hz to 16 kHz; `slope` defaults to 24. A missing `type` or
+`slope` falls back to `bell` and `24`.
 
 **Active bands.** **Detect active bands** (default off) compares every band with
 its own slow noise floor. A band must rise **4 dB** above that floor and stay
@@ -491,12 +520,19 @@ overrides that spread, and several bands may share one bulb.
 ### 🎧 Audio Processing
 
 Audio modes use mpv's built-in `lavfi`/`astats` bridge. The Lua script builds a
-labelled N-band analyser from the EQ's split points only while `beat` or `vu`
-is selected, removes it when you switch back to a video mode, and never opens a
-microphone or extra process. An `acrossover` with N−1 splits yields N bands;
-`amerge` and `pan` recombine their 2N channels before the output, so the mix
-keeps its magnitude; like any crossover it adds a small all-pass phase shift. No
-extra package is installed.
+labelled N-band analyser from the EQ's band plan only while `beat` or `vu` is
+selected, removes it when you switch back to a video mode, and never opens a
+microphone or extra process. Each band runs its own filter — a bell, a band
+pass, a low/high pass, a notch or a flat pass — on a copy of the mix. The copy
+is split N ways, the filtered bands are merged back, and the untouched mix is
+merged beside them as the last two channels; `astats` reads every band and
+`pan` selects only the original stereo pair, so the audio mpv plays is
+unchanged. No extra package is installed.
+
+Older configs without a band plan still use the `acrossover` fallback: N−1
+splits yield N contiguous bands, and `amerge` plus `pan` recombine their 2N
+channels before the output. Like any crossover it adds a small all-pass phase
+shift, which is why the shaped analyser is the default for new configs.
 
 Audio modes keep a 30 Hz state heartbeat even when the video is sampled at
 12–20 fps: the picture still follows the sampling profile, but the meter and
@@ -736,6 +772,10 @@ Four pieces are known to be missing, in the order they matter:
   README.
 - **[mpv](https://mpv.io/)** decodes and shows the video; this project only
   reads frames from it and never patches or bundles it.
+- **[cB-Sigma/wiz](https://github.com/cB-Sigma/wiz)** by Abhinav Gautam
+  (Apache-2.0) documents the RGB→RGB+CW white-LED mapping and the
+  `getPower`/`pc` metering that the **White LEDs** switch and the Direct
+  control watt readout follow.
 - **[mpv-config](https://github.com/mfascioli/mpv-config)** lent the design
   language: amber `#FCBE11`, charcoal HUD grid and bracket corners.
 - **[Merriweather](https://github.com/EbenSorkin/Merriweather)** by Eben

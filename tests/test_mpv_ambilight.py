@@ -216,6 +216,64 @@ class SenderCounterTests(unittest.TestCase):
         self.assertEqual(sender.bytes_sent, 0)
 
 
+class WhiteLedTests(unittest.TestCase):
+    def test_mapping_moves_the_grey_part_to_both_white_leds(self):
+        params = m.white_led_params({"r": 255, "g": 128, "b": 128, "dimming": 60})
+        self.assertEqual(
+            (params["r"], params["g"], params["b"], params["c"], params["w"]),
+            (127, 0, 0, 128, 128),
+        )
+        self.assertEqual(params["dimming"], 60)
+
+    def test_white_and_grey_become_only_white_leds(self):
+        params = m.white_led_params({"r": 200, "g": 200, "b": 200})
+        self.assertEqual(
+            (params["r"], params["g"], params["b"], params["c"], params["w"]),
+            (0, 0, 0, 200, 200),
+        )
+
+    def test_params_without_rgb_are_untouched(self):
+        params = m.white_led_params({"temp": 3000, "dimming": 40})
+        self.assertEqual(params, {"temp": 3000, "dimming": 40})
+
+    def test_pilot_rgb_folds_the_white_leds_back(self):
+        self.assertEqual(
+            m.pilot_rgb({"r": 127, "g": 0, "b": 0, "c": 128, "w": 128}),
+            (255, 128, 128),
+        )
+        self.assertEqual(m.pilot_rgb({"r": 0, "g": 0, "b": 0}), (0, 0, 0))
+        self.assertIsNone(m.pilot_rgb({"temp": 3000}))
+
+    def test_sender_sends_c_and_w_when_enabled(self):
+        sent = []
+
+        class FakeSocket:
+            def setsockopt(self, *_args):
+                pass
+
+            def sendto(self, payload, address):
+                sent.append(json.loads(payload))
+
+            def close(self):
+                pass
+
+        with mock.patch.object(m.socket, "socket", return_value=FakeSocket()):
+            sender = m.WizSender(white_leds=True)
+            sender.set_color("10.0.0.1", (255, 128, 128), 60)
+            sender.set_pilot("10.0.0.1", {"r": 10, "g": 20, "b": 30, "dimming": 40})
+            sender.close()
+
+        first, second = sent
+        self.assertEqual(
+            (first["params"]["r"], first["params"]["c"], first["params"]["w"]),
+            (127, 128, 128),
+        )
+        self.assertEqual(
+            (second["params"]["r"], second["params"]["c"], second["params"]["w"]),
+            (0, 10, 10),
+        )
+
+
 class SendCommandTests(unittest.TestCase):
     def test_collects_the_reply_from_a_bulb(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1049,6 +1107,9 @@ class EqTests(unittest.TestCase):
         self.assertEqual(low["gain"], -m.EQ_GAIN_LIMIT)
         self.assertEqual(low["q"], 8.0)
         self.assertEqual(low["lamp"], -1)
+        self.assertEqual(low["type"], "bell")
+        self.assertEqual(low["slope"], m.EQ_DEFAULT_SLOPE)
+        self.assertFalse(low["solo"])
         high = next(band for band in bands if band["freq"] == 5000.0)
         self.assertEqual(high["gain"], m.EQ_GAIN_LIMIT)
         self.assertEqual(high["q"], 0.4)
@@ -1059,6 +1120,26 @@ class EqTests(unittest.TestCase):
             round(m.default_eq_freqs(4)[2], 2),
             [band["freq"] for band in bands],
         )
+
+    def test_normalize_eq_shapes_slopes_and_solo(self):
+        bands = m.normalize_eq_bands(
+            [
+                {"freq": 100, "type": "LOW-PASS", "slope": 40, "solo": 1},
+                {"freq": 200, "type": "band pass", "slope": 5},
+                {"freq": 300, "type": "notch", "solo": "yes"},
+                {"freq": 400, "type": "nonsense"},
+            ],
+            4,
+        )
+        self.assertEqual(bands[0]["type"], "lowpass")
+        self.assertEqual(bands[0]["slope"], 48)
+        self.assertTrue(bands[0]["solo"])
+        self.assertEqual(bands[1]["type"], "bandpass")
+        self.assertEqual(bands[1]["slope"], 12)
+        self.assertFalse(bands[1]["solo"])
+        self.assertEqual(bands[2]["type"], "notch")
+        self.assertFalse(bands[2]["solo"])
+        self.assertEqual(bands[3]["type"], "bell")
 
     def test_eq_splits_stay_between_adjacent_centres(self):
         bands = m.normalize_eq_bands(None, 8)
@@ -1103,6 +1184,28 @@ class EqTests(unittest.TestCase):
         self.assertEqual(
             reaction.audio_color(0, reaction.levels["a"], 100.0),
             reaction.band_colors[0],
+        )
+
+    def test_solo_makes_every_bulb_follow_the_band(self):
+        eq = [
+            {"freq": 80, "gain": 0, "q": 4.0, "lamp": 0},
+            {"freq": 2500, "gain": 0, "q": 4.0, "lamp": 1, "solo": True},
+        ]
+        reaction = m.Reaction("vu", 1.0, 0.45, eq=eq)
+        ReactionModeTests.update(
+            self,
+            reaction,
+            100.0,
+            audio={"rms": -10.0, "bands": [-60.0, -8.0]},
+            lights=("a", "b"),
+            names=("all", "all"),
+        )
+        self.assertEqual(reaction.assignments, {"a": (1,), "b": (1,)})
+        self.assertGreater(reaction.levels["a"], 0.5)
+        self.assertEqual(reaction.levels["a"], reaction.levels["b"])
+        self.assertEqual(
+            reaction.audio_color(1, reaction.levels["a"], 100.0),
+            reaction.band_colors[1],
         )
 
     def test_eq_gain_drives_a_band_harder(self):
@@ -1197,22 +1300,32 @@ class LuaAudioContractTests(unittest.TestCase):
         self.assertIn("@wizstats", source)
         self.assertIn("@wizbands", source)
         self.assertIn("@wiztail", source)
-        # The graph is built at runtime: the panel and CLI pass split points,
-        # and the classic five-band plan is only a fallback.
+        # The graph is built at runtime: the panel and CLI pass the full band
+        # plan, and the classic five-band crossover is only a fallback.
         self.assertIn("local DEFAULT_SPLITS = { 60, 250, 800, 2500 }", source)
         self.assertIn("local function sanitize_bands(value)", source)
         self.assertIn("local function bands_equal(first, second)", source)
+        self.assertIn("local function sanitize_eq(value)", source)
+        self.assertIn("local function eq_equal(first, second)", source)
+        self.assertIn("local function band_chain(band)", source)
+        self.assertIn("local function eq_filter(eq)", source)
         self.assertIn("local function band_filter()", source)
         self.assertIn('"acrossover=split="', source)
         self.assertIn('"amerge=inputs="', source)
+        self.assertIn("asplit=2[main][mon]", source)
+        self.assertIn('"bandreject=f="', source)
+        self.assertIn('cut_chain("lowpass"', source)
+        self.assertIn('cut_chain("highpass"', source)
         self.assertNotIn("acrossover=split=60 250 800 2500[b0]", source)
         self.assertIn("S.bands", source)
+        self.assertIn("S.eq", source)
         # RMS and peak travel together, and the overall level can be rebuilt
         # from the band powers when wizstats is empty.
         self.assertIn('"bands":', source)
         self.assertIn('"band_peaks":', source)
         self.assertIn("sum_db(band_rms)", source)
         self.assertIn("sum_db(band_peaks)", source)
+        self.assertIn("local function main_stat(suffix)", source)
         # Audio heartbeats at 30 Hz without raising the video capture rate.
         self.assertIn("local AUDIO_FPS = 30.0", source)
         self.assertIn("math.max(S.fps, AUDIO_FPS)", source)

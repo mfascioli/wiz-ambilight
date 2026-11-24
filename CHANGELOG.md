@@ -2,6 +2,45 @@
 
 Releases before 1.4.0 were never tagged; their history is in `git log`.
 
+## Unreleased
+
+- **Graphic EQ:** each band now has a **shape** instead of only a bell. `bell`
+  stays the default, and `bandpass`, `lowpass`, `highpass`, `notch` and `flat`
+  let a band isolate the part of the mix it should hear, Pro-Q3 style. The
+  analyser applies the shape on a copy of the mix, merges the untouched stereo
+  pair back beside the filtered bands and reads both with `astats`, so the audio
+  mpv plays is unchanged. Configs without a band plan keep the `acrossover`
+  fallback.
+- **Graphic EQ:** `slope` (12, 24 or 48 dB/oct) sets how hard a band pass, low
+  pass or high pass falls away, and a per-band **solo** makes every bulb follow
+  the soloed bands and ignore their lamp assignments until it is cleared. Both
+  are stored per band and passed to the sync.
+- **Panel:** the EQ strip gains a **Shape** select, a **Slope** select that
+  only shows for the shapes that use it, a **Solo** checkbox and a small **S**
+  button on each fader. The curve draws each shape, a soloed band gets a dashed
+  amber ring, the summary counts soloed bands, and Q hides for the cuts. The
+  shape list and slopes come from the snapshot.
+- **Sensor:** `contrib/esp32-bh1750/` becomes `contrib/esp32-lux/`, and its
+  sketch now drives a **BH1750**, **VEML7700**, **MAX44009**, **OPT3001** or
+  **TSL2591** over raw I2C, selected with `SENSOR_MODEL` and still without an
+  Arduino sensor library. `contrib/lux-sensor.md` gains a model table with
+  addresses, ranges and wiring, and the README names the supported sensors.
+  The BH1750 stays the default.
+- **White LEDs:** an opt-in **White LEDs** switch in **Look → Send** (or
+  `--white-leds`, `white_leds` in `lights.json`) sends the grey part of each
+  color, `min(r, g, b)`, on the bulb's `c` and `w` channels and subtracts it
+  from RGB, following `cB-Sigma/wiz` (Apache-2.0). Whites come out cleaner and
+  saturated colors are unchanged. The panel still stores and shows the original
+  RGB: `pilot_rgb()` folds `c`/`w` back for swatches and saved scenes.
+- **Power:** **Direct control** adds the target's metered draw to its power
+  state (`On · 4.2 W`, with `(n/m)` when only some bulbs answer). Newer
+  firmware reports `pc` in `getPilot`; older metering models answer `getPower`
+  with milliwatts; bulbs without metering just show `On`. The panel polls at
+  most every 30 s in a daemon thread, keeps a reading for 90 s and stops asking
+  a device after three silent answers until a manual scan. The protocol
+  behaviour follows `cB-Sigma/wiz`; neither feature was validated on hardware
+  here.
+
 ## 1.11.0 — 2026-11-24
 
 - **Auto Lux:** an optional measured-light layer for **every** reaction. A

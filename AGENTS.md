@@ -97,11 +97,15 @@ headings, and leave interface names, option values and file paths untranslated.
   Soft/Loud row for `level`, one swatch for `single`, and no swatches for the
   generated modes. Below Dynamics, a second full-width **EQ** strip holds the
   band count (2–16), Auto release, active-band detection, the draggable
-  response canvas, one fader per band and the selected band's frequency, Q,
-  gain and lamp. It is also never a fourth column and never a second card. The
+  response canvas, one fader per band and the selected band's shape, slope,
+  frequency, Q, gain, solo and lamp. It is also never a fourth column and never
+  a second card. The
   **Capture & fade preset** select
   follows the reaction group, then Brightness and the **Vibrance** slider;
-  those three are always visible and flat.
+  those three are always visible and flat. **Send** keeps the style/panel
+  summary, the **White LEDs** switch and the dry-run switch. The **White LEDs**
+  switch moves `min(r, g, b)` onto the bulb's `c`/`w` channels (cB-Sigma/wiz),
+  is opt-in, and never changes the RGB the panel stores and shows.
 - **Reactions and audio.** `react` is one of `color`, `equalize`, `cut`,
   `motion`, `duotone`, `beat`, `vu`; `color` stays the default. Every reaction
   is scaled by `react_amount`, so `0` is a no-op. Video reactive modes share
@@ -112,11 +116,15 @@ headings, and leave interface names, option values and file paths untranslated.
   `AUDIO_WINDOW_DB` (12 dB) of range above the gate, so a high threshold stays
   expressive instead of becoming a switch. Audio modes split the mix into an
   EQ of 2–16 bands (default 8, `react_eq_bands` / `react_eq`) with one color
-  each via `react_bands`. Each band has `freq`, `gain`, `q` and `lamp`; gain
-  shapes detection only, never mpv's output. One bulb follows the overall
-  volume; otherwise bands spread over the bulbs, repeat when there are more
-  bulbs than bands, and an explicit `lamp` overrides the spread so several
-  bands can share one bulb (averaged, strongest band's color). `react_auto`
+  each via `react_bands`. Each band has `freq`, `type`, `slope`, `gain`, `q`,
+  `lamp` and `solo`; `type` is one of `EQ_BAND_TYPES` (`bell`, `bandpass`,
+  `lowpass`, `highpass`, `notch`, `flat`), `slope` snaps to 12/24/48 dB/oct and
+  only applies to the cuts and the band pass, and gain shapes detection only,
+  never mpv's output. One bulb follows the overall volume; otherwise bands
+  spread over the bulbs, repeat when there are more bulbs than bands, and an
+  explicit `lamp` overrides the spread so several bands can share one bulb
+  (averaged, strongest band's color). A soloed band makes every bulb follow it
+  and ignores the lamp assignments until solo is cleared. `react_auto`
   (`off` / `ssl` / `api` / `hybrid`) shapes the envelope with SSL-style dual
   release and API-style soft knee plus low-end thrust, and
   `react_active_bands` holds a band dark until it rises 4 dB above its own
@@ -125,20 +133,26 @@ headings, and leave interface names, option values and file paths untranslated.
   driven by the live level, or one fixed color; the colors come from
   `react_color_a` and `react_color_b` and `Reaction.audio_color` is the single
   decision point. Audio modes are `beat` and `vu` only: the Lua script builds a
-  labelled `lavfi`/`acrossover`/`astats` analyser from the EQ split points
-  while one is selected, removes all its labels on exit and never touches a
-  user's `af` chain. The graph keeps the mix's magnitude but adds an all-pass
-  phase shift, so never describe it as bit-identical. No audio dependency, no
-  separate process, no microphone. **Auto Lux** is an optional measured-light
-  layer over every reaction, on by a checkbox in **Look** or `--auto-lux`:
-  `contrib/lux-bridge.py` writes `lux.json`, and `--lux-file` / `--lux-target`
-  consume it only while the file is under `LUX_STALE_SECONDS` old. It multiplies
-  `dimming()` after the mode's own colors and pulses, always uses the Equalize
-  profile's `span` / `tau` / `floor`, and holds Equalize's luma gain at `1.0`
-  while a reading is fresh; a stale or missing file is a no-op (Equalize falls
-  back to luma). Keep the parser, the 5 s freshness window, the per-mode layer
-  and the fallback tested before widening the contract, and do not move the
-  bridge into the sync process.
+  labelled `lavfi`/`astats` analyser from the EQ band plan while one is
+  selected, removes all its labels on exit and never touches a user's `af`
+  chain. Each band filters a copy of the mix (2N+2 channels), the untouched mix
+  is merged back and `pan` selects only it, so the audio path stays transparent;
+  configs without an EQ keep the `acrossover` fallback, which recombines slices
+  and adds an all-pass phase shift. Never describe either graph as
+  bit-identical. No audio dependency, no separate process, no microphone.
+  **Auto Lux** is an optional measured-light layer over every reaction, on by a
+  checkbox in **Look** or `--auto-lux`: `contrib/lux-bridge.py` writes
+  `lux.json`, and `--lux-file` / `--lux-target` consume it only while the file
+  is under `LUX_STALE_SECONDS` old. The `contrib/esp32-lux/` sketch drives a
+  BH1750, VEML7700, MAX44009, OPT3001 or TSL2591 over raw I2C (`SENSOR_MODEL`
+  selects one); keep it library-free and document any new sensor in
+  `contrib/lux-sensor.md` and the README. Auto Lux multiplies `dimming()` after
+  the mode's own colors and pulses, always uses the Equalize profile's `span` /
+  `tau` / `floor`, and holds Equalize's luma gain at `1.0` while a reading is
+  fresh; a stale or missing file is a no-op (Equalize falls back to luma). Keep
+  the parser, the 5 s freshness window, the per-mode layer and the fallback
+  tested before widening the contract, and do not move the bridge into the sync
+  process.
 - **Performance chart.** Activity holds one frame with three unit lanes —
   CPU %, RAM MB, UDP KB/s — and a series each for mpv and the panel. CPU is a
   share of the whole processor, said so in the legend tooltip; never merge the
@@ -150,7 +164,11 @@ headings, and leave interface names, option values and file paths untranslated.
   direct control only; clicking a room targets it and opens Direct control.
   `groups` and `colors` live in `lights.json`; changing either never restarts
   the sync. A saved color is `{hex, brightness}`; legacy bare hex loads at
-  100 %. Power lives only in Direct control, never on a Light row.
+  100 %. Power lives only in Direct control, never on a Light row, and that is
+  where metered watts go too (`pc` from `getPilot`, then `getPower` on older
+  metering firmware, following cB-Sigma/wiz). Bulbs without metering show `On`
+  with no number; never invent a draw or claim a reading for a model that did
+  not answer.
 
 ## Terminology
 
@@ -316,7 +334,7 @@ Before calling a change done:
 | `docs/design.md` | panel design language, layout and chart contract |
 | `docs/development.md` | repository layout, runtime/config files, reactions and audio internals |
 | `docs/gui.png` | the one panel screenshot in the README |
-| `contrib/` | optional systemd units and env examples, the lux bridge, and the ESP32/BH1750 sketch |
+| `contrib/` | optional systemd units and env examples, the lux bridge, and the ESP32 sensor sketch (BH1750, VEML7700, MAX44009, OPT3001, TSL2591) |
 | `upstream/` | original wiz-hack toolkit, reference only, never imported |
 | `SECURITY.md` | trust model, guarantees, review status, limits |
 | `CHANGELOG.md` | one entry per release, grouped by feature |

@@ -26,7 +26,7 @@ design lives in [`design.md`](design.md).
 │   ├── cli.md              # user-facing command line reference
 │   ├── design.md           # panel design language and layout
 │   └── gui.png             # the one panel screenshot in the README
-├── contrib/                # systemd units, lux bridge, ESP32/BH1750 sketch
+├── contrib/                # systemd units, lux bridge, ESP32 sensor sketch
 └── upstream/               # original wiz-hack toolkit, kept for reference
 ```
 
@@ -66,20 +66,21 @@ or generate from a script:
   "react_profile": "balanced",
   "react_eq_bands": 8,
   "react_eq": [
-    {"freq": 32, "gain": 0, "q": 1.4, "lamp": -1},
-    {"freq": 77.75, "gain": 0, "q": 1.4, "lamp": -1},
-    {"freq": 188.92, "gain": 0, "q": 1.4, "lamp": -1},
-    {"freq": 459.04, "gain": 0, "q": 1.4, "lamp": -1},
-    {"freq": 1115.37, "gain": 0, "q": 1.4, "lamp": -1},
-    {"freq": 2710.1, "gain": 0, "q": 1.4, "lamp": -1},
-    {"freq": 6584.96, "gain": 0, "q": 1.4, "lamp": -1},
-    {"freq": 16000, "gain": 0, "q": 1.4, "lamp": -1}
+    {"freq": 32, "type": "bell", "slope": 24, "gain": 0, "q": 1.4, "lamp": -1, "solo": false},
+    {"freq": 77.75, "type": "bell", "slope": 24, "gain": 0, "q": 1.4, "lamp": -1, "solo": false},
+    {"freq": 188.92, "type": "bell", "slope": 24, "gain": 0, "q": 1.4, "lamp": -1, "solo": false},
+    {"freq": 459.04, "type": "bell", "slope": 24, "gain": 0, "q": 1.4, "lamp": -1, "solo": false},
+    {"freq": 1115.37, "type": "bell", "slope": 24, "gain": 0, "q": 1.4, "lamp": -1, "solo": false},
+    {"freq": 2710.1, "type": "bell", "slope": 24, "gain": 0, "q": 1.4, "lamp": -1, "solo": false},
+    {"freq": 6584.96, "type": "bell", "slope": 24, "gain": 0, "q": 1.4, "lamp": -1, "solo": false},
+    {"freq": 16000, "type": "bell", "slope": 24, "gain": 0, "q": 1.4, "lamp": -1, "solo": false}
   ],
   "react_auto": "off",
   "react_active_bands": false,
   "react_bands": ["#ff5a3c", "#fcbe11", "#7ad66b", "#38bdf8",
                   "#a78bfa", "#f472b6", "#2dd4bf", "#fb923c"],
   "brightness": 100,
+  "white_leds": false,
   "mode": "attach",
   "media": "",
   "dry_run": false,
@@ -113,6 +114,13 @@ Rooms are named lists of IPs the panel already knows; saved colors pair a
 loads at 100 %. Changing either never restarts a running sync. Point the panel
 at another file with `WIZ_AMBILIGHT_GUI_CONFIG` and
 `WIZ_AMBILIGHT_SCENES_CONFIG`.
+
+`white_leds` is opt-in and applies to the sync and to Direct control: the grey
+part of each color (`min(r, g, b)`) is sent on the bulb's `c` and `w` channels
+and subtracted from RGB, following `cB-Sigma/wiz` (Apache-2.0). Saturated colors
+are unchanged. The panel keeps storing the original RGB in `lights.json` and in
+its live state; `pilot_rgb()` folds `c`/`w` back into the swatch and saved scene,
+so the file never depends on the mapping. `--white-leds` is the CLI equivalent.
 
 `scenes.json` maps a scene name to per-bulb state. Only known bulbs are applied
 and every value is range-checked:
@@ -168,22 +176,28 @@ meaningful for old configs. The ceiling comes from the profile's `high` value
 (12 dB) of range above the gate so a high threshold stays usable.
 
 `react_eq_bands` is the analysis band count, **2–16** (default 8).
-`react_eq` is a list of `{freq, gain, q, lamp}` objects kept in frequency
-order. `freq` is the band centre in Hz (20–20000), `gain` is the detection
-boost in dB (−18…+18), `q` is the width (0.4–8) and `lamp` is a 0-based index
-into the enabled bulbs in panel order, or `-1` for auto. `normalize_eq_bands`
-clamps every value, fills a missing slot with the log-spaced default for that
-position and sorts the list, so a malformed band never shifts the rest of the
-curve. The panel always writes an explicit list; a `Reaction` built directly
-without one keeps the classic 5-band layout for compatibility.
+`react_eq` is a list of `{freq, type, slope, gain, q, lamp, solo}` objects kept
+in frequency order. `freq` is the band centre in Hz (20–20000), `type` is one of
+`bell`, `bandpass`, `lowpass`, `highpass`, `notch` or `flat`, `slope` snaps to
+12, 24 or 48 dB/oct, `gain` is the detection boost in dB (−18…+18), `q` is the
+width (0.4–8), `lamp` is a 0-based index into the enabled bulbs in panel order
+or `-1` for auto, and `solo` makes every bulb follow the soloed bands. Unknown
+types become `bell` and a missing `slope` becomes 24, so old configs keep
+working. `normalize_eq_bands` clamps every value, fills a missing slot with the
+log-spaced default for that position and sorts the list, so a malformed band
+never shifts the rest of the curve. The panel always writes an explicit list; a
+`Reaction` built directly without one keeps the classic 5-band layout for
+compatibility.
 
 The default centres are `(16000/32) ** (1/(N-1))` apart, starting at 32 Hz;
 for N=8 that is 32, 78, 189, 459, 1.1k, 2.7k, 6.6k and 16k Hz. `eq_splits`
-turns adjacent centres and Q values into the crossover boundaries: each band's
-Q-derived edges are `f * 2**(±0.5/Q)`, the split is the geometric mean of the
-neighbouring edges and is nudged to stay strictly increasing. `eq_thrust_db`
-returns the API-style low-end de-emphasis (−3 dB below 120 Hz, −1.5 dB below
-250 Hz) used only by the `api` and `hybrid` auto modes.
+turns adjacent centres and Q values into the legacy crossover boundaries: each
+band's Q-derived edges are `f * 2**(±0.5/Q)`, the split is the geometric mean of
+the neighbouring edges and is nudged to stay strictly increasing. The shaped
+analyser does not need them; the list still travels as `bands` so old Lua copies
+and the panel labels keep working. `eq_thrust_db` returns the API-style low-end
+de-emphasis (−3 dB below 120 Hz, −1.5 dB below 250 Hz) used only by the `api`
+and `hybrid` auto modes.
 
 `react_bands` is one `#rrggbb` string per EQ band, low to high, and
 `normalize_band_colors` cycles `BAND_COLOR_PALETTE` (16 colours; the first five
@@ -197,7 +211,9 @@ is assigned: one bulb follows the overall level, fewer bulbs than bands map
 evenly from low to high, and more bulbs than bands repeat the cycle. An
 explicit `lamp >= 0` on any band switches to assignment mode: each bulb
 averages every active band assigned to it, takes the colour of the strongest
-of those bands, and bulbs with no assigned band follow the overall mix.
+of those bands, and bulbs with no assigned band follow the overall mix. A
+`solo` on any band overrides both modes: every bulb follows the soloed bands
+(and the overall view uses the loudest soloed band) until solo is cleared.
 
 `react_auto` is `off`, `ssl`, `api` or `hybrid`. `Reaction._auto_release`
 tracks how long a bulb has been driven (`sustain`): `ssl` and `hybrid` keep a
@@ -235,38 +251,50 @@ external process. On activation the Lua script appends:
 
 ```text
 @wizstats:lavfi=[astats=metadata=1:reset=1],
-@wizbands:lavfi=[aformat=channel_layouts=stereo,
-  acrossover=split=<s1> <s2> … <sN-1>[b0][b1]…[bN-1];
-  [b0][b1]…[bN-1]amerge=inputs=N,astats=metadata=1:reset=1,
-  pan=stereo|c0=c0+c2+…|c1=c1+c3+…],
+@wizbands:lavfi=[aformat=channel_layouts=stereo,asplit=2[main][mon];
+  [mon]asplit=N[m0]…[mN-1];
+  [m0]<shape 0>[f0]; … [mN-1]<shape N-1>[fN-1];
+  [f0]…[fN-1]amerge=inputs=N[filtered];
+  [filtered][main]amerge=inputs=2[all];
+  [all]astats=metadata=1:reset=1[stats];
+  [stats]pan=stereo|c0=c2N|c1=c2N+1],
 @wiztail:lavfi=[anull]
 ```
 
-The split points come from `eq_splits()` on the active EQ and are passed to the
-Lua script in its startup config (`bands`). `band_filter()` formats them with
-two decimals, emits one label per band, and builds the `pan` sums from the 2N
-channels, so the same code handles 2, 8 or 16 bands. `sanitize_bands` rejects
-non-numeric and out-of-range splits; when no plan is supplied the classic
-`60 250 800 2500` five-band fallback is used. Changing the plan in a running
-script removes and re-adds the chain (the band lists are compared first).
+The band plan travels as `eq` in the Lua startup config. `sanitize_eq` keeps
+`freq`, `type`, `q` and `slope` (the fields that change the graph) and rejects
+non-numeric or out-of-range bands; `band_chain` maps a shape to a filter:
+`bandpass=f=…:width_type=q:w=…` for a bell, `bandreject` for a notch, repeated
+`lowpass`/`highpass` stages for the cuts and the band pass (`poles=2` per
+stage, one stage per 12 dB/oct) and `anull` for flat. Changing the plan in a
+running script removes and re-adds the chain (the plans are compared first).
 
-`astats` injects `af-metadata/wizstats` with the overall levels. `acrossover`
-splits the stereo downmix into N bands, `amerge` stacks them into 2N channels
-and a second `astats` exposes `af-metadata/wizbands`, one RMS and one peak pair
-per band. `pan` recombines those channels into the stereo output. The crossover
-keeps the magnitude flat (measured within 0.6 dB with white noise) but adds an
-all-pass phase shift, so the output is not sample-identical; it is not a
-pass-through. `anull` keeps the chain valid while the labels are removed. The
-script adds the chain only when `react` is `beat` or `vu`, re-adds it after
-`file-loaded`, and removes `@wizbands`, `@wizstats` and `@wiztail` in any order
-on a switch back to a video mode, on stop and on shutdown. A user's own `af`
-chain is left in place.
+`astats` injects `af-metadata/wizstats` with the overall levels. The band graph
+splits a copy of the stereo mix, filters each copy with its band shape, merges
+the N filtered pairs into 2N channels and merges the untouched `main` pair back
+as channels 2N+1 and 2N+2. A second `astats` exposes `af-metadata/wizbands`,
+one RMS and one peak pair per band, and `pan` selects only the main pair, so the
+audio mpv plays is unchanged. `anull` keeps the chain valid while the labels
+are removed. The script adds the chain only when `react` is `beat` or `vu`,
+re-adds it after `file-loaded`, and removes `@wizbands`, `@wizstats` and
+`@wiztail` in any order on a switch back to a video mode, on stop and on
+shutdown. A user's own `af` chain is left in place.
+
+Configs without an `eq` plan fall back to the older crossover graph:
+`acrossover=split=<s1> … <sN-1>[b0]…[bN-1]`, `amerge=inputs=N` into 2N
+channels, `astats` and `pan` summing the pairs back into stereo. The split
+points come from `eq_splits()` and the `bands` list; `sanitize_bands` rejects
+non-numeric and out-of-range splits, and the classic `60 250 800 2500`
+five-band plan is the last fallback. The crossover keeps the magnitude flat
+(measured within 0.6 dB with white noise) but adds an all-pass phase shift, so
+its output is not sample-identical.
 
 Some mpv builds only expose the metadata of the last `astats` in a chain, so
-`wizstats` can be empty while `wizbands` is live. In that case the Lua script
-rebuilds the overall RMS and peak by summing every band's power. That also
-means audio still works on builds where only the band graph is readable; the
-Python parser accepts either shape.
+`wizstats` can be empty while `wizbands` is live. The shaped graph reads the
+overall level from its main pair (channels 2N+1 and 2N+2). The crossover
+fallback has no such pair, so the Lua script rebuilds the overall RMS and peak
+by summing every band's power. That also means audio still works on builds where
+only the band graph is readable; the Python parser accepts either shape.
 
 While an audio mode is active the state snapshot gains:
 
@@ -334,13 +362,15 @@ dependency: a bridge writes
 to `$XDG_RUNTIME_DIR/wiz-ambilight/lux.json` and the sync reads it only while
 Auto Lux is enabled. `contrib/lux-bridge.py` (stdlib only) accepts `POST /lux`
 from an ESP32 and writes the file atomically at `0600`;
-`contrib/esp32-bh1750/` holds the sketch and `contrib/lux-sensor.md` the wiring
+`contrib/esp32-lux/` holds the sketch (BH1750, VEML7700, MAX44009, OPT3001 or
+TSL2591, selected with `SENSOR_MODEL`) and `contrib/lux-sensor.md` the wiring
 and service setup.
 
 - `read_lux()` rejects a missing file, a malformed body, a boolean, a
   non-finite or negative value, and anything above `LUX_MAX` (65535, the
-  BH1750 ceiling). A reading older than `LUX_STALE_SECONDS` (5 s) counts as
-  missing, so a stopped bridge stops correcting without a restart.
+  ceiling the bridge and parser accept; the sketch clamps brighter sensors). A
+  reading older than `LUX_STALE_SECONDS` (5 s) counts as missing, so a stopped
+  bridge stops correcting without a restart.
 - `Reaction.update()` computes `ambient_gain` once per frame and `dimming()`
   multiplies every mode by it, so color, cut, motion, duotone, beat and vu keep
   their own colors and pulses. It always uses the **Equalize** profile's
@@ -361,8 +391,26 @@ and service setup.
   run code.
 
 The parser, freshness window, gain, the per-mode layer and the Equalize
-fallback are covered by unit tests. The physical BH1750 path is not tested in
+fallback are covered by unit tests. The physical sensor path is not tested in
 CI.
+
+## Power metering
+
+Power is a readout, never a control. Newer firmware puts `pc` (milliwatts) in
+the `getPilot` answer the panel already polls; older metering devices answer a
+separate `getPower` with `{"power": milliwatts}`; most bulbs support neither
+and return error `-32601` (method not found), following `cB-Sigma/wiz`
+(Apache-2.0). `_milliwatts_to_watts()` converts and rejects booleans, negatives
+and non-finite values.
+
+`maybe_power()` runs on `/api/state`, at most every `POWER_REFRESH` (30 s), and
+only for bulbs whose `getPilot` had no `pc`. It asks in a daemon thread so a
+slow or absent device never stalls the request, keeps a reading for
+`POWER_STALE` (90 s), and stops asking a device after `POWER_ATTEMPTS` (3)
+silent answers until a manual scan clears the list. Watts reach the snapshot
+as `power` on each light row and the panel shows them only in **Direct control**
+— the target's total, with `(n/m)` when only some bulbs meter — never on a
+Light row.
 
 ## Tests and CI
 

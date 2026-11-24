@@ -133,10 +133,12 @@ class WizSender:
         port: int = DEFAULT_PORT,
         dry_run: bool = False,
         refresh: float = 2.0,
+        white_leds: bool = False,
     ):
         self.port = port
         self.dry_run = dry_run
         self.refresh = max(0.0, refresh)
+        self.white_leds = bool(white_leds)
         self._seq = 0
         self._last = {}
         self._last_time = {}
@@ -186,17 +188,16 @@ class WizSender:
         ):
             return
         self._last_time[ip] = now
-        sent = self._send(
-            ip,
-            "setPilot",
-            {
-                "r": int(r),
-                "g": int(g),
-                "b": int(b),
-                "dimming": int(dimming),
-                "state": True,
-            },
-        )
+        params = {
+            "r": int(r),
+            "g": int(g),
+            "b": int(b),
+            "dimming": int(dimming),
+            "state": True,
+        }
+        if self.white_leds:
+            params = white_led_params(params)
+        sent = self._send(ip, "setPilot", params)
         if sent:
             self._last[ip] = key
 
@@ -208,6 +209,8 @@ class WizSender:
         """Send direct controls (color, white, scene, brightness) to a bulb."""
         self._last.pop(ip, None)
         payload = dict(params)
+        if self.white_leds:
+            payload = white_led_params(payload)
         payload.setdefault("state", True)
         return self._send(ip, "setPilot", payload)
 
@@ -468,6 +471,54 @@ def clamp8(value: float) -> int:
     return max(0, min(255, int(round(value))))
 
 
+def white_led_params(params: dict) -> dict:
+    """Move the grey part of an RGB color to the bulb's white LEDs.
+
+    The mapping follows cB-Sigma/wiz (Apache-2.0): the smallest channel is
+    what red, green and blue have in common, so it is sent on both white
+    LEDs instead of being mixed from the three colored ones. Whites come out
+    cleaner and brighter; saturated colors are unchanged. Params without all
+    of r, g and b are returned as a copy.
+    """
+    out = dict(params)
+    if not all(channel in out for channel in ("r", "g", "b")):
+        return out
+    try:
+        r, g, b = (int(out[channel]) for channel in ("r", "g", "b"))
+    except (TypeError, ValueError):
+        return out
+    grey = max(0, min(255, min(r, g, b)))
+    out.update(
+        {
+            "r": max(0, min(255, r - grey)),
+            "g": max(0, min(255, g - grey)),
+            "b": max(0, min(255, b - grey)),
+            "c": grey,
+            "w": grey,
+        }
+    )
+    return out
+
+
+def pilot_rgb(info: dict):
+    """The RGB a getPilot result describes, with the white LEDs folded back.
+
+    A bulb driven with the white-LED mapping can report r=g=b=0 and carry the
+    grey part in `c` and `w`. Adding it back keeps swatches and saved scenes
+    the color that was sent; a genuinely black bulb has c=w=0.
+    """
+    try:
+        r, g, b = (int(info[channel]) for channel in ("r", "g", "b"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    try:
+        grey = int(round(max(float(info.get("c") or 0), float(info.get("w") or 0))))
+    except (TypeError, ValueError):
+        grey = 0
+    grey = max(0, min(255, grey))
+    return tuple(max(0, min(255, channel + grey)) for channel in (r, g, b))
+
+
 def adjust_color(rgb, saturation: float, gamma: float):
     """Boost saturation a little (averages are dull) and apply optional gamma."""
     r, g, b = (max(0.0, min(1.0, channel / 255.0)) for channel in rgb)
@@ -642,6 +693,20 @@ MAX_BANDS = 16
 MIN_BANDS = 2
 DEFAULT_EQ_BANDS = 8
 EQ_DEFAULT_Q = 1.4
+# Detection shapes. `bell` is the gentle two-pole band the original analyser
+# emulated; the cuts and the band pass reuse the same centre and Q but let the
+# band isolate everything below or above it, or a steeper slice around it.
+EQ_BAND_TYPES = ("bell", "bandpass", "lowpass", "highpass", "notch", "flat")
+EQ_TYPE_LABELS = {
+    "bell": "Bell",
+    "bandpass": "Band pass",
+    "lowpass": "Low pass",
+    "highpass": "High pass",
+    "notch": "Notch",
+    "flat": "Flat",
+}
+EQ_SLOPES = (12, 24, 48)
+EQ_DEFAULT_SLOPE = 24
 EQ_GAIN_LIMIT = 18.0
 EQ_FREQ_MIN = 20.0
 EQ_FREQ_MAX = 20000.0
@@ -699,8 +764,8 @@ REACTION_FLOOR = 0.35
 EQUALIZE_TAU = 4.0
 # Optional measured-light input. A sensor bridge writes `lux.json` in the
 # runtime directory; Auto Lux applies it as a brightness layer over any
-# reaction while it is fresh and drops it when it goes stale. The BH1750 tops
-# out at 65535 lx.
+# reaction while it is fresh and drops it when it goes stale. 65535 lx is the
+# ceiling the bridge and the parser accept; the sketch clamps brighter sensors.
 LUX_MAX = 65535.0
 LUX_STALE_SECONDS = 5.0
 LUX_TARGET = 50.0
@@ -948,8 +1013,8 @@ def read_lux(path: Path, max_age=LUX_STALE_SECONDS):
     """Read `{"lux": 42.5}` from `path`, or None when it is missing or stale.
 
     The bridge owns the file; the sync only reads it. A malformed body, a
-    boolean, a negative value or a value outside the BH1750 range is treated
-    exactly like a missing file, so a broken sensor never changes the look.
+    boolean, a negative value or a value above `LUX_MAX` is treated exactly
+    like a missing file, so a broken sensor never changes the look.
     """
     try:
         stat = path.stat()
@@ -991,11 +1056,13 @@ def default_eq_freqs(count: int):
 
 
 def normalize_eq_bands(value, count=None):
-    """Per-band frequency, gain, Q and lamp assignment.
+    """Per-band frequency, shape, Q, slope, gain, lamp and solo flag.
 
-    Bands are kept in frequency order because the crossover needs increasing
-    split points. A missing or malformed entry falls back to a log-spaced
-    default at that position, so the rest of the curve never shifts.
+    Bands are kept in frequency order so the panel's low-to-high palette and
+    the legacy crossover fallback stay stable. A missing or malformed entry
+    falls back to a log-spaced default at that position, so the rest of the
+    curve never shifts. Unknown shapes become `bell`, and a slope snaps to the
+    nearest of 12, 24 or 48 dB/oct.
     """
     raw = list(value) if isinstance(value, (list, tuple)) else []
     if count is None:
@@ -1014,6 +1081,25 @@ def normalize_eq_bands(value, count=None):
         freq = finite_float(item.get("freq"))
         gain = finite_float(item.get("gain"))
         q = finite_float(item.get("q"))
+        kind = (
+            str(item.get("type") or "bell")
+            .strip()
+            .lower()
+            .replace("-", "")
+            .replace(" ", "")
+        )
+        if kind not in EQ_BAND_TYPES:
+            kind = "bell"
+        slope = finite_float(item.get("slope"))
+        if slope is None:
+            slope = EQ_DEFAULT_SLOPE
+        elif slope >= 36:
+            slope = 48
+        elif slope >= 18:
+            slope = 24
+        else:
+            slope = 12
+        solo = item.get("solo") is True or item.get("solo") == 1
         try:
             lamp = int(item.get("lamp"))
         except (TypeError, ValueError):
@@ -1030,6 +1116,7 @@ def normalize_eq_bands(value, count=None):
                     ),
                     2,
                 ),
+                "type": kind,
                 "gain": round(
                     max(
                         -EQ_GAIN_LIMIT,
@@ -1041,7 +1128,9 @@ def normalize_eq_bands(value, count=None):
                     2,
                 ),
                 "q": round(max(0.4, min(8.0, q if q is not None else EQ_DEFAULT_Q)), 2),
+                "slope": slope,
                 "lamp": max(-1, lamp),
+                "solo": solo,
             }
         )
     bands.sort(key=lambda band: band["freq"])
@@ -1537,9 +1626,14 @@ class Reaction:
         return self.color_a
 
     def _shape_bands(self, values, peaks):
-        """Apply the graphic EQ's gain, Q width and API-style thrust."""
+        """Apply the graphic EQ's gain and API-style thrust.
+
+        The shape itself is applied by the Lua analyser's filter bank: a bell,
+        a band pass, a cut, a notch or a flat pass on a copy of the mix. This
+        stage only offsets the detected level, so gain still never touches
+        mpv's output.
+        """
         gains = [float(band.get("gain", 0.0)) for band in self.eq]
-        qs = [max(0.4, float(band.get("q", EQ_DEFAULT_Q))) for band in self.eq]
         thrust = [
             eq_thrust_db(float(band.get("freq", 0.0)))
             if self.auto in ("api", "hybrid")
@@ -1554,32 +1648,6 @@ class Reaction:
             return number + gains[index] + thrust[index]
 
         shaped = [adjust(value, index) for index, value in enumerate(values)]
-        if len(shaped) > 1:
-            linear = [
-                None if value is None else 10.0 ** (value / 10.0)
-                for value in shaped
-            ]
-            blended = []
-            for index, power in enumerate(linear):
-                if power is None:
-                    blended.append(None)
-                    continue
-                neighbors = [
-                    linear[other]
-                    for other in (index - 1, index + 1)
-                    if 0 <= other < len(linear) and linear[other] is not None
-                ]
-                if not neighbors:
-                    blended.append(power)
-                    continue
-                # A broad (low Q) band picks up a little of its neighbours; a
-                # narrow one stays surgical.
-                width = max(0.02, min(0.6, 0.30 / qs[index]))
-                blended.append(power + width * (sum(neighbors) / len(neighbors)))
-            shaped = [
-                None if power is None or power <= 0.0 else 10.0 * math.log(power, 10)
-                for power in blended
-            ]
         adjusted_peaks = [
             adjust(value, index) for index, value in enumerate(peaks)
         ]
@@ -1664,10 +1732,17 @@ class Reaction:
             for index, value in enumerate(combined)
         ]
 
+        soloed = tuple(
+            index for index, band in enumerate(self.eq) if band.get("solo")
+        )
         explicit = any(int(band.get("lamp", -1)) >= 0 for band in self.eq)
         assignments = {}
         for index, ip in enumerate(lights):
-            if explicit:
+            if soloed:
+                # Solo is a global override: every bulb follows the soloed
+                # bands, regardless of their lamp assignments.
+                assigned = soloed
+            elif explicit:
                 assigned = tuple(
                     band_index
                     for band_index, band in enumerate(self.eq)
@@ -1679,9 +1754,21 @@ class Reaction:
             assignments[ip] = assigned
         self.assignments = assignments
 
-        band_hot = max((value for value in combined if value is not None), default=None)
+        if soloed:
+            band_hot = max(
+                (
+                    combined[index]
+                    for index in soloed
+                    if combined[index] is not None
+                ),
+                default=None,
+            )
+        else:
+            band_hot = max(
+                (value for value in combined if value is not None), default=None
+            )
         overall_db = hot_db(rms, peak)
-        if overall_db is None:
+        if overall_db is None or soloed:
             overall_db = band_hot
         elif peak is None and band_hot is not None:
             # Older state files carry only per-band peaks. Let the loudest band
@@ -1699,9 +1786,14 @@ class Reaction:
         )
         if self.active_bands:
             # A dark band must also darken the one-bulb overall view.
-            overall = max(self.band_levels)
+            overall = (
+                max((self.band_levels[index] for index in soloed), default=0.0)
+                if soloed
+                else max(self.band_levels)
+            )
         dominant = max(
-            range(self.band_count), key=lambda index: self.band_levels[index]
+            soloed if soloed else range(self.band_count),
+            key=lambda index: self.band_levels[index],
         )
         if beat:
             for index, value in enumerate(combined):
@@ -2037,7 +2129,10 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
     per second and interpolated every few milliseconds in between. That is what
     turns stepping colors into the smooth glow people expect from Ambilight.
     """
-    sender = WizSender(dry_run=args.dry_run)
+    sender = WizSender(
+        dry_run=args.dry_run,
+        white_leds=getattr(args, "white_leds", False),
+    )
     smoother = Smoother(args.smooth / 1000.0)
     base_dimming = max(10, min(100, args.brightness))
     attack = getattr(args, "react_attack", None)
@@ -2334,6 +2429,7 @@ def run_launcher(args, lights, zone_names, mpv_extra):
             "capture": args.capture,
             "react": args.react,
             "bands": eq_splits(args.react_eq),
+            "eq": args.react_eq,
             # Only the instance we launch should autostart. If the Lua script
             # is also installed globally, that copy stays asleep.
             "script": link.stem,
@@ -2464,6 +2560,7 @@ def run_attach(args, lights, zone_names):
         "capture": args.capture,
         "react": args.react,
         "bands": eq_splits(args.react_eq),
+        "eq": args.react_eq,
         "script": SCRIPT_NAME,
     }
 
@@ -2587,7 +2684,10 @@ def run_set(args) -> int:
         print("error: no WiZ lights found. Use --lights or set WIZ_LIGHTS.", file=sys.stderr)
         return 1
 
-    sender = WizSender(dry_run=args.dry_run)
+    sender = WizSender(
+        dry_run=args.dry_run,
+        white_leds=getattr(args, "white_leds", False),
+    )
     try:
         if args.power == "off":
             for ip in ips:
@@ -2912,6 +3012,11 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--brightness", type=int, default=None, help="bulb dimming, 10-100"
+    )
+    parser.add_argument(
+        "--white-leds",
+        action="store_true",
+        help="drive the bulb's white LEDs with the grey part of each color",
     )
     parser.add_argument(
         "--send-hz", type=float, default=None, help="max color updates per second"

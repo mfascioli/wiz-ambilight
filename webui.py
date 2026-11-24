@@ -60,6 +60,7 @@ CONFIG_KEYS = (
     "react_punch",
     "vibrance",
     "brightness",
+    "white_leds",
     "mode",
     "media",
     "dry_run",
@@ -94,6 +95,7 @@ DEFAULT_CONFIG = {
     "react_punch": 3.0,
     "vibrance": 1.0,
     "brightness": 100,
+    "white_leds": False,
     "mode": "attach",
     "media": "",
     "dry_run": False,
@@ -107,6 +109,14 @@ DEFAULT_CONFIG = {
     "lights": {},
 }
 
+# Power metering is optional per device: newer firmware puts `pc` in the
+# getPilot answer, older metering devices answer getPower, and most bulbs do
+# neither. Ask at most every POWER_REFRESH seconds, keep a reading for
+# POWER_STALE, and stop asking a device after POWER_ATTEMPTS silent tries.
+POWER_REFRESH = 30.0
+POWER_STALE = 90.0
+POWER_ATTEMPTS = 3
+
 # RFC 5737 TEST-NET-1: documentation addresses, never routed on a LAN.
 DEMO_LIGHTS = {
     "192.0.2.11": {
@@ -119,6 +129,7 @@ DEMO_LIGHTS = {
         "r": 255,
         "g": 190,
         "b": 120,
+        "pc": 4200,
     },
     "192.0.2.12": {
         "model": "ESP24_SHRGBC_01",
@@ -130,6 +141,7 @@ DEMO_LIGHTS = {
         "r": 120,
         "g": 200,
         "b": 255,
+        "pc": 3800,
     },
     "192.0.2.13": {
         "model": "ESP15_SHTW_01",
@@ -293,6 +305,7 @@ def normalize_config(raw, core) -> dict:
     config["media"] = str(config["media"] or "")[:4096]
     config["dry_run"] = bool(config["dry_run"])
     config["auto_lux"] = bool(config["auto_lux"])
+    config["white_leds"] = bool(config["white_leds"])
 
     sampling_choices = ("auto", "manual", *getattr(core, "SAMPLING_PROFILES", {}))
     if config["sampling"] not in sampling_choices:
@@ -568,6 +581,7 @@ def build_command(config: dict, core, demo: bool = False):
         f"{config.get('react_punch', 3.0):g}",
         "--vibrance",
         f"{config.get('vibrance', 1.0):g}",
+        *(["--white-leds"] if config.get("white_leds") else []),
         "--brightness",
         str(config["brightness"]),
         "--sampling",
@@ -980,6 +994,24 @@ def _fresh_state_pid(max_age: float = 4.0):
     return pid if isinstance(pid, int) and pid > 0 else None
 
 
+def _milliwatts_to_watts(value):
+    """A getPower/pilot reading in milliwatts as watts, or None."""
+    if isinstance(value, bool):
+        return None
+    try:
+        milliwatts = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(milliwatts) or milliwatts < 0:
+        return None
+    return round(milliwatts / 1000.0, 2)
+
+
+def _pilot_watts(info: dict):
+    """The `pc` reading newer metering firmware puts in getPilot, in watts."""
+    return _milliwatts_to_watts((info or {}).get("pc"))
+
+
 class Panel:
     def __init__(self, core, port: int = DEFAULT_PORT, demo: bool = False):
         self.core = core
@@ -992,6 +1024,11 @@ class Panel:
         self.live = {}
         self.reachable = set()
         self.scanned = 0.0
+        self._power = {}
+        self._power_at = 0.0
+        self._power_misses = {}
+        self._no_power = set()
+        self._power_thread = None
         self._res_lock = threading.Lock()
         self._res_prev = {}
         self._res_prev_time = 0.0
@@ -1052,6 +1089,10 @@ class Panel:
             self.scanned = time.time()
             if deep:
                 self.reachable = set(live)
+                # A manual scan may follow a firmware update or a new plug,
+                # so give every device another chance to report power.
+                self._no_power.clear()
+                self._power_misses.clear()
             else:
                 # A light scan may miss a bulb that only answers unicast, so it
                 # must never take a known bulb offline.
@@ -1073,6 +1114,71 @@ class Panel:
             except OSError:
                 pass
 
+    def maybe_power(self) -> None:
+        """Refresh metered watts in the background, off the request thread.
+
+        `getPilot` often carries `pc` already, so only the devices that leave
+        it out are asked, and only until they refuse or stay silent.
+        """
+        if self.demo:
+            return
+        now = time.monotonic()
+        if now - self._power_at < POWER_REFRESH:
+            return
+        self._power_at = now
+        with self.lock:
+            ips = [
+                ip
+                for ip, info in self.live.items()
+                if ip not in self._no_power and _pilot_watts(info) is None
+            ]
+        if not ips:
+            return
+        thread = self._power_thread
+        if thread is not None and thread.is_alive():
+            return
+        self._power_thread = threading.Thread(
+            target=self._poll_power,
+            args=(ips,),
+            name="wiz-power",
+            daemon=True,
+        )
+        self._power_thread.start()
+
+    def _poll_power(self, ips) -> None:
+        try:
+            replies = self.core.query_lights(ips, "getPower", timeout=0.6)
+        except OSError:
+            return
+        now = time.monotonic()
+        with self.lock:
+            if self._closing:
+                return
+            for ip in ips:
+                watts = _milliwatts_to_watts((replies.get(ip) or {}).get("power"))
+                if watts is None:
+                    misses = self._power_misses.get(ip, 0) + 1
+                    self._power_misses[ip] = misses
+                    if misses >= POWER_ATTEMPTS:
+                        self._no_power.add(ip)
+                        self._power.pop(ip, None)
+                    continue
+                self._power_misses.pop(ip, None)
+                self._power[ip] = (watts, now)
+
+    def _power_watts(self, ip: str, info: dict):
+        """The last metered draw for one bulb, in watts, or None."""
+        watts = _pilot_watts(info)
+        if watts is not None:
+            return watts
+        entry = self._power.get(ip)
+        if entry is None:
+            return None
+        watts, at = entry
+        if time.monotonic() - at > POWER_STALE:
+            return None
+        return watts
+
     # -- state ------------------------------------------------------------ #
 
     def light_rows(self) -> list:
@@ -1082,8 +1188,7 @@ class Panel:
             rows = []
             for ip, entry in config["lights"].items():
                 info = self.live.get(ip) or {}
-                has_rgb = all(channel in info for channel in ("r", "g", "b"))
-                rgb = (info.get("r"), info.get("g"), info.get("b")) if has_rgb else None
+                rgb = self.core.pilot_rgb(info)
                 rows.append(
                     {
                         "ip": ip,
@@ -1104,6 +1209,9 @@ class Panel:
                         # A white bulb has no RGB values; the panel derives a
                         # warm swatch from `temp` instead of inventing a color.
                         "hex": self.core.rgb_to_hex(rgb) if rgb else None,
+                        # Only Direct control shows this, and only when the
+                        # firmware meters power; most bulbs do not.
+                        "power": self._power_watts(ip, info),
                     }
                 )
             rows.sort(key=lambda row: [int(part) for part in row["ip"].split(".")])
@@ -1399,6 +1507,13 @@ class Panel:
                 "gain": self.core.EQ_GAIN_LIMIT,
                 "q_min": 0.4,
                 "q_max": 8.0,
+                "types": [
+                    {"id": key, "label": self.core.EQ_TYPE_LABELS[key]}
+                    for key in self.core.EQ_BAND_TYPES
+                ],
+                "slopes": list(self.core.EQ_SLOPES),
+                "default_type": "bell",
+                "default_slope": self.core.EQ_DEFAULT_SLOPE,
             },
             "auto_modes": [
                 {
@@ -1510,6 +1625,9 @@ class Panel:
             self.config["groups"] = groups
             self.live.pop(ip, None)
             self.reachable.discard(ip)
+            self._power.pop(ip, None)
+            self._no_power.discard(ip)
+            self._power_misses.pop(ip, None)
             self._persist()
         label = entry.get("name") or ip
         self.session.write_log(f"forgot light {label} ({ip})")
@@ -1732,7 +1850,10 @@ class Panel:
         return self.snapshot()
 
     def _crazy_loop(self, ips, seconds, hz, stop, restore=None) -> None:
-        sender = self.core.WizSender(dry_run=self.demo)
+        sender = self.core.WizSender(
+            dry_run=self.demo,
+            white_leds=bool(self.config.get("white_leds")),
+        )
         started = time.monotonic()
         step = 0
         try:
@@ -1813,6 +1934,7 @@ class Panel:
             raise ValueError("nothing to change")
 
         commands = []
+        white_leds = bool(self.config.get("white_leds"))
         for ip in ips:
             if power is False:
                 commands.append((ip, "setState", {"state": False}))
@@ -1821,6 +1943,8 @@ class Panel:
                 outgoing = dict(params)
                 if power is True:
                     outgoing["state"] = True
+                if white_leds:
+                    outgoing = self.core.white_led_params(outgoing)
                 commands.append((ip, "setPilot", outgoing))
             else:
                 commands.append((ip, "setState", {"state": True}))
@@ -1873,12 +1997,13 @@ class Panel:
                     params["sceneId"] = int(info["sceneId"])
                     if info.get("speed") is not None:
                         params["speed"] = max(20, min(200, int(info["speed"])))
-                elif any(info.get(channel) is not None for channel in ("r", "g", "b")):
-                    for channel in ("r", "g", "b"):
-                        if info.get(channel) is not None:
-                            params[channel] = max(0, min(255, int(info[channel])))
-                elif info.get("temp") is not None:
-                    params["temp"] = max(2200, min(6500, int(info["temp"])))
+                else:
+                    rgb = self.core.pilot_rgb(info)
+                    if rgb:
+                        for channel, value in zip(("r", "g", "b"), rgb):
+                            params[channel] = value
+                    elif info.get("temp") is not None:
+                        params["temp"] = max(2200, min(6500, int(info["temp"])))
                 if info.get("dimming") is not None:
                     params["dimming"] = max(10, min(100, int(info["dimming"])))
                 if len(params) > 1 or params.get("state") is False:
@@ -1905,7 +2030,8 @@ class Panel:
                 raise ValueError("unknown scene")
             entries = json.loads(json.dumps(entries))
             known = set(self.config["lights"]) | set(self.live)
-        sender = self.core.WizSender(dry_run=self.demo)
+            white_leds = bool(self.config.get("white_leds"))
+        sender = self.core.WizSender(dry_run=self.demo, white_leds=white_leds)
         try:
             for ip, params in entries.items():
                 if ip not in known:
@@ -1945,7 +2071,9 @@ class Panel:
             self.session.write_log(f"demo: identify {ip}")
             return
         info = dict(self.live.get(ip) or {})
-        sender = self.core.WizSender()
+        sender = self.core.WizSender(
+            white_leds=bool(self.config.get("white_leds")),
+        )
         try:
             sender.set_temp(ip, 4000, 100)
             time.sleep(0.45)
@@ -2060,6 +2188,7 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/state":
             self.panel.maybe_scan()
+            self.panel.maybe_power()
             self._json(self.panel.snapshot())
             return
         if path == "/api/meter":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Receive lux readings from a sensor and write `lux.json` for Equalize.
+"""Receive lux readings from a sensor and write `lux.json` for Auto Lux.
 
 No third-party packages: a small HTTP server takes `POST /lux` with
 `{"lux": 42.5}`, validates it and atomically replaces the file the sync already
@@ -13,7 +13,7 @@ replaced without touching a running sync.
 
 Security: the server binds to `0.0.0.0` by default so the ESP32 can reach it
 over the LAN. Anyone who can reach the port can post a reading, which can only
-change how bright Equalize makes the bulbs. Set `WIZ_LUX_TOKEN` (or
+change how bright Auto Lux makes the bulbs. Set `WIZ_LUX_TOKEN` (or
 `--token`) and the matching `BRIDGE_TOKEN` in the sketch to require a shared
 header; use `--host 127.0.0.1` when the sensor runs on the same machine.
 """
@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 MAX_BODY = 512
-MAX_LUX = 65535.0  # BH1750 full scale; also the ceiling the sync accepts.
+MAX_LUX = 65535.0  # ceiling the sync accepts; the sketch clamps brighter sensors.
 DEFAULT_PORT = 8766
 
 

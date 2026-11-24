@@ -47,9 +47,10 @@ decoration: they explain the path from choosing bulbs to watching the effect.
 - **Session** is one compact row — mode, start, stop — and only adds its start
   time while a sync is running.
 - **Direct control** owns power: one switch for the selected bulb, room or all
-  bulbs. **Saved colors** reapply a hex and its brightness, and **Saved
-  scenes** live in a small `<details>` submenu inside the card, not as a card of
-  their own.
+  bulbs, with the target's metered draw beside it when the firmware reports one
+  (`On · 4.2 W`, and `(n/m)` when only some bulbs answer). **Saved colors**
+  reapply a hex and its brightness, and **Saved scenes** live in a small
+  `<details>` submenu inside the card, not as a card of their own.
 - **05 Activity** is a full-width card below the stacks and holds the
   performance chart, with video and capture resolution, read fps and process
   count visible above it.
@@ -70,6 +71,10 @@ decoration: they explain the path from choosing bulbs to watching the effect.
   Vibrance are always visible; the swatches are a hairline grid of equal
   `input[type="color"]` cells labelled with each band's frequency, up to eight
   per row. Reactions never add a fourth column or a second card.
+- **Send** keeps the style/panel summary, the **White LEDs** switch (the grey
+  part of each color on the bulb's `c` and `w` channels) and the dry-run switch.
+  The switch sits with the send controls because it changes the payload, not the
+  sampled color; the panel still stores and shows the original RGB.
 - **Audio dynamics** are one full-width strip inside Look, below the three
   columns: not a fourth column and not a second card. The left side is a
   scrolling five-second **Signal** timeline on a canvas — a −36…0 dBFS grid in
@@ -94,13 +99,15 @@ decoration: they explain the path from choosing bulbs to watching the effect.
   header holds **Bands** (2–16), **Auto release** (off / SSL / API 2500 /
   Hybrid), **Detect active bands** and a summary of how many bands are
   assigned. A canvas draws the response from 20 Hz to 20 kHz on a −18…+18 dB
-  scale with one draggable node per band. Below it, one vertical fader per band
-  shows gain with the frequency and a lamp select; the selected band is
-  outlined amber and its frequency, Q, gain and lamp are editable in a flat
-  detail row. The frequency control is logarithmic so the low end is not
-  squeezed into a few pixels. The strip stays generic: it takes its minimum,
-  maximum, gain limit and auto modes from the snapshot, not from hard-coded
-  band names.
+  scale with one draggable node per band; a soloed band gets a dashed amber ring.
+  Below it, one vertical fader per band shows gain, the frequency and the shape
+  tag, a small **S** solo button and a lamp select. The selected band is
+  outlined amber and its shape, slope, frequency, Q, gain, solo and lamp are
+  editable in a flat detail row. The frequency control is logarithmic so the low
+  end is not squeezed into a few pixels. Slope only shows for the shapes that
+  use it, and Q hides for the cuts and flat. The strip stays generic: it takes
+  its minimum, maximum, gain limit, shape list, slopes and auto modes from the
+  snapshot, not from hard-coded band names.
 - Below `1000px` both stacks flatten to a single column in 01 → 05 order.
   `prefers-reduced-motion` disables transitions.
 

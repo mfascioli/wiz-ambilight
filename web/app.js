@@ -126,10 +126,16 @@ const refs = {
   eqFaders: document.getElementById("eqFaders"),
   eqDetail: document.getElementById("eqDetail"),
   eqDetailTitle: document.getElementById("eqDetailTitle"),
+  eqType: document.getElementById("eqType"),
+  eqSlopeField: document.getElementById("eqSlopeField"),
+  eqSlope: document.getElementById("eqSlope"),
+  eqSlopeOut: document.getElementById("eqSlopeOut"),
+  eqSolo: document.getElementById("eqSolo"),
   eqFreq: document.getElementById("eqFreq"),
   eqFreqOut: document.getElementById("eqFreqOut"),
   eqQ: document.getElementById("eqQ"),
   eqQOut: document.getElementById("eqQOut"),
+  eqQField: document.getElementById("eqQField"),
   eqGain: document.getElementById("eqGain"),
   eqGainOut: document.getElementById("eqGainOut"),
   eqLamp: document.getElementById("eqLamp"),
@@ -151,6 +157,7 @@ const refs = {
   brightnessOut: document.getElementById("brightnessOut"),
   vibrance: document.getElementById("vibrance"),
   vibranceOut: document.getElementById("vibranceOut"),
+  whiteLeds: document.getElementById("whiteLeds"),
   dryRun: document.getElementById("dryRun"),
   controlCard: document.getElementById("controlCard"),
   log: document.getElementById("log"),
@@ -1451,9 +1458,12 @@ function eqRemapBands(bands, count) {
     }
     return {
       freq: Math.round(freq * 100) / 100,
+      type: best?.type || "bell",
       gain: best ? Number(best.gain) || 0 : 0,
       q: best ? Number(best.q) || 1.4 : 1.4,
+      slope: best ? Number(best.slope) || 24 : 24,
       lamp: best ? Number(best.lamp ?? -1) : -1,
+      solo: Boolean(best?.solo),
     };
   });
 }
@@ -1484,6 +1494,64 @@ function buildEqAuto(snapshot) {
     refs.reactAuto.append(option);
   }
   refs.reactAuto.dataset.signature = signature;
+}
+
+function eqTypes(snapshot) {
+  return snapshot?.eq_limits?.types || [
+    { id: "bell", label: "Bell" },
+    { id: "bandpass", label: "Band pass" },
+    { id: "lowpass", label: "Low pass" },
+    { id: "highpass", label: "High pass" },
+    { id: "notch", label: "Notch" },
+    { id: "flat", label: "Flat" },
+  ];
+}
+
+function eqSlopes(snapshot) {
+  return snapshot?.eq_limits?.slopes || [12, 24, 48];
+}
+
+function buildEqType(snapshot) {
+  const types = eqTypes(snapshot);
+  const signature = JSON.stringify(types.map((type) => [type.id, type.label]));
+  if (refs.eqType.dataset.signature === signature) return;
+  refs.eqType.replaceChildren();
+  for (const type of types) {
+    const option = document.createElement("option");
+    option.value = type.id;
+    option.textContent = type.label;
+    refs.eqType.append(option);
+  }
+  refs.eqType.dataset.signature = signature;
+}
+
+function buildEqSlope(snapshot) {
+  const slopes = eqSlopes(snapshot);
+  const signature = JSON.stringify(slopes);
+  if (refs.eqSlope.dataset.signature === signature) return;
+  refs.eqSlope.replaceChildren();
+  for (const slope of slopes) {
+    const option = document.createElement("option");
+    option.value = String(slope);
+    option.textContent = `${slope} dB/oct`;
+    refs.eqSlope.append(option);
+  }
+  refs.eqSlope.dataset.signature = signature;
+}
+
+function eqTypeShort(type) {
+  return {
+    bell: "BELL",
+    bandpass: "BPASS",
+    lowpass: "LPASS",
+    highpass: "HPASS",
+    notch: "NOTCH",
+    flat: "FLAT",
+  }[type] || "BELL";
+}
+
+function eqUsesSlope(type) {
+  return type === "lowpass" || type === "highpass" || type === "bandpass";
 }
 
 function eqFill(fader, gain) {
@@ -1533,12 +1601,24 @@ function buildEqFaders(snapshot) {
       fader.dataset.index = String(index);
       fader.setAttribute("aria-label", `Band ${index + 1} gain`);
       const freq = el("span", "eq-band-freq", eqShortFreq(band.freq));
+      const tags = el("div", "eq-band-tags");
+      const shape = el("span", "eq-band-shape", eqTypeShort(band.type));
+      shape.title = eqTypes(state.snapshot).find((type) => type.id === band.type)?.label
+        || "Bell";
+      const solo = document.createElement("button");
+      solo.type = "button";
+      solo.className = "eq-band-solo";
+      solo.textContent = "S";
+      solo.title = `Solo band ${index + 1}`;
+      solo.dataset.index = String(index);
+      solo.setAttribute("aria-label", `Solo band ${index + 1}`);
+      tags.append(shape, solo);
       const lamp = document.createElement("select");
       lamp.className = "eq-band-lamp";
       lamp.dataset.index = String(index);
       lamp.setAttribute("aria-label", `Band ${index + 1} lamp`);
       fillEqLampSelect(lamp, lamps, band.lamp ?? -1);
-      column.append(gain, fader, freq, lamp);
+      column.append(gain, fader, freq, tags, lamp);
       refs.eqFaders.append(column);
     });
     refs.eqFaders.dataset.signature = signature;
@@ -1550,6 +1630,8 @@ function buildEqFaders(snapshot) {
     const gain = column.querySelector(".eq-band-gain");
     const fader = column.querySelector('input[type="range"]');
     const freq = column.querySelector(".eq-band-freq");
+    const shape = column.querySelector(".eq-band-shape");
+    const solo = column.querySelector(".eq-band-solo");
     const lamp = column.querySelector("select");
     if (gain) gain.textContent = Number(band.gain).toFixed(1);
     if (fader && document.activeElement !== fader) {
@@ -1557,6 +1639,16 @@ function buildEqFaders(snapshot) {
     }
     if (fader) eqFill(fader, band.gain);
     if (freq) freq.textContent = eqShortFreq(band.freq);
+    if (shape) {
+      shape.textContent = eqTypeShort(band.type);
+      shape.title = eqTypes(state.snapshot || {}).find(
+        (type) => type.id === band.type,
+      )?.label || "Bell";
+    }
+    if (solo) {
+      solo.classList.toggle("active", Boolean(band.solo));
+      solo.setAttribute("aria-pressed", String(Boolean(band.solo)));
+    }
     if (lamp) fillEqLampSelect(lamp, lamps, band.lamp ?? -1);
   });
 }
@@ -1590,12 +1682,43 @@ function eqY(gain, plot) {
   return mid - ratio * ((plot.bottom - plot.top) / 2);
 }
 
+function eqBandGain(freq, band) {
+  const centre = Math.max(20, Number(band.freq) || 1000);
+  const gain = Number(band.gain || 0);
+  const q = Math.max(0.4, Number(band.q) || 1.4);
+  const kind = band.type || "bell";
+  const octaves = Math.log2(freq / centre);
+  const sigma = Math.max(0.07, 0.60 / q);
+  if (kind === "lowpass") {
+    const order = Math.max(1, Number(band.slope || 24) / 6);
+    return gain - 18 * (1 - 1 / (1 + (freq / centre) ** order));
+  }
+  if (kind === "highpass") {
+    const order = Math.max(1, Number(band.slope || 24) / 6);
+    return gain - 18 * (1 - 1 / (1 + (centre / freq) ** order));
+  }
+  if (kind === "notch") {
+    return gain - 18 * Math.exp(-0.5 * (octaves / sigma) ** 2);
+  }
+  if (kind === "flat") {
+    return gain;
+  }
+  if (kind === "bandpass") {
+    const order = Math.max(1, Number(band.slope || 24) / 6);
+    const edge = 2 ** (0.5 / q);
+    const low = centre / edge;
+    const high = centre * edge;
+    const below = 1 / (1 + (low / freq) ** order);
+    const above = 1 / (1 + (freq / high) ** order);
+    return gain - 18 * (1 - below * above);
+  }
+  return gain * Math.exp(-0.5 * (octaves / sigma) ** 2);
+}
+
 function eqCurveGain(freq, bands) {
   let total = 0;
   for (const band of bands) {
-    const octaves = Math.log2(freq / Math.max(20, Number(band.freq) || 1000));
-    const sigma = Math.max(0.07, 0.60 / Math.max(0.4, Number(band.q) || 1.4));
-    total += Number(band.gain || 0) * Math.exp(-0.5 * (octaves / sigma) ** 2);
+    total += eqBandGain(freq, band);
   }
   return Math.max(-18, Math.min(18, total));
 }
@@ -1668,6 +1791,15 @@ function drawEq() {
     ctx.arc(x, y, index === state.eq.selected ? 5 : 3.4, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.fill();
+    if (band.solo) {
+      ctx.beginPath();
+      ctx.arc(x, y, 9, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(252, 190, 17, .9)";
+      ctx.setLineDash([2, 2]);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     if (index === state.eq.selected) {
       ctx.beginPath();
       ctx.arc(x, y, 7, 0, Math.PI * 2);
@@ -1676,15 +1808,30 @@ function drawEq() {
       ctx.stroke();
     }
   });
-  refs.eqSummary.textContent = `${bands.length} bands · ${bands.filter(
-    (band) => Number(band.lamp) >= 0,
-  ).length} assigned`;
+  const assigned = bands.filter((band) => Number(band.lamp) >= 0).length;
+  const soloed = bands.filter((band) => band.solo).length;
+  refs.eqSummary.textContent = `${bands.length} bands · ${assigned} assigned${
+    soloed ? ` · ${soloed} solo` : ""
+  }`;
 }
 
 function syncEqDetail() {
   const band = state.eq.bands[state.eq.selected];
   if (!band) return;
+  const kind = band.type || "bell";
   refs.eqDetailTitle.textContent = `Band ${state.eq.selected + 1}`;
+  if (document.activeElement !== refs.eqType) refs.eqType.value = kind;
+  const usesSlope = eqUsesSlope(kind);
+  refs.eqSlopeField.classList.toggle("hidden", !usesSlope);
+  refs.eqSlopeOut.value = String(band.slope || 24);
+  if (document.activeElement !== refs.eqSlope) {
+    refs.eqSlope.value = String(band.slope || 24);
+  }
+  refs.eqQField.classList.toggle(
+    "hidden",
+    kind === "lowpass" || kind === "highpass" || kind === "flat",
+  );
+  refs.eqSolo.checked = Boolean(band.solo);
   refs.eqFreqOut.value = `${eqShortFreq(band.freq)} Hz`;
   if (document.activeElement !== refs.eqFreq) {
     refs.eqFreq.value = String(Math.round(eqFreqToLog(band.freq)));
@@ -1696,22 +1843,45 @@ function syncEqDetail() {
   fillEqLampSelect(refs.eqLamp, state.eq.lamps, band.lamp ?? -1);
 }
 
-function updateEqBandDom(index) {
-  const column = refs.eqFaders.querySelector(`.eq-band[data-index="${index}"]`);
-  const band = state.eq.bands[index];
-  if (!column || !band) return;
-  refs.eqFaders.querySelectorAll(".eq-band").forEach((item, itemIndex) => {
-    item.classList.toggle("selected", itemIndex === state.eq.selected);
-  });
+function paintEqBand(column, band) {
   const gain = column.querySelector(".eq-band-gain");
   const fader = column.querySelector('input[type="range"]');
   const freq = column.querySelector(".eq-band-freq");
+  const shape = column.querySelector(".eq-band-shape");
+  const solo = column.querySelector(".eq-band-solo");
   const lamp = column.querySelector("select");
   if (gain) gain.textContent = Number(band.gain).toFixed(1);
   if (fader && document.activeElement !== fader) fader.value = String(band.gain);
   if (fader) eqFill(fader, band.gain);
   if (freq) freq.textContent = eqShortFreq(band.freq);
-  if (lamp) lamp.value = String(band.lamp ?? -1);
+  if (shape) {
+    shape.textContent = eqTypeShort(band.type);
+    shape.title = eqTypes(state.snapshot || {}).find(
+      (type) => type.id === band.type,
+    )?.label || "Bell";
+  }
+  if (solo) {
+    solo.classList.toggle("active", Boolean(band.solo));
+    solo.setAttribute("aria-pressed", String(Boolean(band.solo)));
+  }
+  if (lamp && document.activeElement !== lamp) {
+    lamp.value = String(band.lamp ?? -1);
+  }
+}
+
+function refreshEqBands() {
+  refs.eqFaders.querySelectorAll(".eq-band").forEach((column, index) => {
+    column.classList.toggle("selected", index === state.eq.selected);
+    const band = state.eq.bands[index];
+    if (band) paintEqBand(column, band);
+  });
+}
+
+function updateEqBandDom(index) {
+  const column = refs.eqFaders.querySelector(`.eq-band[data-index="${index}"]`);
+  const band = state.eq.bands[index];
+  if (!column || !band) return;
+  refreshEqBands();
   syncEqDetail();
   drawEq();
 }
@@ -1721,6 +1891,8 @@ function syncEqFields(snapshot, config, reaction) {
   if (!reaction?.audio) return;
   buildEqCount(snapshot);
   buildEqAuto(snapshot);
+  buildEqType(snapshot);
+  buildEqSlope(snapshot);
   const next = Array.isArray(config.react_eq) ? config.react_eq : [];
   // A count change always wins over a focused control: the server just gave us
   // the new band list. Otherwise keep local values while a fader is in use so
@@ -1745,6 +1917,7 @@ function syncEqFields(snapshot, config, reaction) {
   refs.reactAuto.title = auto?.hint || "";
   refs.reactActiveBands.checked = Boolean(config.react_active_bands);
   buildEqFaders(snapshot);
+  refreshEqBands();
   syncEqDetail();
   drawEq();
 }
@@ -1873,6 +2046,7 @@ function renderSettings(snapshot) {
     paintRange(refs.vibrance);
   }
   refs.dryRun.checked = Boolean(config.dry_run);
+  refs.whiteLeds.checked = Boolean(config.white_leds);
   refs.lookPill.textContent = config.style;
   renderReactionHint(config.react);
   syncReactionFields(snapshot, config);
@@ -2056,7 +2230,14 @@ function renderControl(snapshot) {
   refs.saveSceneBtn.disabled = !hasLights;
   refs.powerToggle.disabled = !hasTarget;
   if (document.activeElement !== refs.powerToggle) refs.powerToggle.checked = anyOn;
-  refs.powerState.textContent = hasTarget ? (anyOn ? "On" : "Off") : "—";
+  const metered = lights.filter((row) => Number.isFinite(row.power));
+  const watts = metered.reduce((sum, row) => sum + row.power, 0);
+  let powerText = hasTarget ? (anyOn ? "On" : "Off") : "—";
+  if (anyOn && metered.length) {
+    const partial = metered.length < lights.length ? ` (${metered.length}/${lights.length})` : "";
+    powerText += ` · ${formatWatts(watts)}${partial}`;
+  }
+  refs.powerState.textContent = powerText;
   refs.powerState.classList.toggle("on", anyOn);
 
   if (!light) return;
@@ -2241,10 +2422,15 @@ function lastValue(values) {
 }
 
 function formatMetric(key, value) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
   if (key.endsWith("Cpu")) return `${value < 1 ? value.toFixed(2) : value.toFixed(1)}%`;
   if (key.endsWith("Ram")) return `${Math.round(value)} MB`;
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} KB/s`;
+}
+
+function formatWatts(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} W`;
 }
 
 function pushPerf(res) {
@@ -2886,6 +3072,18 @@ refs.reactActiveBands.addEventListener("change", () =>
   saveConfig({ react_active_bands: refs.reactActiveBands.checked }),
 );
 refs.eqFaders.addEventListener("click", (event) => {
+  const solo = event.target.closest(".eq-band-solo");
+  if (solo) {
+    const index = Number(solo.dataset.index);
+    const band = state.eq.bands[index];
+    if (band) {
+      state.eq.selected = index;
+      band.solo = !band.solo;
+      updateEqBandDom(index);
+      saveEq();
+    }
+    return;
+  }
   const column = event.target.closest(".eq-band");
   if (!column) return;
   state.eq.selected = Number(column.dataset.index);
@@ -2938,6 +3136,28 @@ refs.eqQ.addEventListener("input", () => {
   drawEq();
 });
 refs.eqQ.addEventListener("change", saveEq);
+refs.eqType.addEventListener("change", () => {
+  const band = state.eq.bands[state.eq.selected];
+  if (!band) return;
+  band.type = refs.eqType.value;
+  updateEqBandDom(state.eq.selected);
+  saveEq();
+});
+refs.eqSlope.addEventListener("change", () => {
+  const band = state.eq.bands[state.eq.selected];
+  if (!band) return;
+  band.slope = Number(refs.eqSlope.value) || 24;
+  refs.eqSlopeOut.value = String(band.slope);
+  updateEqBandDom(state.eq.selected);
+  saveEq();
+});
+refs.eqSolo.addEventListener("change", () => {
+  const band = state.eq.bands[state.eq.selected];
+  if (!band) return;
+  band.solo = refs.eqSolo.checked;
+  updateEqBandDom(state.eq.selected);
+  saveEq();
+});
 refs.eqGain.addEventListener("input", () => {
   const band = state.eq.bands[state.eq.selected];
   if (!band) return;
@@ -3053,6 +3273,11 @@ refs.vibrance.addEventListener("input", () => {
 refs.vibrance.addEventListener("change", () => {
   const value = Number(refs.vibrance.value) / 100;
   if (value !== state.snapshot?.config.vibrance) saveConfig({ vibrance: value });
+});
+refs.whiteLeds.addEventListener("change", () => {
+  if (refs.whiteLeds.checked !== Boolean(state.snapshot?.config.white_leds)) {
+    saveConfig({ white_leds: refs.whiteLeds.checked });
+  }
 });
 refs.dryRun.addEventListener("change", () => {
   if (refs.dryRun.checked !== Boolean(state.snapshot?.config.dry_run)) {

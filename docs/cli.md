@@ -63,6 +63,7 @@ from `--style`; the style table is in the [README](../README.md#-styles).
 | `--smooth` | style (0–220) | 0–2000 ms | Fade constant; `0` disables interpolation. |
 | `--saturation` | style (1.15–1.45) | 0–4 after vibrance | Base saturation. |
 | `--vibrance` | `1.0` | 0–2 | Multiplies the style's saturation; `1` is unchanged. |
+| `--white-leds` | off | flag | Send the grey part of each color (`min(r, g, b)`) on the bulb's `c` and `w` channels, following cB-Sigma/wiz. Saturated colors are unchanged. |
 | `--gamma` | style (`1.0`) | 0.2–3 | Output gamma. |
 | `--brightness` | style (80–100) | 10–100 | Bulb dimming. |
 | `--send-hz` | style (15–30) | 1–30 | Maximum `setPilot` updates per second. Audio modes send at 30 Hz. |
@@ -81,7 +82,7 @@ from `--style`; the style table is in the [README](../README.md#-styles).
 | `--react-profile` | `balanced` | `soft`, `balanced`, `strong` | Intensity profile. In audio modes it bundles gate, ceiling, envelope and punch. |
 | `--react-bands` | [8 defaults](../README.md#-audio-colors) | exactly `--react-eq-bands` `#rrggbb` values | One color per EQ band, low to high (`bands` mode). |
 | `--react-eq-bands` | `8` | 2–16 | Number of graphic-EQ bands. |
-| `--react-eq` | log-spaced 32 Hz–16 kHz | JSON array | Per-band `{freq,gain,q,lamp}`; `lamp` is a 0-based enabled-bulb index or `-1` for auto. |
+| `--react-eq` | log-spaced 32 Hz-16 kHz | JSON array | Per-band `{freq,type,slope,gain,q,lamp,solo}`; `type` is `bell`, `bandpass`, `lowpass`, `highpass`, `notch` or `flat`, `slope` is 12, 24 or 48 dB/oct, `lamp` is a 0-based enabled-bulb index or `-1` for auto, and `solo` makes every bulb follow that band. |
 | `--react-auto` | `off` | `off`, `ssl`, `api`, `hybrid` | Compressor-inspired auto release; `ssl` uses dual program-dependent release, `api` adds a soft knee and low-end thrust. |
 | `--react-active-bands` | off | flag | Only bands above their own noise floor (4 dB, 180 ms hold) light a bulb. |
 | `--react-color-mode` | `bands` | `bands`, `spectrum`, `rainbow`, `range`, `level`, `single` | Where audio bulb colors come from. |
@@ -99,16 +100,22 @@ release / punch). The four named presets are in the
 
 `--react-eq` is a JSON array in frequency order. A band missing from the array
 keeps its log-spaced default at that position, and the array is sorted before
-use. For example, a surgical low cut and a sparkle boost on three bulbs:
+use. `type` defaults to `bell` and `slope` to `24`, so old arrays keep working.
+For example, a low pass that follows the bass, a band pass on the mids and a
+sparkle bell, with the bass soloed on every bulb:
 
 ```bash
 ./mpv_ambilight.py --react vu \
-  --react-eq '[{"freq":60,"gain":-12,"q":3.2,"lamp":0},{"freq":250,"gain":4,"q":0.9,"lamp":1},{"freq":9000,"gain":6,"q":5,"lamp":2}]' \
+  --react-eq '[{"freq":60,"type":"lowpass","slope":24,"gain":-12,"lamp":0,"solo":true},{"freq":900,"type":"bandpass","slope":48,"q":2.4,"gain":4,"lamp":1},{"freq":9000,"type":"bell","q":5,"gain":6,"lamp":2}]' \
   song.flac
 ```
 
-Gain only shapes detection, never mpv's output. Bands that share a lamp are
-averaged; lamps without an assignment follow the overall mix.
+Gain only shapes detection, never mpv's output. Shapes change which part of the
+mix the band hears: `lowpass` keeps everything below its frequency, `highpass`
+everything above, `bandpass` a slice around it, `notch` cuts the centre out and
+`flat` hears the full mix. Bands that share a lamp are averaged; lamps without
+an assignment follow the overall mix. A soloed band overrides every lamp
+assignment until you clear it.
 
 ### Sampling
 
@@ -129,6 +136,11 @@ averaged; lamps without an assignment follow the overall mix.
 | `--speed` | — | 20–200 | Scene speed; requires `--scene`. |
 | `--power` | — | `on`, `off`, `toggle` | Power state. `off` cannot be combined with any other control. |
 | `--dry-run` | off | flag | Print the colors or payloads instead of sending them. Applies to the sync and to `--set`. |
+
+The panel adds the target's metered draw to its power state (`On · 4.2 W`) when
+the firmware reports it, reading `pc` from `getPilot` or asking `getPower` on
+older metering models. Bulbs without metering just show `On`, and `--set` has no
+power readout.
 
 ### Debugging
 
