@@ -6,7 +6,9 @@ import json
 import os
 import socket
 import sys
+import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -409,6 +411,41 @@ class ReactionMathTests(unittest.TestCase):
         self.assertGreaterEqual(m.equalize_gain(1.0, 0.95, 1.0, 0.35), 0.35)
         self.assertLessEqual(m.equalize_gain(0.0, 0.05, 1.0, 0.35), 2.0)
 
+    def test_lux_gain_uses_the_same_caps(self):
+        self.assertAlmostEqual(m.lux_gain(50.0, 50.0, 0.35, 0.35), 1.0)
+        self.assertAlmostEqual(m.lux_gain(10.0, 50.0, 0.35, 0.35), 1.35)
+        self.assertAlmostEqual(m.lux_gain(200.0, 50.0, 0.35, 0.35), 0.65)
+        self.assertGreaterEqual(m.lux_gain(0.0, 5000.0, 1.0, 0.35), 0.35)
+
+    def test_read_lux_accepts_a_fresh_reading(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lux.json"
+            path.write_text('{"lux": 42.5}', encoding="utf-8")
+            self.assertEqual(m.read_lux(path), 42.5)
+            self.assertEqual(m.read_lux(path, max_age=None), 42.5)
+
+    def test_read_lux_rejects_stale_or_invalid_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lux.json"
+            path.write_text('{"lux": 42.5}', encoding="utf-8")
+            old = time.time() - m.LUX_STALE_SECONDS - 1
+            os.utime(path, (old, old))
+            self.assertIsNone(m.read_lux(path))
+            self.assertEqual(m.read_lux(path, max_age=None), 42.5)
+
+            for body in (
+                "",
+                "not json",
+                "[]",
+                '{"lux": true}',
+                '{"lux": -1}',
+                '{"lux": 999999}',
+                '{"lux": "bright"}',
+            ):
+                with self.subTest(body=body):
+                    path.write_text(body, encoding="utf-8")
+                    self.assertIsNone(m.read_lux(path, max_age=None))
+
     def test_vu_level_maps_dbfs(self):
         self.assertEqual(m.vu_level(-60), 0.0)
         self.assertEqual(m.vu_level(-45), 0.0)
@@ -671,6 +708,82 @@ class ReactionModeTests(unittest.TestCase):
             raw={"a": (255, 255, 255)},
         )
         self.assertEqual(reaction.dimming("a", 73, 100.1, 0.05), 73)
+
+    def test_auto_lux_is_a_layer_over_every_reaction(self):
+        for mode in ("color", "equalize", "cut", "motion", "duotone"):
+            with self.subTest(mode=mode):
+                base = m.Reaction(mode, 1.0, 0.45)
+                self.update(
+                    base,
+                    100.0,
+                    zones={"all": [128, 128, 128]},
+                    raw={"a": (128, 128, 128)},
+                )
+                reference = base.dimming("a", 60, 100.1, 0.05)
+
+                dark = m.Reaction(mode, 1.0, 0.45, auto_lux=True, lux_target=50.0)
+                dark.lux = 10.0
+                self.update(
+                    dark,
+                    100.0,
+                    zones={"all": [128, 128, 128]},
+                    raw={"a": (128, 128, 128)},
+                )
+                self.assertGreater(
+                    dark.dimming("a", 60, 100.1, 0.05), reference, mode
+                )
+
+                bright = m.Reaction(mode, 1.0, 0.45, auto_lux=True, lux_target=50.0)
+                bright.lux = 200.0
+                self.update(
+                    bright,
+                    100.0,
+                    zones={"all": [128, 128, 128]},
+                    raw={"a": (128, 128, 128)},
+                )
+                self.assertLess(
+                    bright.dimming("a", 60, 100.1, 0.05), reference, mode
+                )
+
+    def test_auto_lux_off_ignores_the_sensor(self):
+        reaction = m.Reaction("color", 1.0, 0.45)
+        reaction.lux = 10.0
+        self.update(
+            reaction,
+            100.0,
+            zones={"all": [128, 128, 128]},
+            raw={"a": (128, 128, 128)},
+        )
+        self.assertEqual(reaction.dimming("a", 60, 100.1, 0.05), 60)
+
+    def test_auto_lux_without_a_reading_is_neutral(self):
+        reaction = m.Reaction("color", 1.0, 0.45, auto_lux=True)
+        self.update(
+            reaction,
+            100.0,
+            zones={"all": [128, 128, 128]},
+            raw={"a": (128, 128, 128)},
+        )
+        self.assertEqual(reaction.dimming("a", 60, 100.1, 0.05), 60)
+
+    def test_equalize_falls_back_to_luma_when_auto_lux_has_no_reading(self):
+        reaction = m.Reaction("equalize", 1.0, 0.45, auto_lux=True)
+        self.update(
+            reaction,
+            100.0,
+            zones={"all": [230, 230, 230]},
+            raw={"a": (230, 230, 230)},
+        )
+        self.assertLess(reaction.dimming("a", 80, 100.1, 0.05), 80)
+
+    def test_auto_lux_uses_the_equalize_profile_in_every_mode(self):
+        soft = m.Reaction("color", 1.0, 0.45, "soft", auto_lux=True)
+        strong = m.Reaction("color", 1.0, 0.45, "strong", auto_lux=True)
+        self.assertLess(soft.lux_span, strong.lux_span)
+        self.assertGreater(soft.lux_tau, strong.lux_tau)
+        cut = m.Reaction("cut", 1.0, 0.45, "strong", auto_lux=True)
+        self.assertEqual(cut.lux_span, strong.lux_span)
+        self.assertEqual(cut.lux_floor, strong.lux_floor)
 
     def test_cut_flashes_then_reserves_headroom(self):
         reaction = m.Reaction("cut", 1.0, 0.45)

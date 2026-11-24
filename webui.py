@@ -43,6 +43,8 @@ CONFIG_KEYS = (
     "react",
     "react_amount",
     "react_target",
+    "auto_lux",
+    "lux_target",
     "react_profile",
     "react_bands",
     "react_eq_bands",
@@ -75,6 +77,8 @@ DEFAULT_CONFIG = {
     "react": "color",
     "react_amount": 0.8,
     "react_target": 0.45,
+    "auto_lux": False,
+    "lux_target": 50.0,
     "react_profile": "balanced",
     "react_bands": [],
     "react_eq_bands": 8,
@@ -221,6 +225,12 @@ def normalize_config(raw, core) -> dict:
         config["react_target"] = max(0.05, min(0.95, float(config["react_target"])))
     except (TypeError, ValueError):
         config["react_target"] = 0.45
+    try:
+        config["lux_target"] = max(
+            1.0, min(core.LUX_TARGET_MAX, float(config["lux_target"]))
+        )
+    except (TypeError, ValueError):
+        config["lux_target"] = core.LUX_TARGET
     if config["react_profile"] not in core.PROFILE_LABELS:
         config["react_profile"] = "balanced"
     try:
@@ -282,6 +292,7 @@ def normalize_config(raw, core) -> dict:
         config["mode"] = "attach"
     config["media"] = str(config["media"] or "")[:4096]
     config["dry_run"] = bool(config["dry_run"])
+    config["auto_lux"] = bool(config["auto_lux"])
 
     sampling_choices = ("auto", "manual", *getattr(core, "SAMPLING_PROFILES", {}))
     if config["sampling"] not in sampling_choices:
@@ -524,6 +535,9 @@ def build_command(config: dict, core, demo: bool = False):
         f"{config.get('react_amount', 0.8):g}",
         "--react-target",
         f"{config.get('react_target', 0.45):g}",
+        *(["--auto-lux"] if config.get("auto_lux") else []),
+        "--lux-target",
+        f"{config.get('lux_target', core.LUX_TARGET):g}",
         "--react-profile",
         config.get("react_profile", "balanced"),
         "--react-bands",
@@ -1287,6 +1301,28 @@ class Panel:
             "capture": stats_file.get("capture") if stats_file else None,
         }
 
+    def lux_status(self):
+        """The optional bridge's latest reading, with its age.
+
+        The panel is only a viewer here: the sync and the bridge own the file
+        and the control loop. Returning None is the normal state without a
+        sensor, not an error.
+        """
+        path = runtime_dir() / "lux.json"
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        value = self.core.read_lux(path, max_age=None)
+        if value is None:
+            return None
+        age = max(0.0, time.time() - stat.st_mtime)
+        return {
+            "value": round(value, 1),
+            "age": round(age, 1),
+            "fresh": age <= self.core.LUX_STALE_SECONDS,
+        }
+
     def snapshot(self) -> dict:
         with self.lock:
             config = json.loads(json.dumps(self.config))
@@ -1398,6 +1434,7 @@ class Panel:
             ],
             "session": self.session.snapshot(),
             "lua": self.lua_status(),
+            "lux": self.lux_status(),
             "scanned": self.scanned,
             "network": [
                 f"{address}/{prefix}"

@@ -144,6 +144,15 @@
                 <label for="reactAmount">Reaction strength <output id="reactAmountOut">80</output></label>
                 <input id="reactAmount" type="range" min="0" max="100" step="1" value="80">
               </div>
+              <div class="field">
+                <label class="check" for="autoLux">
+                  <input type="checkbox" id="autoLux">
+                  <span>Auto Lux</span>
+                </label>
+                <p class="hint tight" id="autoLuxHint">
+                  Adds measured-light brightness to any reaction.
+                </p>
+              </div>
               <div class="field" id="reactProfileField">
                 <label for="reactProfile">Reaction profile</label>
                 <select id="reactProfile"></select>
@@ -152,6 +161,11 @@
               <div class="field" id="reactTargetField">
                 <label for="reactTarget">Target luma <output id="reactTargetOut">45</output></label>
                 <input id="reactTarget" type="range" min="5" max="95" step="1" value="45">
+              </div>
+              <div class="field hidden" id="luxField">
+                <label for="luxTarget">Target lux <output id="luxTargetOut">50</output></label>
+                <input id="luxTarget" type="number" min="1" max="5000" step="1" value="50">
+                <p class="hint tight" id="luxReadout" hidden></p>
               </div>
               <div class="field" id="reactBandsField">
                 <label for="reactColorMode">Audio colors</label>

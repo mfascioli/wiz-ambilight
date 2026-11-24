@@ -4,6 +4,15 @@ Releases before 1.4.0 were never tagged; their history is in `git log`.
 
 ## Unreleased
 
+- **Auto Lux:** an optional measured-light layer for **every** reaction. A
+  checkbox in **Look** (or `--auto-lux`) makes `contrib/lux-bridge.py` receive
+  `POST /lux` from an ESP32 and write `{"lux": …}` to `lux.json` atomically at
+  `0600`; while the reading is under 5 s old it sets the base brightness and
+  the chosen reaction keeps its colors and pulses. A missing, malformed or
+  stale file leaves the reaction untouched, and Equalize falls back to its
+  luma target. `contrib/esp32-bh1750/` holds the sketch and
+  `contrib/lux-sensor.md` the wiring, service and limits; the panel shows the
+  reading and its age.
 - **Audio:** `beat` and `vu` now share a compressor-style level stage.
   `pulse_level` gates levels below a dBFS threshold, maps the window up to a
   ceiling onto 0…1 and applies a punch curve, so a solid hit reaches full
@@ -69,7 +78,7 @@ Releases before 1.4.0 were never tagged; their history is in `git log`.
   and `#38bdf8`.
 - **Docs:** README, `docs/development.md`, `docs/design.md` and `AGENTS.md`
   describe the dynamics stage, the timeline, the knobs and the graphic EQ. The
-  roadmap now includes the UI/UX redesign as item 5.
+  roadmap now includes the UI/UX redesign as its last item.
 - **Docs:** the README follows one reading path and teaches the panel first.
   **Getting Started** absorbs the old Installation and Quick Start: one clone
   plus `--gui`, and cloning never copies the Lua script into mpv — only attach

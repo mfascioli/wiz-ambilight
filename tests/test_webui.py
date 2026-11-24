@@ -128,6 +128,8 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(config["react"], "color")
         self.assertEqual(config["react_amount"], 0.8)
         self.assertEqual(config["react_target"], 0.45)
+        self.assertFalse(config["auto_lux"])
+        self.assertEqual(config["lux_target"], 50.0)
         self.assertEqual(config["react_profile"], "balanced")
         self.assertEqual(config["react_eq_bands"], m.DEFAULT_EQ_BANDS)
         self.assertEqual(len(config["react_eq"]), m.DEFAULT_EQ_BANDS)
@@ -150,6 +152,7 @@ class NormalizeTests(unittest.TestCase):
                 "react": "strobe",
                 "react_amount": 9,
                 "react_target": "x",
+                "auto_lux": 1,
                 "react_profile": "extreme",
                 "react_bands": ["#FF0000"],
                 "react_eq_bands": 99,
@@ -163,6 +166,7 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(bad["react"], "color")
         self.assertEqual(bad["react_amount"], 1.0)
         self.assertEqual(bad["react_target"], 0.45)
+        self.assertTrue(bad["auto_lux"])
         self.assertEqual(bad["react_profile"], "balanced")
         self.assertEqual(bad["react_eq_bands"], m.MAX_BANDS)
         self.assertEqual(len(bad["react_eq"]), m.MAX_BANDS)
@@ -180,6 +184,17 @@ class NormalizeTests(unittest.TestCase):
         )
         self.assertEqual(
             webui.normalize_config({"react_target": 2}, m)["react_target"], 0.95
+        )
+        self.assertEqual(
+            webui.normalize_config({"lux_target": 0}, m)["lux_target"], 1.0
+        )
+        self.assertEqual(
+            webui.normalize_config({"lux_target": 99999}, m)["lux_target"],
+            m.LUX_TARGET_MAX,
+        )
+        self.assertEqual(
+            webui.normalize_config({"lux_target": "x"}, m)["lux_target"],
+            m.LUX_TARGET,
         )
 
     def test_every_reaction_survives_normalization(self):
@@ -368,6 +383,8 @@ class CommandTests(unittest.TestCase):
             react="beat",
             react_amount=0.55,
             react_target=0.6,
+            auto_lux=True,
+            lux_target=35,
             react_profile="strong",
             react_eq_bands=8,
             react_eq=eq,
@@ -387,6 +404,8 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--react") + 1], "beat")
         self.assertEqual(argv[argv.index("--react-amount") + 1], "0.55")
         self.assertEqual(argv[argv.index("--react-target") + 1], "0.6")
+        self.assertIn("--auto-lux", argv)
+        self.assertEqual(argv[argv.index("--lux-target") + 1], "35")
         self.assertEqual(argv[argv.index("--react-profile") + 1], "strong")
         self.assertEqual(argv[argv.index("--react-eq-bands") + 1], "8")
         passed_eq = json.loads(argv[argv.index("--react-eq") + 1])
@@ -407,6 +426,12 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--react-attack") + 1], "2")
         self.assertEqual(argv[argv.index("--react-release") + 1], "60")
         self.assertEqual(argv[argv.index("--react-punch") + 1], "3.5")
+
+    def test_auto_lux_is_opt_in(self):
+        config = make_config()
+        config["lights"] = {"10.0.0.1": {"enabled": True}}
+        argv, _ips, _zones = webui.build_command(config, m)
+        self.assertNotIn("--auto-lux", argv)
 
     def test_vibrance_is_passed_to_the_sync(self):
         config = make_config(vibrance=1.5)
@@ -534,6 +559,7 @@ class DemoPanelTests(unittest.TestCase):
         self.assertIn("hue", snapshot["styles"])
         self.assertIn("fps", snapshot["style_details"]["hue"])
         self.assertEqual(snapshot["config"]["react"], "color")
+        self.assertFalse(snapshot["config"]["auto_lux"])
         reactions = {reaction["id"]: reaction for reaction in snapshot["reactions"]}
         self.assertEqual(len(reactions), len(m.REACTIONS))
         self.assertEqual(reactions["beat"]["group"], "audio")
@@ -602,6 +628,24 @@ class DemoPanelTests(unittest.TestCase):
         self.assertIsInstance(snapshot["network"], list)
         self.assertIn("active", snapshot["crazy"])
         self.assertIn("resources", snapshot)
+
+    def test_lux_readout_is_reported_and_ages_out(self):
+        panel = webui.Panel(m, demo=True)
+        self.assertIsNone(panel.snapshot()["lux"])
+        runtime = Path(self.tmp.name) / "wiz-ambilight"
+        runtime.mkdir(parents=True, exist_ok=True)
+        path = runtime / "lux.json"
+        path.write_text('{"lux": 42.5}', encoding="utf-8")
+        lux = panel.snapshot()["lux"]
+        self.assertEqual(lux["value"], 42.5)
+        self.assertTrue(lux["fresh"])
+
+        old = time.time() - m.LUX_STALE_SECONDS - 1
+        os.utime(path, (old, old))
+        self.assertFalse(panel.snapshot()["lux"]["fresh"])
+
+        path.write_text("bogus", encoding="utf-8")
+        self.assertIsNone(panel.snapshot()["lux"])
 
     def test_snapshot_reflects_custom_reaction_config(self):
         path = Path(os.environ["WIZ_AMBILIGHT_GUI_CONFIG"])

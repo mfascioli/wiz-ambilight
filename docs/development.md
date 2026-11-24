@@ -16,6 +16,7 @@ design lives in [`design.md`](design.md).
 ├── lua/wiz_ambilight.lua   # runs inside mpv, writes zone colors as JSON
 ├── tests/                  # dependency-free unit tests
 │   ├── test_design.py      # the mpv-config design contract
+│   ├── test_lux.py         # lux bridge, parser and lux.json writes
 │   └── test_security.py    # loopback, process and docs invariants
 ├── assets/                 # README banners + their generator
 │   └── banner-fonts/       # Fira Sans Condensed for banner.py only
@@ -25,7 +26,7 @@ design lives in [`design.md`](design.md).
 │   ├── cli.md              # user-facing command line reference
 │   ├── design.md           # panel design language and layout
 │   └── gui.png             # the one panel screenshot in the README
-├── contrib/                # optional systemd user service
+├── contrib/                # systemd units, lux bridge, ESP32/BH1750 sketch
 └── upstream/               # original wiz-hack toolkit, kept for reference
 ```
 
@@ -41,6 +42,7 @@ without loading the server for normal playback.
 | `$XDG_RUNTIME_DIR/wiz-ambilight/state-<pid>.json` (launch) or `state.json` (attach) | Lua | zone colors, capture rate, mpv pid, and audio levels in audio modes |
 | `$XDG_RUNTIME_DIR/wiz-ambilight/stats-<pid>.json` | sync | UDP throughput, rewritten once a second |
 | `$XDG_RUNTIME_DIR/wiz-ambilight/control.json` | sync | makes the Lua script wake up in attach mode |
+| `$XDG_RUNTIME_DIR/wiz-ambilight/lux.json` | lux bridge (optional) | the latest measured illuminance, `0600` |
 | `$XDG_RUNTIME_DIR/wiz-ambilight/gui-daemon.json` | panel | the sync PID it started, for adoption |
 | `~/.config/wiz-ambilight/lights.json` | panel | bulbs, names, zones, rooms, saved colors |
 | `~/.config/wiz-ambilight/scenes.json` | panel | saved looks |
@@ -319,20 +321,48 @@ likewise raises the send rate to 30 Hz for audio modes. On an audio-only file
 the Lua script keeps emitting a heartbeat with `audio` and no `zones`; the sync
 holds a warm base color and drives only the brightness.
 
-## Light sensor design
+## Auto Lux (light sensor)
 
-Not implemented yet. The planned hook is deliberately file-based, so it adds
-no port, daemon or dependency: a BH1750 (or any sensor) writes
+`--auto-lux` and the **Auto Lux** checkbox add measured-light brightness on top
+of any reaction. The hook stays file-based, so the sync adds no port, daemon or
+dependency: a bridge writes
 
 ```json
 {"lux": 42.5}
 ```
 
-to `$XDG_RUNTIME_DIR/wiz-ambilight/lux.json`. A future `--lux-file` would read
-it, reject a stale file, and make Equalize target measured lux instead of scene
-luma; without a fresh file it falls back to `zones.all` as today. The panel
-would show the reading next to the reaction hint. Do not add the flag until the
-hardware path exists and has a test.
+to `$XDG_RUNTIME_DIR/wiz-ambilight/lux.json` and the sync reads it only while
+Auto Lux is enabled. `contrib/lux-bridge.py` (stdlib only) accepts `POST /lux`
+from an ESP32 and writes the file atomically at `0600`;
+`contrib/esp32-bh1750/` holds the sketch and `contrib/lux-sensor.md` the wiring
+and service setup.
+
+- `read_lux()` rejects a missing file, a malformed body, a boolean, a
+  non-finite or negative value, and anything above `LUX_MAX` (65535, the
+  BH1750 ceiling). A reading older than `LUX_STALE_SECONDS` (5 s) counts as
+  missing, so a stopped bridge stops correcting without a restart.
+- `Reaction.update()` computes `ambient_gain` once per frame and `dimming()`
+  multiplies every mode by it, so color, cut, motion, duotone, beat and vu keep
+  their own colors and pulses. It always uses the **Equalize** profile's
+  `span` / `tau` / `floor`, even when another reaction is selected, so
+  switching reactions never changes the ambient controller.
+- Equalize is the one exception: while Auto Lux has a fresh reading its luma
+  gain is held at `1.0` and Auto Lux owns brightness. Without a reading,
+  Equalize falls back to scene luma and `--react-target`.
+- `lux_gain()` mirrors `equalize_gain()`: `target / lux`, capped by `span` and
+  `floor`, then scaled by `react_amount`. The reading is smoothed with the
+  profile's `tau` before the ratio is taken, because the bulbs add light to the
+  room the sensor sees.
+- `--lux-target` is in lux (default 50, 1–5000) and is not a reused luma
+  value. The panel shows **Auto Lux**, **Target lux**, the current reading and
+  its age, and never writes the file itself.
+- The bridge binds `0.0.0.0:8766`; `WIZ_LUX_TOKEN` / `--token` adds an
+  `X-Lux-Token` check. It can only change brightness, never drive the bulbs or
+  run code.
+
+The parser, freshness window, gain, the per-mode layer and the Equalize
+fallback are covered by unit tests. The physical BH1750 path is not tested in
+CI.
 
 ## Tests and CI
 

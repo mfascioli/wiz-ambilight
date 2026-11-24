@@ -53,7 +53,10 @@ involved.
   explicitly chosen zones per bulb.
 - **Reactive modes.** Beyond plain color: equalize room brightness, flash on
   cuts, follow motion, split into a duotone, pulse on the beat or meter the
-  five audio bands. See [Reactions](#-reactions).
+  audio bands. See [Reactions](#-reactions).
+- **Optional light sensor.** A BH1750 on an ESP32 adds measured lux as
+  **Auto Lux**, a brightness layer over any reaction. See
+  [Reactions](#-reactions).
 - **Audio without a microphone.** Beat and VU read mpv's own audio analyser.
   See [Audio Processing](#-audio-processing).
 - **Panel telemetry.** **Activity** charts CPU, RAM and WiZ UDP traffic for mpv
@@ -328,6 +331,16 @@ lower values keep the room dimmer, higher values brighter. Equalize is
 deliberately slow; it averages the scene instead of pumping with every cut. It
 can only lift a dark scene when the brightness ceiling leaves room, so set
 **Brightness** around 80 if you want both directions; at 100 it mostly dims.
+
+**Auto Lux.** A checkbox in **Look** turns the optional light sensor into a
+brightness layer for **every** reaction: color, equalize, cut, motion, duotone,
+beat and vu keep their own colors and pulses, while Auto Lux holds the room at
+`--lux-target` (default `50`). `contrib/lux-bridge.py` receives a BH1750 reading
+over Wi-Fi and writes `lux.json`; while the file is fresh (under 5 s) the layer
+works, and a missing or stale file leaves the chosen reaction untouched.
+Equalize keeps `--react-target` as its fallback when there is no reading. The
+panel shows the current reading and its age. Setup, wiring and the limits are in
+[`contrib/lux-sensor.md`](contrib/lux-sensor.md).
 
 The panel exposes every reaction in **Look → Preset**, with the strength,
 profile or dynamics that apply. The matching flags and command examples are in
@@ -628,7 +641,7 @@ created with the permissions described in
 | Variable | Effect |
 | --- | --- |
 | `WIZ_LIGHTS` / `WIZ_LIGHT_IPS` | Default bulb list when `--lights` is absent. |
-| `XDG_RUNTIME_DIR` | Where `state*.json`, `stats-*.json`, `control.json` and `gui-daemon.json` live (default `/tmp/wiz-ambilight`). |
+| `XDG_RUNTIME_DIR` | Where `state*.json`, `stats-*.json`, `control.json`, `gui-daemon.json` and the optional `lux.json` live (default `/tmp/wiz-ambilight`). |
 | `XDG_CONFIG_HOME` | Base for `wiz-ambilight/lights.json`, `scenes.json` and `mpv/scripts/wiz_ambilight.lua` (default `~/.config`). |
 | `WIZ_AMBILIGHT_GUI_CONFIG` | Path to `lights.json`. |
 | `WIZ_AMBILIGHT_SCENES_CONFIG` | Path to `scenes.json`. |
@@ -689,7 +702,7 @@ contract is in [`docs/design.md`](docs/design.md).
 
 ![Roadmap banner: what is missing — Windows, measured transport and a clearer panel](assets/roadmap.png)
 
-Five pieces are known to be missing, in the order they matter:
+Four pieces are known to be missing, in the order they matter:
 
 1. **Windows.** One resolver for the runtime directory (Python and Lua must
    agree, or attach mode fails silently), `%APPDATA%\mpv\scripts` for
@@ -701,12 +714,7 @@ Five pieces are known to be missing, in the order they matter:
    reconciling with `getPilot` are worth their complexity.
 3. **Release hygiene.** A `SECURITY.md` refresh and an antivirus scan of each
    release archive, recorded with its date.
-4. **A real light sensor.** Equalize estimates room brightness from the video
-   today. A BH1750 or similar writing `lux.json` in the runtime directory
-   would let it target a measured lux instead; the hook is designed but not
-   implemented. See
-   [`docs/development.md`](docs/development.md#light-sensor-design).
-5. **UI/UX redesign.** The panel has grown control by control and now asks the
+4. **UI/UX redesign.** The panel has grown control by control and now asks the
    reader to hold too much in their head. Rework it around Apple's design
    principles — hierarchy, clarity, deference and depth — instead of adding
    another row: one obvious primary action per card, progressive disclosure for

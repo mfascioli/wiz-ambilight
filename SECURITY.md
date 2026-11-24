@@ -29,6 +29,14 @@ mpv start. Nothing downloads code, and no installer fetches anything at all.
   unbound UDP socket, which the kernel assigns an ephemeral local port, and
   only sends on it (discovery and direct control read replies with short
   timeouts). It does not call `bind`, `listen` or `accept`.
+- **Optional lux bridge.** `contrib/lux-bridge.py` is separate from the sync
+  and the panel: nothing imports it, starts it or enables it by default. When
+  you run it, it is the only process here that listens beyond loopback, on
+  `0.0.0.0:8766`, with a 512-byte body cap, no outbound requests, and one
+  write: `lux.json` replaced atomically at `0600`. A reading can only change
+  Equalize's brightness. Set `WIZ_LUX_TOKEN` / `--token` to require the
+  `X-Lux-Token` header, or `--host 127.0.0.1` to keep it local; there is no
+  TLS.
 - **Processes.** The panel starts the sync with `subprocess.Popen(argv, ...)`,
   no shell and no string interpolation, in its own session. Stopping it sends
   `SIGTERM` to the process group when `os.killpg` exists and falls back to
@@ -129,6 +137,8 @@ What has **not** been done:
 
 - no third-party or antivirus scan of a release archive yet;
 - no fuzzing of the UDP parsers or of the panel's JSON bodies;
+- no test against a physical BH1750 or ESP32: the bridge, the parser and the
+  Equalize fallback are covered by unit tests, the sketch is not;
 - no test on Windows, where the runtime directory, the Lua install path and
   the file picker still assume Unix — see the roadmap in the
   [README](README.md#-roadmap).
@@ -147,6 +157,11 @@ What has **not** been done:
 - **The panel is a local service.** It trusts everything that can connect to
   `127.0.0.1` with the token; it is not hardened against a compromised local
   account.
+- **The lux bridge is optional and unauthenticated by default.** It listens on
+  `0.0.0.0:8766` only while you run it, and any LAN host that reaches the port
+  can post a reading. That changes only Equalize's brightness. Set
+  `WIZ_LUX_TOKEN` to require the header; the token itself is sent in clear
+  text, so keep the bridge on a trusted network.
 
 ## Reporting
 

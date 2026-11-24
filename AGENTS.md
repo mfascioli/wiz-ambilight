@@ -129,9 +129,16 @@ headings, and leave interface names, option values and file paths untranslated.
   while one is selected, removes all its labels on exit and never touches a
   user's `af` chain. The graph keeps the mix's magnitude but adds an all-pass
   phase shift, so never describe it as bit-identical. No audio dependency, no
-  separate process, no
-  microphone. The `lux.json` sensor is design-only; do not add its flag until
-  the hardware path is tested.
+  separate process, no microphone. **Auto Lux** is an optional measured-light
+  layer over every reaction, on by a checkbox in **Look** or `--auto-lux`:
+  `contrib/lux-bridge.py` writes `lux.json`, and `--lux-file` / `--lux-target`
+  consume it only while the file is under `LUX_STALE_SECONDS` old. It multiplies
+  `dimming()` after the mode's own colors and pulses, always uses the Equalize
+  profile's `span` / `tau` / `floor`, and holds Equalize's luma gain at `1.0`
+  while a reading is fresh; a stale or missing file is a no-op (Equalize falls
+  back to luma). Keep the parser, the 5 s freshness window, the per-mode layer
+  and the fallback tested before widening the contract, and do not move the
+  bridge into the sync process.
 - **Performance chart.** Activity holds one frame with three unit lanes —
   CPU %, RAM MB, UDP KB/s — and a series each for mpv and the panel. CPU is a
   share of the whole processor, said so in the legend tooltip; never merge the
@@ -309,7 +316,7 @@ Before calling a change done:
 | `docs/design.md` | panel design language, layout and chart contract |
 | `docs/development.md` | repository layout, runtime/config files, reactions and audio internals |
 | `docs/gui.png` | the one panel screenshot in the README |
-| `contrib/` | optional systemd user service and its env example |
+| `contrib/` | optional systemd units and env examples, the lux bridge, and the ESP32/BH1750 sketch |
 | `upstream/` | original wiz-hack toolkit, reference only, never imported |
 | `SECURITY.md` | trust model, guarantees, review status, limits |
 | `CHANGELOG.md` | one entry per release, grouped by feature |

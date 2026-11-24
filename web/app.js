@@ -102,6 +102,12 @@ const refs = {
   reactTarget: document.getElementById("reactTarget"),
   reactTargetField: document.getElementById("reactTargetField"),
   reactTargetOut: document.getElementById("reactTargetOut"),
+  autoLux: document.getElementById("autoLux"),
+  autoLuxHint: document.getElementById("autoLuxHint"),
+  luxField: document.getElementById("luxField"),
+  luxTarget: document.getElementById("luxTarget"),
+  luxTargetOut: document.getElementById("luxTargetOut"),
+  luxReadout: document.getElementById("luxReadout"),
   reactBands: document.getElementById("reactBands"),
   reactBandsField: document.getElementById("reactBandsField"),
   reactColorMode: document.getElementById("reactColorMode"),
@@ -1760,8 +1766,11 @@ function buildColorModeSelect(snapshot) {
 function syncReactionFields(snapshot, config) {
   const reaction = reactionById(snapshot, config.react);
   const profiles = reaction?.profiles || [];
+  const autoLux = Boolean(config.auto_lux);
   fillProfileSelect(reaction);
+  refs.autoLux.checked = autoLux;
   refs.reactTargetField.classList.toggle("hidden", config.react !== "equalize");
+  refs.luxField.classList.toggle("hidden", !autoLux);
   refs.reactBandsField.classList.toggle("hidden", !reaction?.audio);
   const colorModes = snapshot.color_modes || [];
   const colorMode = colorModes.some((mode) => mode.id === config.react_color_mode)
@@ -1802,6 +1811,29 @@ function syncReactionFields(snapshot, config) {
     refs.reactTarget.value = String(target);
     refs.reactTargetOut.value = String(target);
     paintRange(refs.reactTarget);
+  }
+  if (document.activeElement !== refs.luxTarget) {
+    const target = Math.round(Number(config.lux_target) || 50);
+    refs.luxTarget.value = String(target);
+    refs.luxTargetOut.value = String(target);
+  }
+  const lux = snapshot.lux;
+  const value = Number(lux?.value);
+  const target = Math.round(Number(config.lux_target) || 50);
+  refs.luxReadout.hidden = !autoLux;
+  if (autoLux) {
+    if (!lux || !Number.isFinite(value)) {
+      refs.luxReadout.textContent =
+        config.react === "equalize"
+          ? "No sensor reading; Equalize uses video luma."
+          : "No sensor reading; brightness unchanged.";
+    } else {
+      const age = Math.max(0, Math.round(lux.age));
+      const fallback = config.react === "equalize" ? "video luma" : "no correction";
+      refs.luxReadout.textContent = lux.fresh
+        ? `Sensor ${value.toFixed(1)} lx, target ${target} lx`
+        : `Sensor ${value.toFixed(1)} lx (stale ${age} s), ${fallback}`;
+    }
   }
   if (!refs.reactBands.contains(document.activeElement)) {
     const colors = Array.isArray(config.react_bands) ? config.react_bands : [];
@@ -2790,12 +2822,21 @@ refs.reactProfile.addEventListener("change", () => {
   renderProfileHint();
   saveConfig({ react_profile: refs.reactProfile.value });
 });
+refs.autoLux.addEventListener("change", () => {
+  saveConfig({ auto_lux: refs.autoLux.checked });
+});
 refs.reactTarget.addEventListener("input", () => {
   refs.reactTargetOut.value = refs.reactTarget.value;
   paintRange(refs.reactTarget);
 });
 refs.reactTarget.addEventListener("change", () => {
   saveConfig({ react_target: Number(refs.reactTarget.value) / 100 });
+});
+refs.luxTarget.addEventListener("input", () => {
+  refs.luxTargetOut.value = refs.luxTarget.value;
+});
+refs.luxTarget.addEventListener("change", () => {
+  saveConfig({ lux_target: Number(refs.luxTarget.value) });
 });
 refs.reactBands.addEventListener("change", (event) => {
   const input = event.target.closest('input[type="color"]');

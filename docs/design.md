@@ -56,12 +56,14 @@ decoration: they explain the path from choosing bulbs to watching the effect.
 - **Look** is three equal hairline columns — **Preset / Sample / Send** — with
   flat key/value rows, never nested boxes. **Preset** leads with the Reaction
   group: the dropdown (with a **Video** / **Audio** optgroup each and one hint
-  line for the selected mode), then Reaction strength. The Equalize target luma
-  slider and the **Audio colors** block appear only for the reactions that use
-  them. **Audio colors** is a mode select plus the controls that mode needs:
-  one swatch per EQ band for `bands`, a two-color Low/High row for `range`, a
-  Soft/Loud row for `level`, one swatch for `single`, and no swatches for
-  `spectrum` or `rainbow`. A one-line hint names the current mode. The
+  line for the selected mode), then Reaction strength and the **Auto Lux**
+  checkbox that layers the light sensor over any reaction. The Equalize target
+  luma slider and the **Audio colors** block appear only for the reactions that
+  use them; the target lux field and its sensor readout appear only while Auto
+  Lux is checked. **Audio colors** is a mode select plus the controls that mode
+  needs: one swatch per EQ band for `bands`, a two-color Low/High row for
+  `range`, a Soft/Loud row for `level`, one swatch for `single`, and no swatches
+  for `spectrum` or `rainbow`. A one-line hint names the current mode. The
   **Capture & fade preset** select follows the reaction group, with a
   hint naming what it bundles, then Brightness and the **Vibrance** slider that
   multiplies the style's saturation. The capture preset, Brightness and

@@ -697,6 +697,14 @@ REACTION_TARGET = 0.45
 REACTION_SPAN = 0.35
 REACTION_FLOOR = 0.35
 EQUALIZE_TAU = 4.0
+# Optional measured-light input. A sensor bridge writes `lux.json` in the
+# runtime directory; Auto Lux applies it as a brightness layer over any
+# reaction while it is fresh and drops it when it goes stale. The BH1750 tops
+# out at 65535 lx.
+LUX_MAX = 65535.0
+LUX_STALE_SECONDS = 5.0
+LUX_TARGET = 50.0
+LUX_TARGET_MAX = 5000.0
 CUT_THRESHOLD = 0.22
 CUT_SECONDS = 0.12
 CUT_COOLDOWN = 1.5
@@ -936,6 +944,31 @@ def finite_float(value):
     return number if math.isfinite(number) else None
 
 
+def read_lux(path: Path, max_age=LUX_STALE_SECONDS):
+    """Read `{"lux": 42.5}` from `path`, or None when it is missing or stale.
+
+    The bridge owns the file; the sync only reads it. A malformed body, a
+    boolean, a negative value or a value outside the BH1750 range is treated
+    exactly like a missing file, so a broken sensor never changes the look.
+    """
+    try:
+        stat = path.stat()
+        if max_age is not None and time.time() - stat.st_mtime > max_age:
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("lux")
+    if isinstance(value, bool):
+        return None
+    value = finite_float(value)
+    if value is None or value < 0.0 or value > LUX_MAX:
+        return None
+    return value
+
+
 def band_for(index: int, count: int, bands: int = len(BANDS)):
     """Which analysis band bulb `index` follows; None means overall.
 
@@ -1170,6 +1203,28 @@ def equalize_gain(
     return max(floor, gain)
 
 
+def lux_gain(
+    lux: float,
+    target: float = LUX_TARGET,
+    span: float = REACTION_SPAN,
+    floor: float = REACTION_FLOOR,
+) -> float:
+    """Brightness multiplier that pulls measured lux toward `target`.
+
+    Same shape and limits as `equalize_gain`, but the ratio is illuminance:
+    a room at half the target wants a 2x boost before the profile's span caps
+    it. That cap (and the reaction strength) is what keeps the loop stable
+    when the bulbs themselves contribute to the reading.
+    """
+    lux = max(0.1, min(LUX_MAX, float(lux)))
+    target = max(1.0, min(LUX_TARGET_MAX, float(target)))
+    span = max(0.0, min(1.0, float(span)))
+    floor = max(0.0, min(1.0, float(floor)))
+    gain = target / lux
+    gain = max(1.0 - span, min(1.0 + span, gain))
+    return max(floor, gain)
+
+
 def vu_level(db, low: float = VU_LOW_DB, high: float = VU_HIGH_DB) -> float:
     """Map a negative dBFS value onto 0..1; silence and `None` are zero."""
     if db is None:
@@ -1268,12 +1323,23 @@ class Reaction:
         eq=None,
         auto: str = "off",
         active_bands: bool = False,
+        lux_target: float = LUX_TARGET,
+        auto_lux: bool = False,
     ):
         self.mode = mode if mode in REACTIONS else "color"
         self.amount = max(0.0, min(1.0, float(amount)))
         self.target = max(0.05, min(0.95, float(target)))
+        self.lux_target = max(1.0, min(LUX_TARGET_MAX, float(lux_target)))
+        self.auto_lux = bool(auto_lux)
         self.profile = profile if profile in PROFILE_LABELS else "balanced"
         values = REACTION_PROFILES.get(self.mode, {}).get(self.profile, {})
+        # Auto Lux is a layer over every reaction, so it always uses the
+        # Equalize profile values: `cut` or `motion` spans would otherwise
+        # change the ambient controller just by switching reactions.
+        ambient = REACTION_PROFILES.get("equalize", {}).get(self.profile, {})
+        self.lux_span = float(ambient.get("span", REACTION_SPAN))
+        self.lux_tau = float(ambient.get("tau", EQUALIZE_TAU))
+        self.lux_floor = float(ambient.get("floor", REACTION_FLOOR))
         self.audio = self.mode in AUDIO_REACTIONS
         if isinstance(eq, (list, tuple)) and eq:
             self.eq = normalize_eq_bands(eq, len(eq))
@@ -1322,6 +1388,9 @@ class Reaction:
         )
         self.last_frame_at = None
         self.luma = None
+        self.lux = None
+        self.lux_smoothed = None
+        self.ambient_gain = 1.0
         self.gain = 1.0
         self.prev_all = None
         self.prev_zones = {}
@@ -1366,16 +1435,44 @@ class Reaction:
             all_rgb = None
         audio = state.get("audio") if isinstance(state.get("audio"), dict) else {}
 
-        if self.mode == "equalize" and all_rgb is not None:
-            luma = scene_luma(all_rgb)
-            if self.luma is None:
-                self.luma = luma
+        # Auto Lux is a brightness layer over every reaction. A fresh reading
+        # is smoothed with the Equalize profile's tau and applied in
+        # `dimming()`; without one the layer is neutral and the mode runs as
+        # usual (Equalize falls back to scene luma).
+        self.ambient_gain = 1.0
+        if self.auto_lux and self.lux is not None:
+            if self.lux_smoothed is None:
+                self.lux_smoothed = self.lux
             else:
-                alpha = 1.0 - math.exp(-max(0.0, dt) / max(0.1, self.eq_tau))
-                self.luma += (luma - self.luma) * alpha
-            self.gain = equalize_gain(
-                self.luma, self.target, self.eq_span * self.amount, self.eq_floor
+                alpha = 1.0 - math.exp(-max(0.0, dt) / max(0.5, self.lux_tau))
+                self.lux_smoothed += (self.lux - self.lux_smoothed) * alpha
+            self.ambient_gain = lux_gain(
+                self.lux_smoothed,
+                self.lux_target,
+                self.lux_span * self.amount,
+                self.lux_floor,
             )
+        else:
+            self.lux_smoothed = None
+
+        if self.mode == "equalize":
+            if self.auto_lux and self.lux is not None:
+                # Auto Lux owns brightness; the luma estimate would fight it.
+                self.luma = None
+                self.gain = 1.0
+            elif all_rgb is not None:
+                luma = scene_luma(all_rgb)
+                if self.luma is None:
+                    self.luma = luma
+                else:
+                    alpha = 1.0 - math.exp(-max(0.0, dt) / max(0.1, self.eq_tau))
+                    self.luma += (luma - self.luma) * alpha
+                self.gain = equalize_gain(
+                    self.luma,
+                    self.target,
+                    self.eq_span * self.amount,
+                    self.eq_floor,
+                )
 
         elif self.mode == "cut" and all_rgb is not None:
             rgb = tuple(float(channel) for channel in all_rgb)
@@ -1739,6 +1836,9 @@ class Reaction:
             previous = self.smoothed.get(ip, mult)
             mult = previous + (mult - previous) * alpha
             self.smoothed[ip] = mult
+        # Auto Lux is the base brightness for every mode; reactions keep their
+        # own pulses and headroom on top of it.
+        mult *= self.ambient_gain
         return max(10, min(100, int(round(base * mult))))
 
 
@@ -1958,6 +2058,13 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
         eq=getattr(args, "react_eq", None),
         auto=getattr(args, "react_auto", "off"),
         active_bands=getattr(args, "react_active_bands", False),
+        lux_target=getattr(args, "lux_target", LUX_TARGET),
+        auto_lux=getattr(args, "auto_lux", False),
+    )
+    lux_path = (
+        Path(args.lux_file)
+        if getattr(args, "lux_file", None)
+        else runtime_dir() / "lux.json"
     )
     # Audio envelopes are short: a 55 ms release at an 18 Hz send rate can be
     # missed between datagrams. Audio modes always push at 30 Hz, like the
@@ -1994,6 +2101,12 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
             + ")",
             file=sys.stderr,
         )
+    if reaction.auto_lux:
+        print(
+            f"auto lux: {lux_path} (target {reaction.lux_target:g} lx, "
+            f"{LUX_STALE_SECONDS:g} s freshness; stale readings are ignored)",
+            file=sys.stderr,
+        )
     if getattr(args, "sampling", "auto") == "auto":
         sampling = "auto (scaled, resolution-aware grid and fps)"
     elif getattr(args, "sampling", "auto") == "manual":
@@ -2024,6 +2137,7 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
     capture_source = None
     capture_grid = None
     last_state_at = None
+    last_lux_check = 0.0
 
     def write_stats(now: float) -> None:
         nonlocal last_stats, stats_bytes, stats_packets, stats_frames
@@ -2064,6 +2178,13 @@ def run_sync(args, lights, zone_names, state_path: Path, stop_check=None):
             now = time.monotonic()
             dt = min(0.25, max(0.0, now - last_tick))
             last_tick = now
+
+            # The bridge writes at about 1 Hz; polling twice a second is
+            # enough to notice a fresh or a stale reading without touching
+            # the disk on every 3-6 ms fade pass.
+            if reaction.auto_lux and now - last_lux_check >= 0.5:
+                last_lux_check = now
+                reaction.lux = read_lux(lux_path)
 
             # Pick up new frames. The state file is tiny and only rewritten
             # when mpv has something new, so checking its mtime is cheap.
@@ -2613,7 +2734,32 @@ def main(argv=None) -> int:
         "--react-target",
         type=float,
         default=None,
-        help="equalize only: target scene luma, 0.05-0.95 (default: 0.45)",
+        help=(
+            "equalize only: target scene luma, 0.05-0.95 (default: 0.45); "
+            "ignored while Auto Lux has a fresh reading"
+        ),
+    )
+    parser.add_argument(
+        "--auto-lux",
+        action="store_true",
+        help=(
+            "use the light sensor with any reaction: hold the room at "
+            "--lux-target while a fresh reading exists"
+        ),
+    )
+    parser.add_argument(
+        "--lux-file",
+        default=None,
+        help=(
+            "with --auto-lux: read measured lux from this JSON file "
+            "(default: $XDG_RUNTIME_DIR/wiz-ambilight/lux.json)"
+        ),
+    )
+    parser.add_argument(
+        "--lux-target",
+        type=float,
+        default=None,
+        help="with --auto-lux: target illuminance in lux, 1-5000 (default: 50)",
     )
     parser.add_argument(
         "--react-profile",
@@ -2955,6 +3101,8 @@ def main(argv=None) -> int:
         parser.error("--react-eq-bands: expected a number")
     args.react_eq = normalize_eq_bands(raw_eq, count)
     args.react_eq_bands = count
+    args.lux_target = LUX_TARGET if args.lux_target is None else args.lux_target
+    args.lux_target = max(1.0, min(LUX_TARGET_MAX, float(args.lux_target)))
     if args.react_bands is None:
         args.react_bands = normalize_band_colors(None, count)
     else:

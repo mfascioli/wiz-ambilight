@@ -74,7 +74,10 @@ from `--style`; the style table is in the [README](../README.md#-styles).
 | --- | --- | --- | --- |
 | `--react` | `color` | `color`, `equalize`, `cut`, `motion`, `duotone`, `beat`, `vu` | What the bulbs react to and how. |
 | `--react-amount` | `0.8` | 0–1 | Reaction strength; `0` keeps the source color only. |
-| `--react-target` | `0.45` | 0.05–0.95 | `equalize` only: target scene luma. |
+| `--react-target` | `0.45` | 0.05–0.95 | `equalize` only: target scene luma; the fallback when Auto Lux has no fresh reading. |
+| `--auto-lux` | off | flag | Use the light sensor as a brightness layer over any reaction. |
+| `--lux-file` | runtime `lux.json` | path | With `--auto-lux`: read measured lux from this file. See [the sensor guide](../contrib/lux-sensor.md). |
+| `--lux-target` | `50` | 1–5000 lx | With `--auto-lux`: target illuminance. |
 | `--react-profile` | `balanced` | `soft`, `balanced`, `strong` | Intensity profile. In audio modes it bundles gate, ceiling, envelope and punch. |
 | `--react-bands` | [8 defaults](../README.md#-audio-colors) | exactly `--react-eq-bands` `#rrggbb` values | One color per EQ band, low to high (`bands` mode). |
 | `--react-eq-bands` | `8` | 2–16 | Number of graphic-EQ bands. |
@@ -258,6 +261,10 @@ The four dynamics values also have flags: `--react-threshold`,
 `--react-attack`, `--react-release` and `--react-punch`. `--react-amount`
 scales every reaction (`0` disables it), `--react-profile` picks `soft`,
 `balanced` or `strong`, and `--react-target` sets the luma Equalize aims for.
+`--auto-lux` turns the optional light sensor into a brightness layer for any
+reaction; `--lux-target` (and optionally `--lux-file`) configure it, and
+Equalize keeps its luma target as the fallback when no reading is fresh. The
+guide is in [`contrib/lux-sensor.md`](../contrib/lux-sensor.md).
 
 ```bash
 # the default: adapt the sampling to the captured resolution
