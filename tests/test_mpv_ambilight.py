@@ -1308,8 +1308,8 @@ class LuaAudioContractTests(unittest.TestCase):
         self.assertIn("local function sanitize_eq(value)", source)
         self.assertIn("local function eq_equal(first, second)", source)
         self.assertIn("local function band_chain(band)", source)
-        self.assertIn("local function eq_filter(eq)", source)
-        self.assertIn("local function band_filter()", source)
+        self.assertIn("local function eq_filter(eq, astats)", source)
+        self.assertIn("local function band_filter(astats)", source)
         self.assertIn('"acrossover=split="', source)
         self.assertIn('"amerge=inputs="', source)
         self.assertIn("asplit=2[main][mon]", source)
@@ -1319,6 +1319,12 @@ class LuaAudioContractTests(unittest.TestCase):
         self.assertNotIn("acrossover=split=60 250 800 2500[b0]", source)
         self.assertIn("S.bands", source)
         self.assertIn("S.eq", source)
+        # The band graph must measure only the two fields the meter reads.
+        # Measuring every astats parameter on 2N+2 channels made a 16-band EQ
+        # cost most of a core; the lean form is the fast path.
+        self.assertIn("measure_perchannel=Peak_level+RMS_level", source)
+        self.assertIn("measure_overall=none", source)
+        self.assertIn("ASTATS_BANDS_LEGACY", source)
         # RMS and peak travel together, and the overall level can be rebuilt
         # from the band powers when wizstats is empty.
         self.assertIn('"bands":', source)

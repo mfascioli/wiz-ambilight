@@ -107,6 +107,11 @@ Releases before 1.4.0 were never tagged; their history is in `git log`.
   points, so it handles 2, 8 or 16 bands without a hard-coded five-band chain.
   The classic `60 250 800 2500` split remains the fallback when no plan is
   passed.
+- **Performance:** the band graph asks `astats` for only the two fields the
+  meter reads (`measure_perchannel=Peak_level+RMS_level`,
+  `measure_overall=none`). Measuring every statistic across the 2N+2 channels
+  made a 16-band EQ cost about a full core; the lean graph drops that to a few
+  percent. Older ffmpeg builds fall back to the full filter.
 - **Audio colors:** six modes replace the fixed five-band-only palette. `bands`
   keeps per-band swatches, now one per EQ band; `spectrum` spreads a fixed hue
   across the bands; `rainbow` rotates the hue over time with a per-bulb offset;

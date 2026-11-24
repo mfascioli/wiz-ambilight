@@ -274,11 +274,15 @@ splits a copy of the stereo mix, filters each copy with its band shape, merges
 the N filtered pairs into 2N channels and merges the untouched `main` pair back
 as channels 2N+1 and 2N+2. A second `astats` exposes `af-metadata/wizbands`,
 one RMS and one peak pair per band, and `pan` selects only the main pair, so the
-audio mpv plays is unchanged. `anull` keeps the chain valid while the labels
-are removed. The script adds the chain only when `react` is `beat` or `vu`,
-re-adds it after `file-loaded`, and removes `@wizbands`, `@wizstats` and
-`@wiztail` in any order on a switch back to a video mode, on stop and on
-shutdown. A user's own `af` chain is left in place.
+audio mpv plays is unchanged. That second `astats` runs with
+`measure_perchannel=Peak_level+RMS_level` and `measure_overall=none`: only those
+two fields feed the meter, and measuring the full statistics set on up to 34
+channels makes a 16-band EQ burn most of a core. `ASTATS_BANDS_LEGACY` retries
+the plain filter on builds without `measure_perchannel`. `anull` keeps the
+chain valid while the labels are removed. The script adds the chain only when
+`react` is `beat` or `vu`, re-adds it after `file-loaded`, and removes
+`@wizbands`, `@wizstats` and `@wiztail` in any order on a switch back to a video
+mode, on stop and on shutdown. A user's own `af` chain is left in place.
 
 Configs without an `eq` plan fall back to the older crossover graph:
 `acrossover=split=<s1> … <sN-1>[b0]…[bN-1]`, `amerge=inputs=N` into 2N

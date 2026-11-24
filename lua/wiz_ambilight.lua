@@ -145,6 +145,16 @@ local AUDIO_FPS = 30.0
 -- recombines its slices and adds a small all-pass phase shift.
 local FILTER_STATS = "@wizstats:lavfi=[astats=metadata=1:reset=1]"
 local FILTER_TAIL = "@wiztail:lavfi=[anull]"
+-- The band graph only needs per-channel RMS and peak. Measuring every astats
+-- parameter on 2N+2 channels is what made a 16-band EQ cost more than half a
+-- core; the two fields below cut that by an order of magnitude. The overall
+-- level still comes from wizstats, and the shaped graph also exposes the
+-- untouched pair for builds where wizstats is empty.
+local ASTATS_BANDS = "astats=metadata=1:reset=1"
+    .. ":measure_perchannel=Peak_level+RMS_level:measure_overall=none"
+-- Older ffmpeg builds do not know measure_perchannel; retry with the plain
+-- filter if the lean graph is rejected.
+local ASTATS_BANDS_LEGACY = "astats=metadata=1:reset=1"
 -- Without an explicit band plan, keep the classic five bands. The panel and
 -- CLI always send their own band plan.
 local DEFAULT_SPLITS = { 60, 250, 800, 2500 }
@@ -291,7 +301,7 @@ local function band_chain(band)
     return "bandpass=f=" .. freq .. ":width_type=q:w=" .. q
 end
 
-local function eq_filter(eq)
+local function eq_filter(eq, astats)
     local count = #eq
     -- The analysis filters run on a copy of the mix. The original is merged
     -- back as the last two channels and the pan selects only those, so the
@@ -311,13 +321,13 @@ local function eq_filter(eq)
     parts[#parts + 1] = table.concat(outs)
         .. "amerge=inputs=" .. count .. "[filtered]"
     parts[#parts + 1] = "[filtered][main]amerge=inputs=2[all]"
-    parts[#parts + 1] = "[all]astats=metadata=1:reset=1[stats]"
+    parts[#parts + 1] = "[all]" .. astats .. "[stats]"
     parts[#parts + 1] = "[stats]pan=stereo|c0=c" .. (count * 2)
         .. "|c1=c" .. (count * 2 + 1)
     return "@wizbands:lavfi=[" .. table.concat(parts, ";") .. "]"
 end
 
-local function crossover_filter()
+local function crossover_filter(astats)
     local splits = band_splits()
     local count = #splits + 1
     local frequencies = {}
@@ -336,16 +346,16 @@ local function crossover_filter()
         .. "acrossover=split=" .. table.concat(frequencies, " ")
         .. table.concat(labels) .. ";"
         .. table.concat(labels) .. "amerge=inputs=" .. count .. ","
-        .. "astats=metadata=1:reset=1,"
+        .. astats .. ","
         .. "pan=stereo|c0=" .. table.concat(left, "+")
         .. "|c1=" .. table.concat(right, "+") .. "]"
 end
 
-local function band_filter()
+local function band_filter(astats)
     if S.eq and #S.eq > 0 then
-        return eq_filter(S.eq)
+        return eq_filter(S.eq, astats)
     end
-    return crossover_filter()
+    return crossover_filter(astats)
 end
 
 local function audio_stats_off()
@@ -367,10 +377,23 @@ local function audio_stats_on()
     then
         audio_stats_off()
     end
+    local added = mp.commandv(
+        "af",
+        "add",
+        FILTER_STATS .. "," .. band_filter(ASTATS_BANDS) .. "," .. FILTER_TAIL
+    )
+    if added ~= false then
+        return added
+    end
+    -- The build rejected measure_perchannel; fall back to the full filter.
     return mp.commandv(
         "af",
         "add",
-        FILTER_STATS .. "," .. band_filter() .. "," .. FILTER_TAIL
+        FILTER_STATS
+            .. ","
+            .. band_filter(ASTATS_BANDS_LEGACY)
+            .. ","
+            .. FILTER_TAIL
     )
 end
 

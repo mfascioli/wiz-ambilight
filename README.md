@@ -527,7 +527,9 @@ pass, a low/high pass, a notch or a flat pass — on a copy of the mix. The copy
 is split N ways, the filtered bands are merged back, and the untouched mix is
 merged beside them as the last two channels; `astats` reads every band and
 `pan` selects only the original stereo pair, so the audio mpv plays is
-unchanged. No extra package is installed.
+unchanged. The analyser measures only per-band RMS and peak, so even a 16-band
+EQ costs a few percent of a core instead of most of one. No extra package is
+installed.
 
 Older configs without a band plan still use the `acrossover` fallback: N−1
 splits yield N contiguous bands, and `amerge` plus `pan` recombine their 2N
