@@ -827,8 +827,8 @@ class DemoPanelTests(unittest.TestCase):
             "video_h",
         ):
             self.assertIn(key, resources)
-        self.assertEqual(resources["network_bps"], 0.0)
-        self.assertEqual(resources["udp_kbps"], 0.0)
+        self.assertIsNone(resources["network_bps"])
+        self.assertIsNone(resources["udp_kbps"])
         self.assertIsNone(resources["mpv_pid"])
         self.assertIsNone(resources["capture_fps"])
         self.assertIsNone(resources["video_w"])
@@ -837,6 +837,34 @@ class DemoPanelTests(unittest.TestCase):
             self.assertTrue(resources["available"])
             self.assertGreater(resources["ram_mb"], 0)
             self.assertGreaterEqual(resources["processes"], 1)
+
+    def test_udp_is_measured_only_while_a_sync_is_running(self):
+        panel = webui.Panel(m, demo=True)
+        # Idle means "not measured", so the chart can show a dash instead of a
+        # misleading flat zero.
+        self.assertIsNone(panel.resources()["udp_kbps"])
+
+        panel.session.snapshot = lambda: {"running": True, "pid": 999999}
+        panel._sync_stats = lambda pid: {
+            "pid": pid,
+            "at": time.time(),
+            "tx_bps": 2048.0,
+        }
+        resources = panel.resources()
+        self.assertEqual(resources["network_bps"], 2048.0)
+        self.assertEqual(resources["udp_kbps"], 2.0)
+        self.assertTrue(resources["network_ready"])
+
+        # A dry run is still a running sync, so its zero is a real reading.
+        panel._sync_stats = lambda pid: {
+            "pid": pid,
+            "at": time.time(),
+            "tx_bps": 0.0,
+        }
+        resources = panel.resources()
+        self.assertEqual(resources["network_bps"], 0.0)
+        self.assertEqual(resources["udp_kbps"], 0.0)
+        self.assertTrue(resources["network_ready"])
 
     def test_light_update_is_in_memory_only(self):
         panel = webui.Panel(m, demo=True)

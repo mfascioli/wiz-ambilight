@@ -485,6 +485,9 @@ class StructureTests(unittest.TestCase):
                 self.assertIn(series, js)
         self.assertIn("PERF_LANES", js)
         self.assertIn("renderPerfChart", js)
+        # Idle UDP is a dash and a running dry run says so instead of showing a
+        # zero as if datagrams were flowing.
+        self.assertIn("dry run", js)
         for key in ("cpu_mpv", "ram_mpv", "cpu_wiz", "ram_wiz", "udp_kbps", "cores"):
             with self.subTest(key=key):
                 self.assertIn(key, WEBUI)

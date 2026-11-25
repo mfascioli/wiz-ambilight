@@ -119,8 +119,11 @@ panel is plain HTML, CSS and JavaScript under `web/`.
 
 **Activity** holds one frame with three unit lanes — CPU %, RAM MB, UDP KB/s —
 and a line for mpv and for the panel in each lane they share. CPU is a share of
-the whole processor and the legend says so in a tooltip. Series colors are
-chalk-style and deliberately muted:
+the whole processor and the legend says so in a tooltip. Each lane scales to its
+busiest sample with a small floor, so a low but real line is still readable, and
+every line ends in a dot at the newest sample. Idle UDP is a dash, and a running
+dry run is labelled as such. Series colors are chalk-style and deliberately
+muted:
 
 | Series | Color |
 | --- | --- |

@@ -490,7 +490,8 @@
           is a share of the whole processor, all cores counted.
           <b>RAM</b> is resident memory and
           <b>wiz</b> is the panel plus the sync process. <b>UDP</b> is what the
-          sync sends to the bulbs.
+          sync sends to the bulbs. Each lane scales to its busiest sample, and a
+          dry run sends nothing, so UDP stays at zero.
         </p>
       </figure>
       <div class="log-tools">

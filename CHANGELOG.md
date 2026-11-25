@@ -4,6 +4,13 @@ Releases before 1.4.0 were never tagged; their history is in `git log`.
 
 ## Unreleased
 
+- **Activity:** the CPU lane no longer starts at a 5 % floor, so mpv and the
+  panel stay readable when hardware decoding keeps their whole-processor share
+  under one percent. Each line ends in a dot at the newest sample, idle UDP
+  reads as a dash instead of a measured zero, and a running dry run is labelled
+  `dry run` in the legend and the meta line. The cores note now only appears on
+  the CPU tooltips, where it belongs.
+
 ## 1.12.0 - 2026-11-24
 
 - **Graphic EQ:** each band now has a **shape** instead of only a bell. `bell`

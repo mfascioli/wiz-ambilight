@@ -2345,7 +2345,10 @@ const PERF_SAMPLES = 60;
 const PERF_LANES = [
   {
     label: "CPU %",
-    min: 5,
+    // Whole-processor shares are small next to a 12-core box: a busy mpv can
+    // read 2-4 %. A 5 % floor pinned those lines to the axis, so start lower
+    // and let the peak set the top of the lane.
+    min: 0.5,
     format: (value) => `${value < 10 ? value.toFixed(1) : Math.round(value)}%`,
     series: [
       {
@@ -2457,17 +2460,34 @@ function pushPerf(res) {
 function renderPerfLegend(res) {
   refs.perfLegend.replaceChildren();
   const cores = Number(res.cores) || 0;
+  const running = Boolean(state.snapshot?.session?.running);
+  const dry = running && Boolean(state.snapshot?.config?.dry_run);
   for (const lane of PERF_LANES) {
     for (const series of lane.series) {
       const item = el("span", "legend-item");
       const swatch = el("span", "legend-swatch");
       swatch.style.setProperty("--c", series.color);
+      const value = formatMetric(series.key, lastValue(state.perf[series.key]));
+      const shown = series.key === "udp" && dry ? "dry run" : value;
       item.append(
         swatch,
         el("span", "", series.label),
-        el("span", "legend-value", formatMetric(series.key, lastValue(state.perf[series.key]))),
+        el("span", "legend-value", shown),
       );
-      item.title = cores ? `${series.tip} · 100% = all ${cores} cores busy` : series.tip;
+      let tip = series.tip;
+      if (lane.label === "CPU %" && cores) {
+        tip += ` · 100% = all ${cores} cores busy`;
+      }
+      if (series.key === "udp" && dry) {
+        tip = "Dry run is on, so the sync logs colors instead of sending UDP";
+      } else if (
+        running
+        && value === "-"
+        && (series.key === "mpvCpu" || series.key === "mpvRam")
+      ) {
+        tip = "No mpv process found yet — start playback or check the Lua script";
+      }
+      item.title = tip;
       refs.perfLegend.append(item);
     }
   }
@@ -2587,6 +2607,7 @@ function renderPerfChart(res) {
       const values = state.perf[series.key];
       let path = "";
       let pen = false;
+      let end = null;
       values.forEach((value, index) => {
         if (typeof value !== "number" || !Number.isFinite(value)) {
           pen = false;
@@ -2596,6 +2617,7 @@ function renderPerfChart(res) {
         const y = laneBottom - 4 - Math.min(1, value / max) * usable;
         path += `${pen ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)} `;
         pen = true;
+        end = { x, y };
       });
       if (!path) continue;
       svg.append(
@@ -2609,6 +2631,18 @@ function renderPerfChart(res) {
           "vector-effect": "non-scaling-stroke",
         }),
       );
+      // A flat low line would otherwise hide on the axis; the dot marks the
+      // newest sample and matches the value in the legend.
+      if (end) {
+        svg.append(
+          svgNode("circle", {
+            cx: end.x.toFixed(1),
+            cy: end.y.toFixed(1),
+            r: 2.2,
+            fill: series.color,
+          }),
+        );
+      }
     }
   });
 
@@ -2648,6 +2682,7 @@ function renderPerf(snapshot) {
     bits.push(`${res.processes} process${res.processes === 1 ? "" : "es"}`);
   }
   if (typeof res.mpv_pid === "number") bits.push(`mpv pid ${res.mpv_pid}`);
+  if (snapshot.session?.running && snapshot.config?.dry_run) bits.push("dry run · no UDP");
   refs.perfMeta.replaceChildren();
   refs.perfMeta.classList.toggle("hidden", !bits.length);
   for (const bit of bits) refs.perfMeta.append(el("span", "", bit));

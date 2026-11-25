@@ -1371,11 +1371,15 @@ class Panel:
                     self._res_prev_time = now
 
         stats_file = self._sync_stats(sync_pid) if running else None
-        network_bps = 0.0
-        if running:
-            network_bps = None
-            if stats_file is not None and isinstance(stats_file.get("tx_bps"), (int, float)):
-                network_bps = round(float(stats_file["tx_bps"]), 1)
+        # No session means no datagrams to measure, not a measured zero: the
+        # chart shows a dash until the sync reports its first stats file. A
+        # running dry-run sync still reports a real zero, and the panel labels
+        # that case as "dry run".
+        network_bps = None
+        if stats_file is not None:
+            tx_bps = stats_file.get("tx_bps")
+            if isinstance(tx_bps, (int, float)) and not isinstance(tx_bps, bool):
+                network_bps = round(float(tx_bps), 1)
         udp_kbps = (
             round(network_bps / 1024.0, 2)
             if isinstance(network_bps, (int, float))

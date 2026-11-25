@@ -580,9 +580,11 @@ or pick `lean`. UDP stays at a few KB/s: an unchanged color is not re-sent
 for 2 s.
 
 **Activity** plots the same numbers live — CPU %, RAM MB and UDP KB/s, one line
-each for mpv and the panel. CPU is a share of the whole processor; CPU and RSS
+each for mpv and the panel. CPU is a share of the whole processor and each lane
+scales to its busiest sample, so a small mpv share stays visible. CPU and RSS
 read `/proc`, so the chart is Linux-only for those lanes. The UDP rate comes
-from `stats-<pid>.json`, so demo and dry-run stay at zero. mpv is attributed
+from `stats-<pid>.json`, so an idle panel shows a dash, demo mode and dry-run
+read zero, and a running dry run is labelled as such. mpv is attributed
 by the pid the Lua script writes into its state file, which is how attach mode
 works without a parent link.
 
