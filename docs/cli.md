@@ -101,7 +101,7 @@ release / punch). The four named presets are in the
 `--react-eq` is a JSON array in frequency order. A band missing from the array
 keeps its log-spaced default at that position, and the array is sorted before
 use. `type` defaults to `bell` and `slope` to `24`, so old arrays keep working.
-For example, a low cut that follows the bass, a band pass on the mids and a
+For example, a high cut that follows the bass, a band pass on the mids and a
 sparkle bell, with the bass soloed on every bulb:
 
 ```bash
@@ -111,11 +111,11 @@ sparkle bell, with the bass soloed on every bulb:
 ```
 
 Gain only shapes detection, never mpv's output. Shapes change which part of the
-mix the band hears: `lowpass` keeps everything below its frequency, `highpass`
-everything above, `bandpass` a slice around it, `notch` cuts the centre out and
-`flat` hears the full mix. Bands that share a lamp are averaged; lamps without
-an assignment follow the overall mix. A soloed band overrides every lamp
-assignment until you clear it.
+mix the band hears: `lowpass` keeps everything below its frequency (the panel
+calls it **High cut**), `highpass` everything above (**Low cut**), `bandpass` a
+slice around it, `notch` cuts the centre out and `flat` hears the full mix.
+Bands that share a lamp are averaged; lamps without an assignment follow the
+overall mix. A soloed band overrides every lamp assignment until you clear it.
 
 ### Sampling
 

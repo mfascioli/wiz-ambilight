@@ -70,6 +70,7 @@ local S = {
     eq = nil,
     audio_warned = false,
     audio_retry = nil,
+    audio_check = 0,
     fps_now = 10,
     next_due = 0,
     capture_w = 0,
@@ -884,6 +885,19 @@ local function tick()
         return
     end
     local now = mp.get_time()
+
+    -- Another script can replace the whole chain at any time. The `af`
+    -- observer handles the edge, and this once-a-second pass is a cheap
+    -- safety net for a rebuild that lands while the property is changing.
+    if is_audio_react(S.react) then
+        S.audio_check = S.audio_check + 1
+        if S.audio_check >= 30 then
+            S.audio_check = 0
+            sync_audio_filter()
+        end
+    else
+        S.audio_check = 0
+    end
 
     local paused = mp.get_property_native("pause") or false
     local eof = mp.get_property_native("eof-reached") or false

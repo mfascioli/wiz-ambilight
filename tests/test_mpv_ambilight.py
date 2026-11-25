@@ -1290,8 +1290,8 @@ class EqTests(unittest.TestCase):
         freqs = m.default_eq_freqs(8)
         self.assertAlmostEqual(freqs[0], 32.0)
         self.assertAlmostEqual(freqs[-1], 16000.0)
-        self.assertEqual(m.EQ_TYPE_LABELS["lowpass"], "Low cut")
-        self.assertEqual(m.EQ_TYPE_LABELS["highpass"], "High cut")
+        self.assertEqual(m.EQ_TYPE_LABELS["highpass"], "Low cut")
+        self.assertEqual(m.EQ_TYPE_LABELS["lowpass"], "High cut")
 
 
 class LuaAudioContractTests(unittest.TestCase):

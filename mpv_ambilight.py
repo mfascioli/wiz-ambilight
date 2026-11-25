@@ -696,12 +696,12 @@ EQ_DEFAULT_Q = 1.4
 # Detection shapes. `bell` is the gentle two-pole band the original analyser
 # emulated; the cuts and the band pass reuse the same centre and Q but let the
 # band isolate everything below or above it, or a steeper slice around it.
-EQ_BAND_TYPES = ("bell", "bandpass", "lowpass", "highpass", "notch", "flat")
+EQ_BAND_TYPES = ("bell", "bandpass", "highpass", "lowpass", "notch", "flat")
 EQ_TYPE_LABELS = {
     "bell": "Bell",
     "bandpass": "Band pass",
-    "lowpass": "Low cut",
-    "highpass": "High cut",
+    "highpass": "Low cut",
+    "lowpass": "High cut",
     "notch": "Notch",
     "flat": "Flat",
 }

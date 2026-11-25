@@ -649,8 +649,8 @@ class DemoPanelTests(unittest.TestCase):
         labels = {
             kind["id"]: kind["label"] for kind in snapshot["eq_limits"]["types"]
         }
-        self.assertEqual(labels["lowpass"], "Low cut")
-        self.assertEqual(labels["highpass"], "High cut")
+        self.assertEqual(labels["highpass"], "Low cut")
+        self.assertEqual(labels["lowpass"], "High cut")
         self.assertEqual(
             snapshot["eq_limits"]["slopes"], list(m.EQ_SLOPES)
         )

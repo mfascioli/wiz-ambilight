@@ -1266,7 +1266,7 @@ input[type="range"]::-moz-range-thumb {
       transparent 270deg);
 }
 /* The threshold sits where the live dot crosses the ring, so the gate is a
-   tick on the same −60…0 dB scale; the dial marker points at it from inside. */
+   tick on the same −36…0 dB scale; the dial marker points at it from inside. */
 .knob-gate {
   position: absolute;
   z-index: 2;

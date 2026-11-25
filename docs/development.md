@@ -344,7 +344,7 @@ while an audio reaction is selected and keeps a five-second history on the
 canvas: an amber input trace, a red light-drive curtain attached to the top
 border and descending by the drive amount, and the live **LIGHT n %** and dBFS
 values in the header. The threshold knob's outer ring reuses the same poll on a
-−60…0 dB scale: a dot walks toward 0 dB as the input rises, turns red above the
+−36…0 dB scale: a dot walks toward 0 dB as the input rises, turns red above the
 gate and crosses an amber tick at the threshold. The amber threshold line is
 drawn from `react_threshold` and dragging it writes that config value, so the
 meter follows the song without restarting the sync or adding a second

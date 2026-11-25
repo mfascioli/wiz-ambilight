@@ -372,11 +372,11 @@ start to open, **Attack** and **Release** are the envelope in milliseconds, and
 **Punch** is how hard levels above the gate drive the brightness: at 1× the
 bulbs rise gently, at 4× a small push above the gate reaches full brightness.
 The timeline stops at **−36 dBFS**, like Pro-C 2. The threshold knob carries
-the plugin's **−60…0 dB** side-chain ring: a white dot walks toward 0 dB as the
+the plugin's **−36…0 dB** side-chain ring: a white dot walks toward 0 dB as the
 song gets louder, turns red while the input is above the gate, and crosses an
 amber tick that marks the threshold. The amber dial inside the ring is the
-threshold itself, so the knob and the tick always agree. The threshold stops at
-**−36 dB**, so the dial rests at 40 % of the ring when the gate is fully open.
+threshold itself, and the knob, the tick and the timeline share the same scale,
+so the minimum sits at the left end.
 
 The gate keeps at least **12 dB** of range above it, even when the profile
 ceiling is closer. Raise the threshold to −14 dB and the bulbs still have
@@ -427,7 +427,7 @@ selected band.
 - **Frequency** is the band centre, 20 Hz–20 kHz.
 - **Shape** isolates the band in the analyser, Pro-Q style:
   **Bell** is the classic two-pole band, **Band pass** keeps only a slice around
-  the centre, **Low cut** and **High cut** keep everything below or above it,
+  the centre, **Low cut** removes the low end, **High cut** removes the top end,
   **Notch** removes the centre, and **Flat** passes the full mix.
 - **Q** sets the width of a bell, band pass or notch. A high Q is narrow and
   surgical; a low Q is broad and picks up more of its neighbours, which is useful

@@ -88,13 +88,13 @@ decoration: they explain the path from choosing bulbs to watching the effect.
   Each knob is an invisible range input over a conic dial. Vertical drag
   changes the value; `Shift` is fine, arrows work when the input has focus, and
   the amber value sits above a tracked uppercase label. The threshold knob is a
-  miniature side-chain meter: its outer ring covers **−60…0 dB**, the live dot
+  miniature side-chain meter: its outer ring covers **−36…0 dB**, the live dot
   walks toward 0 as the input rises, turns red above the gate and crosses an
   amber tick at the threshold, while the amber dial inside shows the threshold
-  value itself. The threshold input stops at **−36 dB**, so the dial rests at
-  40 % of the wider ring when the gate is fully open. A permanent note explains
-  that Punch sets how hard hits above the threshold drive the bulbs. Audio modes
-  show the strip instead of the profile select; video modes keep the profile.
+  value itself. The ring, the dial and the timeline share the same scale, so the
+  minimum sits at the left end. A permanent note explains that Punch sets how
+  hard hits above the threshold drive the bulbs. Audio modes show the strip
+  instead of the profile select; video modes keep the profile.
 - **Below the dynamics strip** a second full-width **EQ** strip carries the
   graphic EQ, again inside Look and never a fourth column or a second card. Its
   header holds **Bands** (2–16), **Auto release** (off / SSL / API 2500 /

@@ -26,15 +26,7 @@ const paintRange = (input) => {
   const ratio = max > min ? (value - min) / (max - min) : 0;
   input.style.setProperty("--fill", `${Math.round(ratio * 100)}%`);
   const knob = input.closest?.(".knob");
-  if (knob) {
-    /* The threshold knob's dial shares the wider −60…0 side-chain ring with
-       the live-input dot, so its amber arc and gate tick stay aligned even
-       though the threshold itself stops at −36 dB. */
-    const scaleMin = Number(knob.dataset.scaleMin);
-    const turnMin = Number.isFinite(scaleMin) ? scaleMin : min;
-    const turn = max > turnMin ? (value - turnMin) / (max - turnMin) : 0;
-    knob.style.setProperty("--turn", String(Math.max(0, Math.min(1, turn))));
-  }
+  if (knob) knob.style.setProperty("--turn", String(ratio));
 };
 
 const refs = {
@@ -929,10 +921,10 @@ function syncDynamicsFields(snapshot, config, reaction) {
 
 /* The timeline matches the Pro-C 2 style: a −36 dBFS floor, an amber input
    trace, and a red area that hangs from the top for the light drive. The
-   threshold knob's ring uses the plugin's wider −60…0 dB side-chain scale. */
+   threshold knob's ring uses the same −36…0 dB scale as the timeline. */
 const SCOPE_MIN_DB = -36;
 const SCOPE_MAX_DB = 0;
-const KNOB_MIN_DB = -60;
+const KNOB_MIN_DB = -36;
 const SCOPE_WINDOW_MS = 5000;
 const SCOPE_POLL_MS = 40;
 const SCOPE_COLORS = {
@@ -1008,7 +1000,7 @@ function renderLightReadout(db, threshold) {
 
 /* The threshold knob carries the live input on an outer ring, red once the
    input is above the gate, the way Pro-C 2 tracks its side-chain level. The
-   ring spans −60…0 dB, so the dot walks toward 0 as the song gets louder;
+   ring spans −36…0 dB, so the dot walks toward 0 as the song gets louder;
    the amber tick marks the threshold on the same scale. */
 function updateThresholdRing(db, threshold) {
   const knob = refs.thresholdKnob;
@@ -1508,8 +1500,8 @@ function eqTypes(snapshot) {
   return snapshot?.eq_limits?.types || [
     { id: "bell", label: "Bell" },
     { id: "bandpass", label: "Band pass" },
-    { id: "lowpass", label: "Low cut" },
-    { id: "highpass", label: "High cut" },
+    { id: "highpass", label: "Low cut" },
+    { id: "lowpass", label: "High cut" },
     { id: "notch", label: "Notch" },
     { id: "flat", label: "Flat" },
   ];
@@ -1551,8 +1543,8 @@ function eqTypeShort(type) {
   return {
     bell: "BELL",
     bandpass: "BPASS",
-    lowpass: "LOCUT",
-    highpass: "HICUT",
+    highpass: "LOCUT",
+    lowpass: "HICUT",
     notch: "NOTCH",
     flat: "FLAT",
   }[type] || "BELL";

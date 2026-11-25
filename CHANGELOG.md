@@ -4,13 +4,13 @@ Releases before 1.4.0 were never tagged; their history is in `git log`.
 
 ## Unreleased
 
-- **Audio:** the threshold knob stops at **−36 dBFS** instead of −60; the
-  outer ring keeps its wider −60…0 scale for the live input and the dial rests
-  at 40 % of it when the gate is fully open. The EQ shapes formerly labelled
-  Low pass / High pass read **Low cut** / **High cut** (the stored ids stay
-  `lowpass`/`highpass`, so old configs keep working). The analyser graph is
-  now installed **before** audio-norm's compressor and restored after a
-  profile switch, so the EQ runs first and the compressor second.
+- **Audio:** the threshold knob, its live side-chain ring and the timeline all
+  share a **−36…0 dBFS** scale, so the minimum sits at the left end and the
+  knob stops at −36 dB. **Low cut** removes the low end (stored as `highpass`)
+  and **High cut** removes the top end (stored as `lowpass`), keeping old
+  configs and `--react-eq` arrays compatible. The analyser graph is now
+  installed **before** audio-norm's compressor and restored after a profile
+  switch, so the EQ runs first and the compressor second.
 - **Activity:** the CPU lane no longer starts at a 5 % floor, so mpv and the
   panel stay readable when hardware decoding keeps their whole-processor share
   under one percent. Each line ends in a dot at the newest sample, idle UDP

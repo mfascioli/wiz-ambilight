@@ -297,10 +297,10 @@ class StructureTests(unittest.TestCase):
                 )
         self.assertNotIn('id="vuField"', HTML)
         self.assertNotIn('id="reactThresholdField"', HTML)
-        # The threshold input stops at −36 dB, the compressor's gate limit,
-        # while the dial keeps the wider −60…0 ring for the live input.
+        # The threshold input, the dial and the live ring share the same
+        # −36…0 dB scale, so the minimum sits at the left end.
         self.assertIn('id="reactThreshold" class="knob-input" type="range" min="-36"', HTML)
-        self.assertIn('id="thresholdKnob" data-scale-min="-60"', HTML)
+        self.assertNotIn('data-scale-min', HTML)
         self.assertIn('value="-18"', HTML)
         # The live readout and the timeline are about light drive, not "over".
         self.assertIn("LIGHT 0%", HTML)
@@ -320,7 +320,7 @@ class StructureTests(unittest.TestCase):
         self.assertIn("react_punch: preset.punch", js)
         self.assertIn("LIGHT ${percent}%", js)
         self.assertIn('SCOPE_MIN_DB = -36', js)
-        self.assertIn('KNOB_MIN_DB = -60', js)
+        self.assertIn('KNOB_MIN_DB = -36', js)
         self.assertIn("AUDIO_WINDOW_DB", CORE)
         self.assertIn('"ceiling"', WEBUI)
         self.assertIn('"window"', WEBUI)
@@ -384,12 +384,12 @@ class StructureTests(unittest.TestCase):
         self.assertIn("react_eq_bands", js)
         self.assertIn("react_auto", js)
         self.assertIn("react_active_bands", js)
-        # The shapes are cuts in the panel even though the stored ids stay
-        # `lowpass`/`highpass` for config compatibility.
+        # Low cut removes the low end (a high-pass stage) and High cut removes
+        # the top end (a low-pass stage), while the stored ids stay unchanged.
         self.assertIn('label: "Low cut"', js)
         self.assertIn('label: "High cut"', js)
-        self.assertIn('lowpass: "LOCUT"', js)
-        self.assertIn('highpass: "HICUT"', js)
+        self.assertIn('highpass: "LOCUT"', js)
+        self.assertIn('lowpass: "HICUT"', js)
         self.assertIn("requestAnimationFrame", js)
         self.assertIn(".eq-strip", CSS)
         self.assertIn(".eq-faders", CSS)
