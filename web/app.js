@@ -26,7 +26,15 @@ const paintRange = (input) => {
   const ratio = max > min ? (value - min) / (max - min) : 0;
   input.style.setProperty("--fill", `${Math.round(ratio * 100)}%`);
   const knob = input.closest?.(".knob");
-  if (knob) knob.style.setProperty("--turn", String(ratio));
+  if (knob) {
+    /* The threshold knob's dial shares the wider −60…0 side-chain ring with
+       the live-input dot, so its amber arc and gate tick stay aligned even
+       though the threshold itself stops at −36 dB. */
+    const scaleMin = Number(knob.dataset.scaleMin);
+    const turnMin = Number.isFinite(scaleMin) ? scaleMin : min;
+    const turn = max > turnMin ? (value - turnMin) / (max - turnMin) : 0;
+    knob.style.setProperty("--turn", String(Math.max(0, Math.min(1, turn))));
+  }
 };
 
 const refs = {
@@ -1500,8 +1508,8 @@ function eqTypes(snapshot) {
   return snapshot?.eq_limits?.types || [
     { id: "bell", label: "Bell" },
     { id: "bandpass", label: "Band pass" },
-    { id: "lowpass", label: "Low pass" },
-    { id: "highpass", label: "High pass" },
+    { id: "lowpass", label: "Low cut" },
+    { id: "highpass", label: "High cut" },
     { id: "notch", label: "Notch" },
     { id: "flat", label: "Flat" },
   ];
@@ -1543,8 +1551,8 @@ function eqTypeShort(type) {
   return {
     bell: "BELL",
     bandpass: "BPASS",
-    lowpass: "LPASS",
-    highpass: "HPASS",
+    lowpass: "LOCUT",
+    highpass: "HICUT",
     notch: "NOTCH",
     flat: "FLAT",
   }[type] || "BELL";

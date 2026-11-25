@@ -69,6 +69,7 @@ local S = {
     bands = nil,
     eq = nil,
     audio_warned = false,
+    audio_retry = nil,
     fps_now = 10,
     next_due = 0,
     capture_w = 0,
@@ -367,9 +368,19 @@ local function audio_stats_off()
     end
 end
 
+local function wiz_chain(astats)
+    return FILTER_STATS .. "," .. band_filter(astats) .. "," .. FILTER_TAIL
+end
+
 local function audio_stats_on()
     local af = mp.get_property("af") or ""
-    if af:find("@wizstats", 1, true) and af:find("@wizbands", 1, true) then
+    -- Already first in the chain, so the analyser sees the untouched mix and
+    -- the compressor that follows it never colours the measurement. Checking
+    -- the position (and not just that the labels exist) repairs a chain from
+    -- an older order where the compressor came first.
+    if af:find("@wizstats", 1, true) == 1
+        and af:find("@wizbands", 1, true)
+    then
         return true
     end
     if af:find("@wizstats", 1, true) or af:find("@wizbands", 1, true)
@@ -377,24 +388,26 @@ local function audio_stats_on()
     then
         audio_stats_off()
     end
-    local added = mp.commandv(
-        "af",
-        "add",
-        FILTER_STATS .. "," .. band_filter(ASTATS_BANDS) .. "," .. FILTER_TAIL
-    )
+    -- `af prepend` replaces the whole chain on mpv 0.42, so rebuild it with
+    -- `af set`: the analyser first, then whatever filters another script
+    -- installed (audio-norm's compressor, loudnorm and limiter). The property
+    -- text round-trips through `af set` unchanged.
+    local rest = mp.get_property("af") or ""
+    local chain = wiz_chain(ASTATS_BANDS)
+    if rest ~= "" then
+        chain = chain .. "," .. rest
+    end
+    local added = mp.commandv("af", "set", chain)
     if added ~= false then
         return added
     end
     -- The build rejected measure_perchannel; fall back to the full filter.
-    return mp.commandv(
-        "af",
-        "add",
-        FILTER_STATS
-            .. ","
-            .. band_filter(ASTATS_BANDS_LEGACY)
-            .. ","
-            .. FILTER_TAIL
-    )
+    rest = mp.get_property("af") or ""
+    chain = wiz_chain(ASTATS_BANDS_LEGACY)
+    if rest ~= "" then
+        chain = chain .. "," .. rest
+    end
+    return mp.commandv("af", "set", chain)
 end
 
 local function sync_audio_filter()
@@ -407,6 +420,30 @@ local function sync_audio_filter()
         audio_stats_off()
     end
 end
+
+-- Other scripts (audio-norm.lua in particular) reinstall their own chain with
+-- `af set` on file-loaded and whenever the user switches profile, which drops
+-- the analyser even when it was installed first. Put it back at the head as
+-- soon as the chain loses it. The short delay coalesces the burst of `af`
+-- changes a rebuild produces and keeps our own `af set` from looping.
+mp.observe_property("af", "string", function(_, value)
+    if not S.active or not is_audio_react(S.react) then
+        return
+    end
+    local af = value or ""
+    if af:find("@wizstats", 1, true) == 1 and af:find("@wizbands", 1, true) then
+        return
+    end
+    if S.audio_retry then
+        return
+    end
+    S.audio_retry = mp.add_timeout(0.05, function()
+        S.audio_retry = nil
+        if S.active and is_audio_react(S.react) then
+            audio_stats_on()
+        end
+    end)
+end)
 
 -- Format a dBFS number as JSON. astats reports -inf for digital silence and
 -- Lua cannot serialise NaN/inf, so those become null and the panel treats
@@ -914,6 +951,10 @@ local function stop()
     if S.timer then
         S.timer:kill()
         S.timer = nil
+    end
+    if S.audio_retry then
+        S.audio_retry:kill()
+        S.audio_retry = nil
     end
     if S.active and S.path then
         write_json(S.path, '{"active":false,"stopped":true}')

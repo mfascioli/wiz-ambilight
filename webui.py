@@ -274,7 +274,7 @@ def normalize_config(raw, core) -> dict:
         )
     try:
         config["react_threshold"] = max(
-            -60.0, min(0.0, float(config["react_threshold"]))
+            -36.0, min(0.0, float(config["react_threshold"]))
         )
     except (TypeError, ValueError):
         config["react_threshold"] = -18.0

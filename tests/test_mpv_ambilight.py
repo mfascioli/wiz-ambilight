@@ -1290,6 +1290,8 @@ class EqTests(unittest.TestCase):
         freqs = m.default_eq_freqs(8)
         self.assertAlmostEqual(freqs[0], 32.0)
         self.assertAlmostEqual(freqs[-1], 16000.0)
+        self.assertEqual(m.EQ_TYPE_LABELS["lowpass"], "Low cut")
+        self.assertEqual(m.EQ_TYPE_LABELS["highpass"], "High cut")
 
 
 class LuaAudioContractTests(unittest.TestCase):
@@ -1325,6 +1327,12 @@ class LuaAudioContractTests(unittest.TestCase):
         self.assertIn("measure_perchannel=Peak_level+RMS_level", source)
         self.assertIn("measure_overall=none", source)
         self.assertIn("ASTATS_BANDS_LEGACY", source)
+        # The analyser goes first and the compressor after it: `af add` would
+        # append to the other script's chain, so the graph is rebuilt with
+        # `af set` and an `af` observer puts it back after a profile switch.
+        self.assertIn('mp.commandv("af", "set", chain)', source)
+        self.assertIn('mp.observe_property("af"', source)
+        self.assertNotIn('"af", "add"', source)
         # RMS and peak travel together, and the overall level can be rebuilt
         # from the band powers when wizstats is empty.
         self.assertIn('"bands":', source)

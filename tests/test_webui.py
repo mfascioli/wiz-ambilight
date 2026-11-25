@@ -78,7 +78,11 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(config["react_punch"], m.AUDIO_PUNCH)
         self.assertEqual(
             webui.normalize_config({"react_threshold": -99}, m)["react_threshold"],
-            -60.0,
+            -36.0,
+        )
+        self.assertEqual(
+            webui.normalize_config({"react_threshold": -40}, m)["react_threshold"],
+            -36.0,
         )
         self.assertEqual(
             webui.normalize_config({"react_threshold": 4}, m)["react_threshold"],
@@ -642,6 +646,11 @@ class DemoPanelTests(unittest.TestCase):
             [kind["id"] for kind in snapshot["eq_limits"]["types"]],
             list(m.EQ_BAND_TYPES),
         )
+        labels = {
+            kind["id"]: kind["label"] for kind in snapshot["eq_limits"]["types"]
+        }
+        self.assertEqual(labels["lowpass"], "Low cut")
+        self.assertEqual(labels["highpass"], "High cut")
         self.assertEqual(
             snapshot["eq_limits"]["slopes"], list(m.EQ_SLOPES)
         )

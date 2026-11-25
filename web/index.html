@@ -253,12 +253,12 @@
               </div>
               <div class="knob-bank">
                 <div class="knob-field">
-                  <div class="knob knob-live" id="thresholdKnob" title="Outer ring: live input, −60 dB at the left end to 0 dB at the right. Amber dial: threshold.">
+                  <div class="knob knob-live" id="thresholdKnob" data-scale-min="-60" title="Outer ring: live input, −60 dB at the left end to 0 dB at the right. Amber dial: threshold, −36 to 0 dB.">
                     <span class="knob-meter" aria-hidden="true"></span>
                     <span class="knob-gate" aria-hidden="true"></span>
                     <span class="knob-dot" aria-hidden="true"></span>
                     <span class="knob-dial" aria-hidden="true"><span class="knob-marker"></span></span>
-                    <input id="reactThreshold" class="knob-input" type="range" min="-60" max="0" step="1" value="-18" aria-label="Threshold; the outer ring shows live input from −60 to 0 dB">
+                    <input id="reactThreshold" class="knob-input" type="range" min="-36" max="0" step="1" value="-18" aria-label="Threshold, −36 to 0 dB; the outer ring shows live input from −60 to 0 dB">
                   </div>
                   <output class="knob-value" id="reactThresholdOut">−18 dB</output>
                   <label class="knob-label" for="reactThreshold">Threshold</label>
@@ -332,7 +332,7 @@
               <select id="eqLamp"></select>
             </div>
             <p class="hint tight scope-hint">
-              Shape isolates the band: a bell, a band pass, a low/high pass, a notch or the full mix. Q sets the width of a bell, band pass or notch; slope sets how hard the cuts fall away. Gain boosts or cuts how hard that band drives its lamp, and Solo makes the selected band drive every bulb. Unassigned bulbs follow the overall mix.
+              Shape isolates the band: a bell, a band pass, a low/high cut, a notch or the full mix. Q sets the width of a bell, band pass or notch; slope sets how hard the cuts fall away. Gain boosts or cuts how hard that band drives its lamp, and Solo makes the selected band drive every bulb. Unassigned bulbs follow the overall mix.
             </p>
           </div>
           <div class="control-grid sampling-manual hidden" id="samplingManual">

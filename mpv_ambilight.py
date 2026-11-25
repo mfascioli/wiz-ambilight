@@ -700,8 +700,8 @@ EQ_BAND_TYPES = ("bell", "bandpass", "lowpass", "highpass", "notch", "flat")
 EQ_TYPE_LABELS = {
     "bell": "Bell",
     "bandpass": "Band pass",
-    "lowpass": "Low pass",
-    "highpass": "High pass",
+    "lowpass": "Low cut",
+    "highpass": "High cut",
     "notch": "Notch",
     "flat": "Flat",
 }
@@ -2938,7 +2938,7 @@ def main(argv=None) -> int:
         "--react-threshold",
         type=float,
         default=None,
-        help="audio modes: dBFS gate where the bulbs start to open (-60 to 0)",
+        help="audio modes: dBFS gate where the bulbs start to open (-36 to 0)",
     )
     parser.add_argument(
         "--react-attack",
@@ -3216,7 +3216,7 @@ def main(argv=None) -> int:
         except ValueError as error:
             parser.error(f"--react-bands: {error}")
     if args.react_threshold is not None:
-        args.react_threshold = max(-60.0, min(0.0, float(args.react_threshold)))
+        args.react_threshold = max(-36.0, min(0.0, float(args.react_threshold)))
     if args.react_attack is not None:
         args.react_attack = max(0.0, min(200.0, float(args.react_attack)))
     if args.react_release is not None:

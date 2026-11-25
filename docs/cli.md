@@ -88,7 +88,7 @@ from `--style`; the style table is in the [README](../README.md#-styles).
 | `--react-color-mode` | `bands` | `bands`, `spectrum`, `rainbow`, `range`, `level`, `single` | Where audio bulb colors come from. |
 | `--react-color-a` | `#fcbe11` | `#rrggbb` | Low color for `range`, soft color for `level`, only color for `single`. |
 | `--react-color-b` | `#38bdf8` | `#rrggbb` | High color for `range`, loud color for `level`. |
-| `--react-threshold` | profile (`-18` dBFS on `balanced`) | −60–0 dBFS | Audio gate where the bulbs start to open. |
+| `--react-threshold` | profile (`-18` dBFS on `balanced`) | −36–0 dBFS | Audio gate where the bulbs start to open. |
 | `--react-attack` | profile (`1` ms on `balanced`) | 0–200 ms | Envelope attack. |
 | `--react-release` | profile (`55` ms on `balanced`) | 20–1000 ms | Envelope release. |
 | `--react-punch` | profile (`3.0` on `balanced`) | 1–4 | How hard levels above the gate drive brightness. |
@@ -101,7 +101,7 @@ release / punch). The four named presets are in the
 `--react-eq` is a JSON array in frequency order. A band missing from the array
 keeps its log-spaced default at that position, and the array is sorted before
 use. `type` defaults to `bell` and `slope` to `24`, so old arrays keep working.
-For example, a low pass that follows the bass, a band pass on the mids and a
+For example, a low cut that follows the bass, a band pass on the mids and a
 sparkle bell, with the bass soloed on every bulb:
 
 ```bash

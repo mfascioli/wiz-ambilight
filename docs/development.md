@@ -166,7 +166,7 @@ holds four named starting points, served to the panel as `dynamics`:
 | `punch` | −18 dBFS | 1 ms | 55 ms | 3.0 |
 | `strobe` | −14 dBFS | 0 ms | 30 ms | 4.0 |
 
-`react_threshold` is the gate in dBFS (−60…0), `react_attack` and
+`react_threshold` is the gate in dBFS (−36…0), `react_attack` and
 `react_release` are milliseconds (0…200 and 20…1000) and `react_punch` is
 1…4. The panel writes all four; `--react-threshold`, `--react-attack`,
 `--react-release` and `--react-punch` are the CLI equivalents. When they are
@@ -279,10 +279,14 @@ audio mpv plays is unchanged. That second `astats` runs with
 two fields feed the meter, and measuring the full statistics set on up to 34
 channels makes a 16-band EQ burn most of a core. `ASTATS_BANDS_LEGACY` retries
 the plain filter on builds without `measure_perchannel`. `anull` keeps the
-chain valid while the labels are removed. The script adds the chain only when
-`react` is `beat` or `vu`, re-adds it after `file-loaded`, and removes
-`@wizbands`, `@wizstats` and `@wiztail` in any order on a switch back to a video
-mode, on stop and on shutdown. A user's own `af` chain is left in place.
+chain valid while the labels are removed. The script installs the chain
+`af set`-style only when `react` is `beat` or `vu`, putting the analyser
+**ahead of any existing filters** so a compressor that follows sees the mix
+after the EQ. It re-adds the chain after `file-loaded`, and an `af` observer
+puts it back at the head when another script replaces the chain on a profile
+switch. On a switch back to a video mode, on stop and on shutdown it removes
+`@wizbands`, `@wizstats` and `@wiztail` in any order, leaving a user's own `af`
+filters in place after it.
 
 Configs without an `eq` plan fall back to the older crossover graph:
 `acrossover=split=<s1> … <sN-1>[b0]…[bN-1]`, `amerge=inputs=N` into 2N

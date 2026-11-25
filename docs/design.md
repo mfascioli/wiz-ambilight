@@ -91,9 +91,10 @@ decoration: they explain the path from choosing bulbs to watching the effect.
   miniature side-chain meter: its outer ring covers **−60…0 dB**, the live dot
   walks toward 0 as the input rises, turns red above the gate and crosses an
   amber tick at the threshold, while the amber dial inside shows the threshold
-  value itself. A permanent note explains that Punch sets how hard hits above
-  the threshold drive the bulbs. Audio modes show the strip instead of the
-  profile select; video modes keep the profile.
+  value itself. The threshold input stops at **−36 dB**, so the dial rests at
+  40 % of the wider ring when the gate is fully open. A permanent note explains
+  that Punch sets how hard hits above the threshold drive the bulbs. Audio modes
+  show the strip instead of the profile select; video modes keep the profile.
 - **Below the dynamics strip** a second full-width **EQ** strip carries the
   graphic EQ, again inside Look and never a fourth column or a second card. Its
   header holds **Bands** (2–16), **Auto release** (off / SSL / API 2500 /
