@@ -11,6 +11,11 @@ Releases before 1.4.0 were never tagged; their history is in `git log`.
   configs and `--react-eq` arrays compatible. The analyser graph is now
   installed **before** audio-norm's compressor and restored after a profile
   switch, so the EQ runs first and the compressor second.
+- **Graphic EQ:** band handles now ride the composite curve instead of sitting
+  at each band's raw gain, so a vertical drag moves the dot, the line and its
+  fader together even when bands overlap or use a Low/High cut, while a sideways
+  drag keeps the band gain. A drag follows the pointer's travel and no longer
+  makes the handle jump or drift.
 - **Activity:** the CPU lane no longer starts at a 5 % floor, so mpv and the
   panel stay readable when hardware decoding keeps their whole-processor share
   under one percent. Each line ends in a dot at the newest sample, idle UDP

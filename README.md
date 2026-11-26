@@ -422,7 +422,9 @@ Audio modes feed from a graphic EQ with **2 to 16 bands** (default **8**). Each
 band carries **frequency**, **shape**, **Q**, **slope**, **gain**, **lamp** and
 **solo**. The panel's **EQ** strip under Dynamics draws the curve and one fader
 per band; drag a fader or a node on the curve, or use the detail row for the
-selected band.
+selected band. Each node rides the composite curve, so it stays on the line
+when bands overlap or use a Low/High cut shape; a vertical drag moves the node,
+the curve and its fader together, and a sideways drag keeps the band gain.
 
 - **Frequency** is the band centre, 20 Hz–20 kHz.
 - **Shape** isolates the band in the analyser, Pro-Q style:

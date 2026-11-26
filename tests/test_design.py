@@ -390,6 +390,14 @@ class StructureTests(unittest.TestCase):
         self.assertIn('label: "High cut"', js)
         self.assertIn('highpass: "LOCUT"', js)
         self.assertIn('lowpass: "HICUT"', js)
+        # A band handle rides the composite curve and drags by pointer travel,
+        # so the dot, the line and the fader move together instead of the node
+        # floating above a Low/High cut or an overlapping band.
+        self.assertIn("function eqNodeGain", js)
+        self.assertIn("eqY(eqNodeGain(band, bands), plot)", js)
+        self.assertIn("eqY(eqNodeGain(band, state.eq.bands), plot)", js)
+        self.assertIn("function eqPointerGain", js)
+        self.assertIn("startPointerGain", js)
         self.assertIn("requestAnimationFrame", js)
         self.assertIn(".eq-strip", CSS)
         self.assertIn(".eq-faders", CSS)

@@ -101,6 +101,8 @@ decoration: they explain the path from choosing bulbs to watching the effect.
   Hybrid), **Detect active bands** and a summary of how many bands are
   assigned. A canvas draws the response from 20 Hz to 20 kHz on a −18…+18 dB
   scale with one draggable node per band; a soloed band gets a dashed amber ring.
+  Each node rides the composite curve, so dragging it moves the dot, the line
+  and its fader together even when bands overlap or use a Low/High cut shape.
   Below it, one vertical fader per band shows gain, the frequency and the shape
   tag, a small **S** solo button and a lamp select. The selected band is
   outlined amber and its shape, slope, frequency, Q, gain, solo and lamp are

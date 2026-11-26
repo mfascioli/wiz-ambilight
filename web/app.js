@@ -1723,6 +1723,14 @@ function eqCurveGain(freq, bands) {
   return Math.max(-18, Math.min(18, total));
 }
 
+// A band handle rides the composite curve, not its raw gain. With overlapping
+// bands (or a Low/High cut, whose cutoff sits below its passband) drawing the
+// handle at `gain` left it floating far from the line, so the dot and the
+// curve appeared to move on their own.
+function eqNodeGain(band, bands) {
+  return eqCurveGain(Number(band.freq), bands);
+}
+
 function drawEq() {
   const canvas = refs.eqCanvas;
   if (!canvas || !canvas.getContext) return;
@@ -1785,7 +1793,7 @@ function drawEq() {
   }
   bands.forEach((band, index) => {
     const x = eqX(Number(band.freq), plot);
-    const y = eqY(Number(band.gain), plot);
+    const y = eqY(eqNodeGain(band, bands), plot);
     const color = state.snapshot?.bands?.[index]?.color || palette.amber;
     ctx.beginPath();
     ctx.arc(x, y, index === state.eq.selected ? 5 : 3.4, 0, Math.PI * 2);
@@ -3220,7 +3228,7 @@ function eqNodeAt(event) {
   state.eq.bands.forEach((band, index) => {
     const distance = Math.hypot(
       x - eqX(Number(band.freq), plot),
-      y - eqY(Number(band.gain), plot),
+      y - eqY(eqNodeGain(band, state.eq.bands), plot),
     );
     if (distance < bestDistance) {
       bestDistance = distance;
@@ -3230,24 +3238,37 @@ function eqNodeAt(event) {
   return best;
 }
 
+function eqPointerGain(event) {
+  const plot = state.eq.plot;
+  if (!plot) return 0;
+  const rect = refs.eqCanvas.getBoundingClientRect();
+  const y = Math.max(plot.top, Math.min(plot.bottom, event.clientY - rect.top));
+  return Math.round(
+    (1 - ((y - plot.top) / (plot.bottom - plot.top)) * 2) * 18 * 2,
+  ) / 2;
+}
+
 function eqPointerUpdate(event) {
   const drag = state.eq.dragging;
   const plot = state.eq.plot;
   if (!drag || !plot) return;
   const rect = refs.eqCanvas.getBoundingClientRect();
   const x = Math.max(plot.left, Math.min(plot.right, event.clientX - rect.left));
-  const y = Math.max(plot.top, Math.min(plot.bottom, event.clientY - rect.top));
   const frequency = 20 * (20000 / 20) ** ((x - plot.left) / (plot.right - plot.left));
-  const gain = Math.round(
-    (1 - ((y - plot.top) / (plot.bottom - plot.top)) * 2) * 18 * 2,
-  ) / 2;
   const band = state.eq.bands[drag.index];
   if (!band) return;
   const [low, high] = eqFreqBounds(drag.index);
   // Keep the bands in frequency order so a drag never re-sorts the list and
   // changes which lamp and colour the selected band owns.
   band.freq = Math.round(Math.max(low, Math.min(high, frequency)) * 10) / 10;
-  band.gain = Math.max(-18, Math.min(18, gain));
+  // Move the gain by the pointer's vertical travel instead of snapping it to
+  // the absolute Y. The handle now rides the composite curve, so mapping the
+  // raw Y would make it jump on pointerdown and drift on a sideways drag.
+  const delta = eqPointerGain(event) - (drag.startPointerGain || 0);
+  band.gain = Math.max(
+    -18,
+    Math.min(18, Number(drag.startGain || 0) + delta),
+  );
   updateEqBandDom(drag.index);
 }
 
@@ -3255,10 +3276,14 @@ refs.eqCanvas.addEventListener("pointerdown", (event) => {
   const index = eqNodeAt(event);
   if (index < 0) return;
   state.eq.selected = index;
-  state.eq.dragging = { index, pointerId: event.pointerId };
+  state.eq.dragging = {
+    index,
+    pointerId: event.pointerId,
+    startGain: Number(state.eq.bands[index].gain) || 0,
+    startPointerGain: eqPointerGain(event),
+  };
   capturePointer(refs.eqCanvas, event.pointerId);
   updateEqBandDom(index);
-  eqPointerUpdate(event);
 });
 refs.eqCanvas.addEventListener("pointermove", (event) => {
   if (!state.eq.dragging) return;
