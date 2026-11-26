@@ -238,7 +238,7 @@
           <div class="dynamics-strip hidden" id="dynamicsPanel">
             <div class="scope-field">
               <div class="scope-head">
-                <span class="scope-title">Signal</span>
+                <span class="scope-title" title="Gate and light-drive envelope; the audio mpv plays is untouched">Dynamics</span>
                 <output class="scope-db" id="vuDbOut">−∞ dB</output>
                 <span class="scope-over" id="vuOverOut">LIGHT 0%</span>
               </div>
@@ -250,6 +250,11 @@
                 <label for="reactDynamics" title="A starting point for the four knobs">Preset</label>
                 <select id="reactDynamics" title="A starting point for the four knobs"></select>
                 <p class="hint tight" id="reactDynamicsHint"></p>
+              </div>
+              <div class="field">
+                <label for="reactAuto">Auto release</label>
+                <select id="reactAuto" title="Release behaviour for the light envelope; the audio mpv plays is untouched"></select>
+                <p class="hint tight" id="reactAutoHint"></p>
               </div>
               <div class="knob-bank">
                 <div class="knob-field">
@@ -296,9 +301,6 @@
               <span class="scope-title">EQ</span>
               <label class="eq-count" for="eqBandCount">Bands
                 <select id="eqBandCount"></select>
-              </label>
-              <label class="eq-auto" for="reactAuto">Auto release
-                <select id="reactAuto"></select>
               </label>
               <label class="check eq-active">
                 <input type="checkbox" id="reactActiveBands">

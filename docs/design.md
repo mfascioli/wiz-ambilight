@@ -77,14 +77,18 @@ decoration: they explain the path from choosing bulbs to watching the effect.
   sampled color; the panel still stores and shows the original RGB.
 - **Audio dynamics** are one full-width strip inside Look, below the three
   columns: not a fourth column and not a second card. The left side is a
-  scrolling five-second **Signal** timeline on a canvas — a −36…0 dBFS grid in
+  scrolling five-second **Dynamics** timeline on a canvas — a −36…0 dBFS grid in
   6 dB steps, an amber input trace, a red light-drive curtain attached to the
   top border and descending by the same `pulse_level` percentage the bulbs
   receive (not another level), and an amber threshold line with a drag handle.
   Dragging anywhere on it writes `react_threshold`. The header pairs the live
   dBFS value with a **LIGHT n %** readout, red once the drive is above zero.
-  The right side is **Preset** — four starting points for the knobs — and four
-  small round knobs in compressor order: Threshold, Punch, Attack and Release.
+  The right side is **Preset** — four starting points for the knobs —, **Auto
+  release** (off / SSL / API 2500 / Hybrid) and four small round knobs in
+  dynamics order: Threshold, Punch, Attack and Release. The stage is a gate and
+  an envelope follower for the light drive, not an audio compressor: it decides
+  how hard the bulbs are driven and never touches mpv's audio. **Auto release**
+  shapes the envelope release and shows a one-line hint for the selected mode.
   Each knob is an invisible range input over a conic dial. Vertical drag
   changes the value; `Shift` is fine, arrows work when the input has focus, and
   the amber value sits above a tracked uppercase label. The threshold knob is a
@@ -97,10 +101,9 @@ decoration: they explain the path from choosing bulbs to watching the effect.
   instead of the profile select; video modes keep the profile.
 - **Below the dynamics strip** a second full-width **EQ** strip carries the
   graphic EQ, again inside Look and never a fourth column or a second card. Its
-  header holds **Bands** (2–16), **Auto release** (off / SSL / API 2500 /
-  Hybrid), **Detect active bands** and a summary of how many bands are
-  assigned. A canvas draws the response from 20 Hz to 20 kHz on a −18…+18 dB
-  scale with one draggable node per band; a soloed band gets a dashed amber ring.
+  header holds **Bands** (2–16), **Detect active bands** and a summary of how
+  many bands are assigned. Auto release lives with Dynamics because it shapes
+  the light envelope, not the EQ.
   Each node rides the composite curve, so dragging it moves the dot, the line
   and its fader together even when bands overlap or use a Low/High cut shape.
   Below it, one vertical fader per band shows gain, the frequency and the shape

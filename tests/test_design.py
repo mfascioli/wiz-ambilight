@@ -274,6 +274,8 @@ class StructureTests(unittest.TestCase):
             'id="reactAttack"',
             'id="reactRelease"',
             'id="reactPunch"',
+            'id="reactAuto"',
+            'id="reactAutoHint"',
             'id="thresholdKnob"',
             'class="knob-meter"',
             'class="knob-gate"',
@@ -287,6 +289,13 @@ class StructureTests(unittest.TestCase):
         self.assertLess(HTML.index("sampleStage"), HTML.index('id="dynamicsPanel"'))
         self.assertLess(HTML.index('id="dynamicsPanel"'), HTML.index('id="samplingManual"'))
         self.assertLess(HTML.index('id="vuMeter"'), HTML.index('id="samplingManual"'))
+        # Auto release shapes the light envelope, not the EQ, so the select
+        # lives inside the dynamics strip and never in the EQ header.
+        self.assertLess(HTML.index('id="dynamicsPanel"'), HTML.index('id="reactAuto"'))
+        self.assertLess(HTML.index('id="reactAuto"'), HTML.index('id="eqPanel"'))
+        self.assertIn("renderAutoHint", js)
+        eq_head = HTML[HTML.index('class="eq-head"'):HTML.index('id="eqCanvas"')]
+        self.assertNotIn('id="reactAuto"', eq_head)
         # Dynamics controls are round knobs over hidden range inputs, not the
         # old column of sliders.
         for control in ("reactThreshold", "reactAttack", "reactRelease", "reactPunch"):
@@ -308,6 +317,7 @@ class StructureTests(unittest.TestCase):
         self.assertIn("Punch: how hard hits above the threshold drive the bulbs.", HTML)
         self.assertNotIn("Dynamics preset", HTML)
         self.assertIn("syncDynamicsFields", js)
+        self.assertIn("buildAutoRelease", js)
         self.assertIn("drawTimeline", js)
         self.assertIn("bindScope", js)
         self.assertIn("bindKnobs", js)
@@ -345,7 +355,6 @@ class StructureTests(unittest.TestCase):
             'id="eqCanvas"',
             'id="eqFaders"',
             'id="eqSummary"',
-            'id="reactAuto"',
             'id="reactActiveBands"',
             'id="eqFreq"',
             'id="eqQ"',
@@ -370,7 +379,6 @@ class StructureTests(unittest.TestCase):
             "syncEqFields",
             "eqCurveGain",
             "eqBandGain",
-            "buildEqAuto",
             "buildEqType",
             "buildEqSlope",
             "eqTypeShort",

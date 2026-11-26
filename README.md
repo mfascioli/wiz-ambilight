@@ -366,11 +366,14 @@ the [command line reference](docs/cli.md#styles-reactions-and-sampling).
 
 ### 🔊 Audio Dynamics
 
-Audio modes replace the profile with four compressor-style controls, in the
-spirit of an SSL bus compressor. **Threshold** is the dBFS gate where the bulbs
-start to open, **Attack** and **Release** are the envelope in milliseconds, and
-**Punch** is how hard levels above the gate drive the brightness: at 1× the
-bulbs rise gently, at 4× a small push above the gate reaches full brightness.
+Audio modes replace the profile with four **dynamics** controls: a dBFS gate,
+an envelope follower and a punch curve that decide how hard the bulbs are
+driven. The look is compressor-style, in the spirit of an SSL bus compressor,
+but this stage never compresses the audio mpv plays — it only shapes the light.
+**Threshold** is the dBFS gate where the bulbs start to open, **Attack** and
+**Release** are the envelope in milliseconds, and **Punch** is how hard levels
+above the gate drive the brightness: at 1× the bulbs rise gently, at 4× a small
+push above the gate reaches full brightness.
 The timeline stops at **−36 dBFS**, like Pro-C 2. The threshold knob carries
 the plugin's **−36…0 dB** side-chain ring: a white dot walks toward 0 dB as the
 song gets louder, turns red while the input is above the gate, and crosses an
@@ -385,7 +388,7 @@ couple of dB and the bulbs would turn into an on/off switch.
 
 **Preset** is simply a starting point for the four knobs; the panel writes all
 four values when you pick one, and every knob stays editable afterwards. The
-**Signal** timeline is a five-second dBFS trace: the amber line is the input,
+**Dynamics** timeline is a five-second dBFS trace: the amber line is the input,
 the red curtain hangs from the top border and its depth is the light drive
 (the brightness the bulbs are being asked for, inverted like a compressor's
 gain-reduction meter), and the amber line across the graph is the threshold.
@@ -462,8 +465,9 @@ there for **180 ms** before it lights a bulb, so a steady bed under a kick no
 longer keeps a bulb lit. With one bulb the overall view becomes the loudest
 active band.
 
-**Auto release.** The **Auto release** select shapes the brightness envelope,
-inspired by two bus compressors:
+**Auto release.** The **Auto release** select in the **Dynamics** strip, next
+to **Preset**, shapes the brightness envelope. It is a dynamics control, not an
+EQ control. The modes are inspired by two bus compressors:
 
 | mode | behaviour |
 | --- | --- |

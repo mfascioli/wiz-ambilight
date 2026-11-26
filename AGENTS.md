@@ -80,23 +80,28 @@ headings, and leave interface names, option values and file paths untranslated.
   **Preset** leads with the Reaction group: the dropdown, with one
   `<optgroup>` per source (Video / Audio), then reaction strength. Audio modes
   add a full-width dynamics strip inside Look, below the three columns: a
-  scrolling Signal timeline on a −36…0 dBFS scale with an amber input trace, a
+  scrolling Dynamics timeline on a −36…0 dBFS scale with an amber input trace, a
   red light-drive curtain attached to the top border and descending by the
   brightness the bulbs are asked for, a draggable amber threshold line, a
-  Preset select (a starting point, not a locked mode) and four small round
+  Preset select (a starting point, not a locked mode), an Auto release select
+  (off / SSL / API 2500 / Hybrid) with a one-line hint, and four small round
   knobs in Threshold, Punch, Attack, Release order over hidden range inputs.
-  The threshold knob carries the live input on an outer ring on the plugin's
-  −60…0 dB side-chain scale: the dot walks toward 0 as the song gets louder,
-  turns red above the gate and crosses an amber gate tick. Threshold itself
-  stays −60…0 dB. Video modes show the profile select instead. The strip is
+  The threshold knob carries the live input on an outer ring on the same −36…0
+  dB scale: the dot walks toward 0 as the song gets louder, turns red above the
+  gate and crosses an amber gate tick. Threshold itself stays −36…0 dB, so its
+  minimum sits at the left end. This stage is a gate, an envelope follower and
+  a punch curve for the light drive; it is not an audio compressor and never
+  touches mpv's audio. Auto release shapes only the lamp envelope, which is why
+  it lives here and not in the EQ. Video modes show the profile select instead.
+  The strip is
   never a fourth column and never a second card. The Equalize target and the
   **Audio colors** block stay flat rows under the reaction group, shown only
   when they apply. **Audio colors** is a mode select — `bands`, `spectrum`,
   `rainbow`, `range`, `level` or `single` — plus the controls that mode uses:
   one swatch per EQ band for `bands`, a two-color Low/High row for `range`, a
   Soft/Loud row for `level`, one swatch for `single`, and no swatches for the
-  generated modes. Below Dynamics, a second full-width **EQ** strip holds the
-  band count (2–16), Auto release, active-band detection, the draggable
+  generated modes. Below the dynamics strip, a second full-width **EQ** strip
+  holds the band count (2–16), active-band detection, the draggable
   response canvas, one fader per band and the selected band's shape, slope,
   frequency, Q, gain, solo and lamp. It is also never a fourth column and never
   a second card. The
@@ -110,7 +115,7 @@ headings, and leave interface names, option values and file paths untranslated.
   `motion`, `duotone`, `beat`, `vu`; `color` stays the default. Every reaction
   is scaled by `react_amount`, so `0` is a no-op. Video reactive modes share
   `react_profile` (`soft` / `balanced` / `strong`); audio modes use the same
-  profile as a starting bundle but are driven by explicit compressor-style
+  profile as a starting bundle but are driven by explicit dynamics
   `react_threshold`, `react_attack`, `react_release` and `react_punch`
   (`AUDIO_PRESETS` holds the four named points). `pulse_level` keeps at least
   `AUDIO_WINDOW_DB` (12 dB) of range above the gate, so a high threshold stays

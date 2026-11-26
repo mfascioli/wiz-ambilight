@@ -215,8 +215,9 @@ of those bands, and bulbs with no assigned band follow the overall mix. A
 `solo` on any band overrides both modes: every bulb follows the soloed bands
 (and the overall view uses the loudest soloed band) until solo is cleared.
 
-`react_auto` is `off`, `ssl`, `api` or `hybrid`. `Reaction._auto_release`
-tracks how long a bulb has been driven (`sustain`): `ssl` and `hybrid` keep a
+`react_auto` is `off`, `ssl`, `api` or `hybrid`. The **Auto release** select
+lives in the Dynamics strip because it shapes the lamp envelope, not the EQ.
+`Reaction._auto_release` tracks how long a bulb has been driven (`sustain`): `ssl` and `hybrid` keep a
 fast time constant for hits and stretch toward `release * 8` (up to 2 s) while
 the program stays compressed, while `api` uses a fixed 1.35× release. `api` and
 `hybrid` also run the level through `** 0.85` (`_auto_level`, a soft knee) and
@@ -334,7 +335,7 @@ baseline.
 step. The dynamics attack/release values are therefore wall-clock seconds;
 using the polling delta would stretch a 55 ms release into almost a second.
 
-The panel's **Signal** view is a local readout over that meter. `GET
+The panel's **Dynamics** view is a local readout over that meter. `GET
 /api/meter` reads the newest fresh Lua state file, applies `hot_db` to its
 `audio` object and returns `active`, `db`, `ceiling`, `window`, `rms`, `peak`
 and up to 16 band levels. `ceiling` is the selected profile's `high` value and

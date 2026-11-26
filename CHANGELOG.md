@@ -16,6 +16,11 @@ Releases before 1.4.0 were never tagged; their history is in `git log`.
   fader together even when bands overlap or use a Low/High cut, while a sideways
   drag keeps the band gain. A drag follows the pointer's travel and no longer
   makes the handle jump or drift.
+- **Dynamics:** **Auto release** moved out of the EQ header and into the
+  Dynamics strip, next to **Preset**, because it shapes the light envelope and
+  never the EQ. The strip reads **Dynamics** instead of **Signal**, and its
+  hint makes clear that the stage is a gate plus an envelope follower for the
+  bulbs, not an audio compressor: mpv's audio is untouched.
 - **Activity:** the CPU lane no longer starts at a 5 % floor, so mpv and the
   panel stay readable when hardware decoding keeps their whole-processor share
   under one percent. Each line ends in a dot at the newest sample, idle UDP

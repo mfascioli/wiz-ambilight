@@ -83,7 +83,7 @@ from `--style`; the style table is in the [README](../README.md#-styles).
 | `--react-bands` | [8 defaults](../README.md#-audio-colors) | exactly `--react-eq-bands` `#rrggbb` values | One color per EQ band, low to high (`bands` mode). |
 | `--react-eq-bands` | `8` | 2–16 | Number of graphic-EQ bands. |
 | `--react-eq` | log-spaced 32 Hz-16 kHz | JSON array | Per-band `{freq,type,slope,gain,q,lamp,solo}`; `type` is `bell`, `bandpass`, `lowpass`, `highpass`, `notch` or `flat`, `slope` is 12, 24 or 48 dB/oct, `lamp` is a 0-based enabled-bulb index or `-1` for auto, and `solo` makes every bulb follow that band. |
-| `--react-auto` | `off` | `off`, `ssl`, `api`, `hybrid` | Compressor-inspired auto release; `ssl` uses dual program-dependent release, `api` adds a soft knee and low-end thrust. |
+| `--react-auto` | `off` | `off`, `ssl`, `api`, `hybrid` | Light-envelope auto release; `ssl` uses dual program-dependent release, `api` adds a soft knee and low-end thrust. Lives in the Dynamics strip, not the EQ. |
 | `--react-active-bands` | off | flag | Only bands above their own noise floor (4 dB, 180 ms hold) light a bulb. |
 | `--react-color-mode` | `bands` | `bands`, `spectrum`, `rainbow`, `range`, `level`, `single` | Where audio bulb colors come from. |
 | `--react-color-a` | `#fcbe11` | `#rrggbb` | Low color for `range`, soft color for `level`, only color for `single`. |

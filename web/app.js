@@ -140,6 +140,7 @@ const refs = {
   eqGainOut: document.getElementById("eqGainOut"),
   eqLamp: document.getElementById("eqLamp"),
   reactAuto: document.getElementById("reactAuto"),
+  reactAutoHint: document.getElementById("reactAutoHint"),
   reactActiveBands: document.getElementById("reactActiveBands"),
   samplingSelect: document.getElementById("samplingSelect"),
   sampleStage: document.getElementById("sampleStage"),
@@ -888,6 +889,11 @@ function syncDynamicsFields(snapshot, config, reaction) {
     refs.reactDynamics.value = matchingDynamics(config);
   }
   renderDynamicsHint();
+  buildAutoRelease(snapshot);
+  if (document.activeElement !== refs.reactAuto) {
+    refs.reactAuto.value = config.react_auto || "off";
+  }
+  renderAutoHint(snapshot);
   const threshold = Number(config.react_threshold);
   const attack = Number(config.react_attack);
   const release = Number(config.react_release);
@@ -1482,7 +1488,7 @@ function buildEqCount(snapshot) {
   refs.eqBandCount.dataset.signature = signature;
 }
 
-function buildEqAuto(snapshot) {
+function buildAutoRelease(snapshot) {
   const modes = snapshot.auto_modes || [];
   const signature = JSON.stringify(modes.map((mode) => mode.id));
   if (refs.reactAuto.dataset.signature === signature) return;
@@ -1494,6 +1500,15 @@ function buildEqAuto(snapshot) {
     refs.reactAuto.append(option);
   }
   refs.reactAuto.dataset.signature = signature;
+}
+
+function renderAutoHint(snapshot) {
+  const auto = (snapshot.auto_modes || []).find(
+    (mode) => mode.id === refs.reactAuto.value,
+  );
+  const hint = auto?.hint || "";
+  refs.reactAuto.title = hint;
+  if (refs.reactAutoHint) refs.reactAutoHint.textContent = hint;
 }
 
 function eqTypes(snapshot) {
@@ -1898,7 +1913,6 @@ function syncEqFields(snapshot, config, reaction) {
   refs.eqPanel.classList.toggle("hidden", !reaction?.audio);
   if (!reaction?.audio) return;
   buildEqCount(snapshot);
-  buildEqAuto(snapshot);
   buildEqType(snapshot);
   buildEqSlope(snapshot);
   const next = Array.isArray(config.react_eq) ? config.react_eq : [];
@@ -1916,13 +1930,6 @@ function syncEqFields(snapshot, config, reaction) {
   if (document.activeElement !== refs.eqBandCount) {
     refs.eqBandCount.value = String(config.react_eq_bands || state.eq.bands.length);
   }
-  if (document.activeElement !== refs.reactAuto) {
-    refs.reactAuto.value = config.react_auto || "off";
-  }
-  const auto = (snapshot.auto_modes || []).find(
-    (mode) => mode.id === (config.react_auto || "off"),
-  );
-  refs.reactAuto.title = auto?.hint || "";
   refs.reactActiveBands.checked = Boolean(config.react_active_bands);
   buildEqFaders(snapshot);
   refreshEqBands();
@@ -3105,10 +3112,7 @@ refs.eqBandCount.addEventListener("change", () => {
   saveConfig({ react_eq_bands: count, react_eq: state.eq.bands });
 });
 refs.reactAuto.addEventListener("change", () => {
-  const mode = (state.snapshot?.auto_modes || []).find(
-    (item) => item.id === refs.reactAuto.value,
-  );
-  refs.reactAuto.title = mode?.hint || "";
+  renderAutoHint(state.snapshot || {});
   saveConfig({ react_auto: refs.reactAuto.value });
 });
 refs.reactActiveBands.addEventListener("change", () =>
